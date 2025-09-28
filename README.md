@@ -16,6 +16,12 @@ The main effect is an animated icosphere that responds to your cursor movements.
 
 -----
 
+<video src="demonstration.mp4" width="320" height="240" controls></video>
+
+![Example of how the program works](demonstration.mp4)
+
+
+
 ## 🔧 Installation
 
 The project consists of two components: the wallpapers themselves (`interactive-wallpaper`) and an optional but recommended input handling daemon (`evdev-pointer-daemon`).

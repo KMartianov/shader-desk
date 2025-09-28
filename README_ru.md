@@ -16,6 +16,10 @@
 
 -----
 
+<video src="demonstration.mp4" width="320" height="240" controls></video>
+
+![Пример работы программы](demonstration.mp4)
+
 ## 🔧 Установка
 
 Проект состоит из двух компонентов: самих обоев (`interactive-wallpaper`) и опционального, но рекомендуемого демона для обработки ввода (`evdev-pointer-daemon`).

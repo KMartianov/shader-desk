@@ -37,7 +37,7 @@ sudo pacman -S cmake gcc git wayland wayland-protocols libglvnd glm nlohmann-jso
 
 ```bash
 # 1. Клонируйте репозиторий обоев
-git clone <URL_ВАШЕГО_РЕПОЗИТОРИЯ_ОБОЕВ> shader-desk
+git clone https://gitea.com/SeeTheWall/shader-desk shader-desk
 cd shader-desk
 
 # 2. Создайте директорию для сборки и соберите проект

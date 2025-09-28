@@ -37,7 +37,7 @@ This is the main component responsible for displaying the wallpapers.
 
 ```bash
 # 1. Clone the wallpaper repository
-git clone <YOUR_WALLPAPER_REPOSITORY_URL> shader-desk
+git clone https://gitea.com/SeeTheWall/shader-desk shader-desk
 cd shader-desk
 
 # 2. Create a build directory and build the project

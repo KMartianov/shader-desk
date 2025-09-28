@@ -16,10 +16,9 @@ The main effect is an animated icosphere that responds to your cursor movements.
 
 -----
 
-<video src="demonstration.mp4" width="320" height="240" controls></video>
+![Пример1](demo/example_green.png)
 
-![Example of how the program works](demonstration.mp4)
-
+![Пример2](demo/example_red.png)
 
 
 ## 🔧 Installation

@@ -16,9 +16,9 @@
 
 -----
 
-<video src="demonstration.mp4" width="320" height="240" controls></video>
+![Пример1](demo/example_green.png)
 
-![Пример работы программы](demonstration.mp4)
+![Пример2](demo/example_red.png)
 
 ## 🔧 Установка
 

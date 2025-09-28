@@ -1,5 +1,4 @@
-[README ru](README_ru.md) | [README en](README_ru.md)
-
+[README ru](README_ru.md) | [README en](README.md)
 # Interactive Wayland Wallpaper 
 
 Красивые, интерактивные и легко настраиваемые живые обои для вашего рабочего стола на Wayland. Проект использует аппаратное ускорение (OpenGL ES) для рендеринга динамических шейдеров с минимальным потреблением ресурсов.
@@ -49,9 +48,6 @@ make -j$(nproc)
 ```
 
 После успешной сборки исполняемый файл будет находиться в `shader-desk/build/interactive-wallpaper`.
-
-Вот улучшенная версия раздела README для сборки `evdev-pointer-daemon`:
-
 ### 3. Сборка `evdev-pointer-daemon` (Опционально)
 
 Этот демон считывает события напрямую из `/dev/input/` и позволяет обойти ограничения композиторов на доступ к событиям ввода для приложений без фокуса ввода.
@@ -72,8 +68,8 @@ newgrp input
 
 ```bash
 # 1. Клонируйте репозиторий демона
-git clone <URL_ВАШЕГО_РЕПОЗИТОРИЯ_ДЕМОНА> mouse-daemon
-cd mouse-daemon
+git clone https://gitea.com/SeeTheWall/mouse
+cd mouse
 
 # 2. Соберите проект
 mkdir build
@@ -82,7 +78,8 @@ cmake ..
 make -j$(nproc)
 ```
 
-Исполняемый файл будет находиться в `mouse-daemon/build/evdev-pointer-daemon`.
+Исполняемый файл будет находиться
+в `mouse/build/evdev-pointer-daemon`.
 
 **Примечания:**
 - Демон должен работать в фоновом режиме для обеспечения интерактивности

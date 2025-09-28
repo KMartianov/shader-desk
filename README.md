@@ -1,5 +1,4 @@
-[README ru](README_ru.md) | [README en](README_ru.md)
-
+[README ru](README_ru.md) | [README en](README.md)
 # Interactive Wayland Wallpaper 🚀
 
 Beautiful, interactive, and easily configurable live wallpapers for your Wayland desktop. The project uses hardware acceleration (OpenGL ES) for rendering dynamic shaders with minimal resource consumption.
@@ -50,8 +49,6 @@ make -j$(nproc)
 
 After a successful build, the executable will be located at `shader-desk/build/interactive-wallpaper`.
 
-Here is an improved version of the README section for building `evdev-pointer-daemon`:
-
 ### 3. Building `evdev-pointer-daemon` (Optional)
 
 This daemon reads events directly from `/dev/input/` and allows bypassing compositor restrictions on accessing input events for applications without input focus.
@@ -72,8 +69,8 @@ newgrp input
 
 ```bash
 # 1. Clone the daemon repository
-git clone <YOUR_DAEMON_REPOSITORY_URL> mouse-daemon
-cd mouse-daemon
+git clone https://gitea.com/SeeTheWall/mouse
+cd mouse
 
 # 2. Build the project
 mkdir build
@@ -82,7 +79,7 @@ cmake ..
 make -j$(nproc)
 ```
 
-The executable will be located at `mouse-daemon/build/evdev-pointer-daemon`.
+The executable will be located at `mouse/build/evdev-pointer-daemon`.
 
 **Notes:**
 - The daemon must run in the background to provide interactivity

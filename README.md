@@ -36,6 +36,8 @@ First, make sure you have all the necessary dependencies installed.
 sudo pacman -S cmake gcc git wayland wayland-protocols libglvnd glm nlohmann-json jq inotify-tools
 ```
 
+Make sure that the folders `shader-desk` and `mouse` **are in the same directory** if you want to use the script `run.sh `
+
 ### 2. Building `interactive-wallpaper`
 
 This is the main component responsible for displaying the wallpapers.

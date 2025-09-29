@@ -606,12 +606,6 @@ void InteractiveWallpaper::create_egl_surface(Output* output) {
         return;
     }
 
-    // Destroy existing EGL window if any
-    if (output->egl_window) {
-        wl_egl_window_destroy(output->egl_window);
-        output->egl_window = nullptr;
-    }
-
     // Create new EGL window
     output->egl_window = wl_egl_window_create(output->surface, output->width, output->height);
     if (!output->egl_window) {
@@ -631,9 +625,8 @@ void InteractiveWallpaper::create_egl_surface(Output* output) {
 
     std::cout << "Created EGL surface for output: " << output->name 
               << " (" << output->width << "x" << output->height << ")" << std::endl;
-    
-
 }
+
 
 // Initialize Wayland connection
 bool InteractiveWallpaper::initialize() {
@@ -706,7 +699,6 @@ void InteractiveWallpaper::run() {
                 
                 if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
                     
-                    // <<< ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ >>>
                     // Применяем конфигурацию в единственно безопасном месте:
                     // после eglMakeCurrent и прямо перед рендерингом.
                     if (needs_apply) {
@@ -793,12 +785,7 @@ void InteractiveWallpaper::registry_global(void* data, wl_registry* registry,
         self->viewporter = static_cast<wp_viewporter*>(
             wl_registry_bind(registry, name, &wp_viewporter_interface, std::min(version, 1u)));
         std::cout << "Bound wp_viewporter" << std::endl;
-    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
-        wl_seat* seat = static_cast<wl_seat*>(
-            wl_registry_bind(registry, name, &wl_seat_interface, std::min(version, 7u)));
-        self->input_handler.initialize(seat);
-        std::cout << "Bound wl_seat" << std::endl;
-    }
+    } 
 }
 
 void InteractiveWallpaper::registry_global_remove(void* data, wl_registry* /*registry*/,
@@ -884,26 +871,25 @@ void InteractiveWallpaper::layer_surface_configure(void* data,
     // Acknowledge the configure
     zwlr_layer_surface_v1_ack_configure(surface, serial);
 
-    // Create EGL surface for this output
-    output->parent->create_egl_surface(output);
+    // Создаем поверхность только если ее еще нет.
+    if (output->egl_surface == EGL_NO_SURFACE) {
+        output->parent->create_egl_surface(output);
 
-    // Initialize the effect if we have one
-    if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
-        // Make the EGL context current
-        if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
-            output->effect->initialize(width, height);
-            
-            //output->parent->apply_config_to_effect(output);
-            
-            std::cout << "Effect initialized for output: " << output->name << std::endl;
-        } else {
-            std::cerr << "Failed to make EGL context current for effect initialization" << std::endl;
+        // Инициализируем эффект только после первого создания поверхности
+        if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
+            if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
+                output->effect->initialize(width, height);
+                std::cout << "Effect initialized for output: " << output->name << std::endl;
+            } else {
+                std::cerr << "Failed to make EGL context current for effect initialization" << std::endl;
+            }
         }
-    }
-
-    // Resize EGL window if it exists
-    if (output->egl_window) {
-        wl_egl_window_resize(output->egl_window, width, height, 0, 0);
+    } else {
+        // Если поверхность уже есть, просто меняем размер окна
+        if (output->egl_window) {
+            wl_egl_window_resize(output->egl_window, width, height, 0, 0);
+            std::cout << "Resized EGL window for output: " << output->name << std::endl;
+        }
     }
 
     // Commit the surface to make it visible
@@ -970,8 +956,8 @@ void InteractiveWallpaper::create_layer_surface(Output* output) {
         ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP | ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
         ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT | ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
     zwlr_layer_surface_v1_set_exclusive_zone(output->layer_surface, -1);
-    zwlr_layer_surface_v1_set_keyboard_interactivity(output->layer_surface,
-        output->parent->config.interactive ? ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE :
+
+    zwlr_layer_surface_v1_set_keyboard_interactivity(output->layer_surface, 
         ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
 
     // Add listener

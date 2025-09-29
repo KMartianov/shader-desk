@@ -680,7 +680,6 @@ void InteractiveWallpaper::run() {
         // Проверяем, есть ли запрос на применение конфигурации
         bool needs_apply = config_needs_apply.load() || first_render;
 
-        // Обработка Wayland событий (этот блок остается без изменений)
         while (wl_display_prepare_read(display) != 0) {
             wl_display_dispatch_pending(display);
         }
@@ -894,7 +893,6 @@ void InteractiveWallpaper::layer_surface_configure(void* data,
         if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
             output->effect->initialize(width, height);
             
-            // ДОБАВИТЬ: Немедленно применяем конфигурацию после инициализации
             //output->parent->apply_config_to_effect(output);
             
             std::cout << "Effect initialized for output: " << output->name << std::endl;

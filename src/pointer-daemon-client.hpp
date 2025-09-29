@@ -10,7 +10,6 @@
 
 class PointerDaemonClient {
 public:
-    // ОБНОВЛЕНО: Добавляем параметры normalized и device_name
     using MotionCallback = std::function<void(double dx, double dy, double vx, double vy, double dt, bool normalized, const std::string& device_name)>;
     using MoveCallback = std::function<void(double x, double y)>;
     using ClickCallback = std::function<void(double x, double y, uint32_t button)>;

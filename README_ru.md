@@ -16,9 +16,12 @@
 
 -----
 
-![Пример1](demo/example_green.png)
+## 🎭 Демонстрация 
 
-![Пример2](demo/example_red.png)
+[![Play video](demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
+
+[![Play video](demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
+
 
 ## 🔧 Установка
 

@@ -20,7 +20,7 @@
     0.3,
     0.4
   ],
-  "interactive": true,
+  "interactive": false,
   
 
   "touchpad_sensitivity": 20.0,

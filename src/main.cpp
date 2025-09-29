@@ -24,7 +24,8 @@ int main(int argc, char** argv) {
     
     WallpaperConfig wallpaper_config;
     wallpaper_config.output_name = "*";
-    
+    wallpaper_config.interactive = config.value("interactive", true);
+
     std::string effect_name = config.value("effect", "sphere");
     
     if (argc > 1) {

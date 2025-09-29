@@ -5,6 +5,7 @@ CONFIG_DIR="$HOME/.config/interactive-wallpaper"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 DEFAULT_CONFIG='{
   "effect": "sphere",
+  "interactive": true,
   "sphere_scale": 1.0,
   "wireframe_mode": true,
   "subdivisions": 3,
@@ -17,7 +18,6 @@ DEFAULT_CONFIG='{
   "noise_amp": 0.02,
   "background_color": [0.1137, 0.1137, 0.1255],
   "wireframe_color": [0.5, 0.5, 0.7],
-  "interactive": false,
   "touchpad_sensitivity": 0.3,
   "mouse_sensitivity": 2.5,
   "constant_rotation_speed": 0.1,

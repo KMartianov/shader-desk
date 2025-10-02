@@ -1,3 +1,5 @@
+// src/interactive-wallpaper.hpp
+
 #pragma once
 
 #include <iostream> 
@@ -16,6 +18,7 @@
 #include <chrono>          
 #include <mutex>           
 #include <nlohmann/json.hpp>
+#include "wallpaper-effect.hpp"
 
 enum class RendererType {
     OPENGL_ES,
@@ -27,17 +30,6 @@ struct WallpaperConfig {
     std::string output_name = "*";
     RendererType renderer = RendererType::OPENGL_ES;
     bool interactive = true;
-};
-
-class WallpaperEffect {
-public:
-    virtual ~WallpaperEffect() = default;
-    virtual bool initialize(uint32_t width, uint32_t height) = 0;
-    virtual void render(uint32_t width, uint32_t height) = 0;
-    virtual void handle_pointer_move(double x, double y) {}
-    virtual void handle_pointer_click(double x, double y, uint32_t button) {}
-    virtual void handle_pointer_motion(double dx, double dy, bool is_touchpad) {}
-    virtual void cleanup() = 0;
 };
 
 class InteractiveWallpaper {
@@ -55,12 +47,15 @@ public:
         int32_t scale = 1;
         uint32_t configure_serial = 0;
         bool configured = false;
-
-        std::unique_ptr<WallpaperEffect> effect;
+        
+        WallpaperEffectPtr effect;
 
         // EGL resources
         wl_egl_window* egl_window = nullptr;
         EGLSurface egl_surface = EGL_NO_SURFACE;
+        
+        // FIX: Add a default constructor to initialize the unique_ptr
+        Output() : effect(nullptr, nullptr) {}
     };
 
     InteractiveWallpaper(const WallpaperConfig& cfg);
@@ -70,8 +65,7 @@ public:
     void run();
     void stop();
 
-    // Effect management
-    void set_effect(const std::string& output_name, std::unique_ptr<WallpaperEffect> effect);
+    void set_effect(const std::string& output_name, WallpaperEffectPtr effect);
 
     wl_shm* get_shm() const { return shm; }
 
@@ -159,3 +153,4 @@ private:
     nlohmann::json current_config;
 
 };
+

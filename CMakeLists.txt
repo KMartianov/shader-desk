@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.13)
 project(interactive-wallpaper LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -183,34 +183,84 @@ if(PROTOCOL_SOURCES STREQUAL "")
 endif()
 
 # Основные исходники (пути относительно исходной директории)
-set(SRC_FILES
+set(APP_SRC_FILES
     "${SRC_DIR}/src/main.cpp"
     "${SRC_DIR}/src/interactive-wallpaper.cpp"
     "${SRC_DIR}/src/shader-effect.cpp"
+    "${SRC_DIR}/src/ico-sphere-effect.cpp" # Логика сферы
     "${SRC_DIR}/src/input-handler.cpp"
-    "${SRC_DIR}/src/ico-sphere-effect.cpp"
     "${SRC_DIR}/src/pointer-daemon-client.cpp"
     "${SRC_DIR}/src/config-loader.cpp"
+    "${SRC_DIR}/src/plugin-manager.cpp"
 )
+list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-# Добавляем автоматически сгенерированные/найденные источники протоколов
-list(APPEND SRC_FILES ${PROTOCOL_SOURCES})
+# --- СБОРКА ОСНОВНОГО ПРИЛОЖЕНИЯ ---
+add_executable(interactive-wallpaper ${APP_SRC_FILES})
 
-# Создаем исполняемый файл
-add_executable(interactive-wallpaper ${SRC_FILES})
+# --- НОВОЕ: СБОРКА ПЛАГИНОВ ---
+# Создаем директорию для плагинов в папке сборки
+set(PLUGIN_OUTPUT_DIR "${BIN_DIR}/effects")
+file(MAKE_DIRECTORY ${PLUGIN_OUTPUT_DIR})
 
-# Include директории
+# Находим все файлы плагинов по шаблону
+file(GLOB PLUGIN_SOURCES "${SRC_DIR}/src/*-plugin.cpp")
+
+foreach(PLUGIN_SOURCE ${PLUGIN_SOURCES})
+    # Получаем имя файла без расширения
+    get_filename_component(PLUGIN_NAME ${PLUGIN_SOURCE} NAME_WE)
+    
+    # Определяем, какие исходные файлы нужны для этого плагина
+    if(PLUGIN_NAME STREQUAL "ico-sphere-plugin")
+        # Для плагина ico-sphere нужно включить реализацию IcoSphereEffect
+        set(PLUGIN_SRC_FILES 
+            ${PLUGIN_SOURCE}
+            "${SRC_DIR}/src/ico-sphere-effect.cpp"
+        )
+    else()
+        set(PLUGIN_SRC_FILES ${PLUGIN_SOURCE})
+    endif()
+    
+    # Создаем цель для сборки плагина как динамической библиотеки
+    add_library(${PLUGIN_NAME} SHARED ${PLUGIN_SRC_FILES})
+    
+    # Указываем, куда положить скомпилированный .so файл
+    set_target_properties(${PLUGIN_NAME} PROPERTIES 
+        LIBRARY_OUTPUT_DIRECTORY ${PLUGIN_OUTPUT_DIR}
+        PREFIX ""  # Убираем префикс "lib" из имени файла
+    )
+    
+    # Указываем include директории для плагина
+    target_include_directories(${PLUGIN_NAME} PRIVATE
+        "${BIN_DIR}"
+        "${PROTOCOL_OUTPUT_DIR}"
+        "${SRC_DIR}/src"
+        ${WAYLAND_CLIENT_INCLUDE_DIRS}
+        ${WAYLAND_EGL_INCLUDE_DIRS}
+        ${EGL_INCLUDE_DIRS}
+        ${GLESv2_INCLUDE_DIRS}
+    )
+
+    # Линкуем плагин с необходимыми библиотеками
+    target_link_libraries(${PLUGIN_NAME} PRIVATE 
+        glm::glm
+        ${GLESv2_LIBRARIES}
+    )
+
+    message(STATUS "Configured plugin: ${PLUGIN_NAME} with sources: ${PLUGIN_SRC_FILES}")
+endforeach()
+
+# --- ЛИНКОВКА ОСНОВНОГО ПРИЛОЖЕНИЯ ---
 target_include_directories(interactive-wallpaper PRIVATE
-    "${BIN_DIR}"                 # для сгенерированных заголовков и копий ресурсов
-    "${PROTOCOL_OUTPUT_DIR}"     # явно добавить папку генерации протоколов
-    "${SRC_DIR}/src"             # для хедеров в src/
+    "${BIN_DIR}"
+    "${PROTOCOL_OUTPUT_DIR}"
+    "${SRC_DIR}/src"
     ${WAYLAND_CLIENT_INCLUDE_DIRS}
     ${WAYLAND_EGL_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
     ${GLESv2_INCLUDE_DIRS}
 )
 
-# Link libraries discovered by pkg-config и через find_package
 target_link_libraries(interactive-wallpaper PRIVATE
     ${WAYLAND_CLIENT_LIBRARIES}
     ${WAYLAND_EGL_LIBRARIES}
@@ -218,6 +268,8 @@ target_link_libraries(interactive-wallpaper PRIVATE
     ${GLESv2_LIBRARIES}
     nlohmann_json::nlohmann_json
     glm::glm
+    dl
+    pthread
 )
 
 # Если сгенерирован target wayland_protocols — добавить зависимость

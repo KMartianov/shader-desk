@@ -19,7 +19,9 @@
 
 #include <nlohmann/json.hpp>
 
-// Wayland listeners (теперь методы public, так что это должно работать)
+using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
+
+
 static const wl_registry_listener registry_listener = {
     .global = InteractiveWallpaper::registry_global,
     .global_remove = InteractiveWallpaper::registry_global_remove,
@@ -510,7 +512,7 @@ void InteractiveWallpaper::handle_pointer_move(double x, double y) {
     for (auto& pair : outputs) {
         auto& output = pair.second;
         if (output->effect) {
-            output->effect->handle_pointer_move(x, y);
+            //output->effect->handle_pointer_move(x, y);
         }
     }
 }
@@ -521,7 +523,7 @@ void InteractiveWallpaper::handle_pointer_click(double x, double y, uint32_t but
     for (auto& pair : outputs) {
         auto& output = pair.second;
         if (output->effect) {
-            output->effect->handle_pointer_click(x, y, button);
+            //output->effect->handle_pointer_click(x, y, button);
         }
     }
 }
@@ -731,13 +733,14 @@ void InteractiveWallpaper::stop() {
 }
 
 // Effect management
-void InteractiveWallpaper::set_effect(const std::string& output_name, std::unique_ptr<WallpaperEffect> effect) {
+void InteractiveWallpaper::set_effect(const std::string& output_name, WallpaperEffectPtr effect) {
     for (auto& pair : outputs) {
         auto& output = pair.second;
         if (output_name == "*" || output->name == output_name || output->identifier == output_name) {
             // Clean up existing effect
             if (output->effect) {
-                output->effect->cleanup();
+                // The custom deleter in the old unique_ptr will be called automatically
+                // when it's replaced by the new one below.
             }
             
             output->effect = std::move(effect);
@@ -752,9 +755,17 @@ void InteractiveWallpaper::set_effect(const std::string& output_name, std::uniqu
             }
             
             std::cout << "Set effect for output: " << output->name << std::endl;
+            // Since we moved the effect, we might only want to set it on the first match.
+            // If you want the same instance on all monitors, you can't move it.
+            // For now, let's assume we create a new effect instance for each monitor,
+            // so moving it into the first one is correct. If you need it on all monitors,
+            // the logic in main.cpp should change to create an effect for each one.
+            return; // <-- Added to prevent moving the same pointer multiple times
         }
     }
 }
+
+
 
 // Wayland registry handler
 void InteractiveWallpaper::registry_global(void* data, wl_registry* registry,

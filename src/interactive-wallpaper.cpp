@@ -1,6 +1,6 @@
 // interactive-wallpaper.cpp
 #include "interactive-wallpaper.hpp"
-#include "ico-sphere-effect.hpp"
+//#include "../plugins/ico-sphere-effect/ico-sphere-effect.hpp"
 #include <glm/glm.hpp>
 
 #include <iostream>
@@ -20,6 +20,27 @@
 #include <nlohmann/json.hpp>
 
 using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
+
+EffectParameterValue json_to_variant(const nlohmann::json& j) {
+    if (j.is_boolean()) {
+        return j.get<bool>();
+    }
+    if (j.is_number_integer()) {
+        return j.get<int>();
+    }
+    if (j.is_number_float()) {
+        return j.get<float>();
+    }
+    if (j.is_array() && j.size() == 3) {
+        // Убедимся, что все элементы - числа
+        if (j[0].is_number() && j[1].is_number() && j[2].is_number()) {
+            return glm::vec3(j[0].get<float>(), j[1].get<float>(), j[2].get<float>());
+        }
+    }
+    // Возвращаем float по умолчанию в случае неопределенного или неподдерживаемого типа
+    return 0.0f;
+}
+
 
 
 static const wl_registry_listener registry_listener = {
@@ -287,11 +308,7 @@ void InteractiveWallpaper::apply_config_to_effect(Output* output) {
         return;
     }
 
-    IcoSphereEffect* sphere_effect = dynamic_cast<IcoSphereEffect*>(output->effect.get());
-    if (!sphere_effect) {
-        return;
-    }
-
+    // Блокируем мьютекс для безопасного доступа к конфигурации из другого потока
     std::lock_guard<std::mutex> lock(config_mutex);
     if (current_config.is_null()) {
         std::cout << "apply_config_to_effect: current_config is null, nothing to apply" << std::endl;
@@ -300,138 +317,30 @@ void InteractiveWallpaper::apply_config_to_effect(Output* output) {
 
     std::cout << "Applying configuration to effect on output: " << output->name << std::endl;
 
-    // Применяем все параметры конфигурации
-    if (current_config.contains("wireframe_mode")) {
-        bool new_wireframe = current_config.value("wireframe_mode", false);
-        sphere_effect->set_wireframe_mode(new_wireframe);
-        std::cout << "  - Wireframe mode: " << (new_wireframe ? "enabled" : "disabled") << std::endl;
-    }
-
-    if (current_config.contains("subdivisions")) {
-        int new_subdivisions = current_config.value("subdivisions", 3);
-        sphere_effect->set_subdivisions(new_subdivisions);
-        std::cout << "  - Subdivisions: " << new_subdivisions << std::endl;
-    }
-
-    // Эффекты анимации
-    if (current_config.contains("oscill_amp")) {
-        float value = current_config.value("oscill_amp", 0.1f);
-        sphere_effect->set_oscill_amp(value);
-        std::cout << "  - Oscillation amplitude: " << value << std::endl;
-    }
-    
-    if (current_config.contains("oscill_freq")) {
-        float value = current_config.value("oscill_freq", 2.0f);
-        sphere_effect->set_oscill_freq(value);
-        std::cout << "  - Oscillation frequency: " << value << std::endl;
-    }
-
-    if (current_config.contains("wave_amp")) {
-        float value = current_config.value("wave_amp", 0.05f);
-        sphere_effect->set_wave_amp(value);
-        std::cout << "  - Wave amplitude: " << value << std::endl;
-    }
-    
-    if (current_config.contains("wave_freq")) {
-        float value = current_config.value("wave_freq", 8.0f);
-        sphere_effect->set_wave_freq(value);
-        std::cout << "  - Wave frequency: " << value << std::endl;
-    }
-
-    if (current_config.contains("twist_amp")) {
-        float value = current_config.value("twist_amp", 0.08f);
-        sphere_effect->set_twist_amp(value);
-        std::cout << "  - Twist amplitude: " << value << std::endl;
-    }
-
-    if (current_config.contains("pulse_amp")) {
-        float value = current_config.value("pulse_amp", 0.03f);
-        sphere_effect->set_pulse_amp(value);
-        std::cout << "  - Pulse amplitude: " << value << std::endl;
-    }
-
-    if (current_config.contains("noise_amp")) {
-        float value = current_config.value("noise_amp", 0.02f);
-        sphere_effect->set_noise_amp(value);
-        std::cout << "  - Noise amplitude: " << value << std::endl;
-    }
-
-    // Параметры вращения
-    if (current_config.contains("constant_rotation_speed")) {
-        float value = current_config.value("constant_rotation_speed", 0.1f);
-        sphere_effect->set_constant_rotation_speed(value);
-        std::cout << "  - Constant rotation speed: " << value << std::endl;
-    }
-
-    if (current_config.contains("rotation_decay")) {
-        float value = current_config.value("rotation_decay", 0.95f);
-        sphere_effect->set_rotation_decay(value);
-        std::cout << "  - Rotation decay: " << value << std::endl;
-    }
-
-    if (current_config.contains("min_rotation_speed")) {
-        float value = current_config.value("min_rotation_speed", 0.001f);
-        sphere_effect->set_min_rotation_speed(value);
-        std::cout << "  - Min rotation speed: " << value << std::endl;
-    }
-
-    if (current_config.contains("max_rotation_speed")) {
-        float value = current_config.value("max_rotation_speed", 5.0f);
-        sphere_effect->set_max_rotation_speed(value);
-        std::cout << "  - Max rotation speed: " << value << std::endl;
-    }
-
-    if (current_config.contains("sphere_scale")) {
-        float sphere_scale = current_config.value("sphere_scale", 1.0f);
-        sphere_effect->set_sphere_scale(sphere_scale);
-        std::cout << "  - Sphere scale: " << sphere_scale << std::endl;
-    }
-
-    // Цвета
-    if (current_config.contains("background_color") && current_config["background_color"].is_array()) {
-        auto &arr = current_config["background_color"];
-        if (arr.size() >= 3) {
-            glm::vec3 bg_color = {
-                arr[0].get<float>(),
-                arr[1].get<float>(),
-                arr[2].get<float>()
-            };
-            sphere_effect->set_background_color(bg_color);
-            std::cout << "  - Background color: [" 
-                      << bg_color.r << ", " << bg_color.g << ", " << bg_color.b << "]" << std::endl;
+    // --- Применение настроек самого эффекта ---
+    if (current_config.contains("effect_settings") && current_config["effect_settings"].is_object()) {
+        const auto& settings = current_config["effect_settings"];
+        for (const auto& item : settings.items()) {
+            std::cout << "  - Setting '" << item.key() << "'..." << std::endl;
+            // Используем универсальный метод set_parameter интерфейса WallpaperEffect
+            output->effect->set_parameter(item.key(), json_to_variant(item.value()));
         }
     }
 
-    if (current_config.contains("wireframe_color") && current_config["wireframe_color"].is_array()) {
-        auto &arr = current_config["wireframe_color"];
-        if (arr.size() >= 3) {
-            glm::vec3 wf_color = {
-                arr[0].get<float>(),
-                arr[1].get<float>(),
-                arr[2].get<float>()
-            };
-            sphere_effect->set_wireframe_color(wf_color);
-            std::cout << "  - Wireframe color: [" 
-                      << wf_color.r << ", " << wf_color.g << ", " << wf_color.b << "]" << std::endl;
-        }
-    }
-
-    // Глобальные чувствительности (только для лога)
+    // --- Применение глобальных настроек приложения ---
     if (current_config.contains("touchpad_sensitivity")) {
-        float value = current_config.value("touchpad_sensitivity", 0.3f);
-        std::cout << "  - Touchpad sensitivity: " << value << std::endl;
+        touchpad_sensitivity = current_config.value("touchpad_sensitivity", 20.0f);
+        std::cout << "  - Global: Touchpad sensitivity set to " << touchpad_sensitivity << std::endl;
     }
 
     if (current_config.contains("mouse_sensitivity")) {
-        float value = current_config.value("mouse_sensitivity", 2.5f);
-        std::cout << "  - Mouse sensitivity: " << value << std::endl;
+        mouse_sensitivity = current_config.value("mouse_sensitivity", 0.05f);
+        std::cout << "  - Global: Mouse sensitivity set to " << mouse_sensitivity << std::endl;
     }
 
-    // Принудительно обновляем масштабирование эффектов
-    sphere_effect->update_effect_scaling();
-    
-    std::cout << "Configuration applied to IcoSphere effect on output: " << output->name << std::endl;
+    std::cout << "Configuration applied successfully on output: " << output->name << std::endl;
 }
+
 
 
 void InteractiveWallpaper::start_config_monitor() {

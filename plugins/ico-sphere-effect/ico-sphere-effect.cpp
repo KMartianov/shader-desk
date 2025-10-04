@@ -4,8 +4,8 @@
 #define GLM_ENABLE_EXPERIMENTAL
 
 // --- НЕОБХОДИМЫЕ ЗАГОЛОВКИ ---
-#include "ico-sphere-effect.hpp" // Определения класса IcoSphereEffect
-#include "wallpaper-effect.hpp"  // Интерфейс плагина
+#include "ico-sphere-effect.hpp"
+#include "wallpaper-effect.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -85,6 +85,18 @@ IcoSphereEffect::IcoSphereEffect() {
     mouse_sensitivity = 0.05f;
     touchpad_sensitivity = 20.0f;
 
+    // Инициализация аудио-параметров
+    audio_reactive = true;
+    audio_smoothing = 0.85f;
+    bass_multiplier = 1.0f;
+    smoothed_bass = 0.0f;
+    smoothed_mid = 0.0f;
+    smoothed_treble = 0.0f;
+    u_audio_bass = 0;
+    u_audio_mid = 0;
+    u_audio_treble = 0;
+
+
     update_effect_scaling();
 }
 
@@ -130,8 +142,8 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
         indices = new_indices;
     }
 
-    std::mt19937 gen(0); // Используем фиксированный seed для воспроизводимости фаз
-    std::uniform_real_distribution<float> dis(0.0f, 2.0f * M_PI);
+    std::mt19937 gen(0);
+    std::uniform_real_distribution<float> dis(0.0f, 2.0f * 3.1415926535f);
     phases.resize(vertices.size());
     for (size_t i = 0; i < vertices.size(); i++) {
         phases[i] = dis(gen);
@@ -169,8 +181,10 @@ void IcoSphereEffect::update_effect_scaling() {
 bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
     
-    std::string vert_src = load_shader_file("effects/shaders/sphere_vert.glsl");
-    std::string frag_src = load_shader_file("effects/shaders/sphere_frag.glsl");
+    std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
+    std::string vert_src = load_shader_file(config_dir + "effects/shaders/sphere_vert.glsl");
+    std::string frag_src = load_shader_file(config_dir + "effects/shaders/sphere_frag.glsl");
+
     
     if (vert_src.empty() || frag_src.empty()) return false;
     
@@ -191,6 +205,11 @@ bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     u_pulse_amp = glGetUniformLocation(program, "pulse_amp");
     u_noise_amp = glGetUniformLocation(program, "noise_amp");
     u_sphere_scale = glGetUniformLocation(program, "sphere_scale");
+
+    // Получаем ID новых uniform-переменных
+    u_audio_bass = glGetUniformLocation(program, "audio_bass");
+    u_audio_mid = glGetUniformLocation(program, "audio_mid");
+    u_audio_treble = glGetUniformLocation(program, "audio_treble");
 
     generate_icosphere(subdivisions);
     
@@ -275,7 +294,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
         std::cout << "IcoSphere regenerated with " << subdivisions << " subdivisions." << std::endl;
     }
 
-    update_rotation(0.016f); // ~60 FPS delta time
+    update_rotation(0.016f);
     
     glEnable(GL_DEPTH_TEST);
     glViewport(0, 0, width, height);
@@ -294,6 +313,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     time += 0.016f;
     glUniform1f(u_time, time);
     
+    // Передаём базовые параметры анимации из конфига
     glUniform1f(u_oscill_amp, scaled_oscill_amp);
     glUniform1f(u_oscill_freq, oscill_freq);
     glUniform1f(u_wave_amp, scaled_wave_amp);
@@ -303,6 +323,12 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniform1f(u_noise_amp, scaled_noise_amp);
     glUniform1f(u_sphere_scale, sphere_scale);
     
+    // Передаём сглаженные аудиоданные напрямую в шейдер
+    std::cout << smoothed_bass << " " << smoothed_mid << " " << smoothed_treble << '\n';
+    glUniform1f(u_audio_bass, smoothed_bass);
+    glUniform1f(u_audio_mid, smoothed_mid);
+    glUniform1f(u_audio_treble, smoothed_treble);
+
     glBindVertexArray(vao);
     if (wireframe_mode) {
         glUniform3f(u_wireframe_color, wireframe_color.r, wireframe_color.g, wireframe_color.b);
@@ -311,7 +337,6 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
         glDrawElements(GL_LINES, line_indices.size(), GL_UNSIGNED_INT, 0);
     } else {
         glUniform1i(u_is_wireframe_pass, 0);
-        // Здесь можно добавить uniform'ы для освещения и цвета материала
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
     }
@@ -336,7 +361,20 @@ void IcoSphereEffect::handle_pointer_motion(double dx, double dy, bool is_touchp
     angular_velocity += impulse;
 }
 
-// --- Методы для установки параметров ---
+void IcoSphereEffect::handle_audio_data(const AudioData& data) {
+    if (!audio_reactive) {
+        smoothed_bass = 0.0f;
+        smoothed_mid = 0.0f;
+        smoothed_treble = 0.0f;
+        return;
+    }
+
+    // Сглаживаем полученные значения для более плавной анимации
+    smoothed_bass = audio_smoothing * smoothed_bass + (1.0f - audio_smoothing) * static_cast<float>(data.bass);
+    smoothed_mid = audio_smoothing * smoothed_mid + (1.0f - audio_smoothing) * static_cast<float>(data.mid);
+    smoothed_treble = audio_smoothing * smoothed_treble + (1.0f - audio_smoothing) * static_cast<float>(data.treble);
+}
+
 void IcoSphereEffect::set_subdivisions(int value) { 
     int new_subdivisions = std::clamp(value, 0, 6);
     if (new_subdivisions != subdivisions) {
@@ -345,7 +383,6 @@ void IcoSphereEffect::set_subdivisions(int value) {
     }
 }
 
-// --- Компиляция шейдеров и программы ---
 GLuint IcoSphereEffect::compile_shader(GLenum type, const std::string& source) {
     GLuint shader = glCreateShader(type);
     const char* src = source.c_str();
@@ -396,8 +433,6 @@ public:
     IcoSphereEffectPlugin() = default;
     ~IcoSphereEffectPlugin() override = default;
 
-    // --- Реализация интерфейса WallpaperEffect ---
-
     const char* get_name() const override {
         return "Icosahedron Sphere";
     }
@@ -417,7 +452,10 @@ public:
             {"rotation_decay", "Inertia decay (0.9-1.0)", rotation_decay},
             {"max_rotation_speed", "Maximum rotation speed", max_rotation_speed},
             {"background_color", "Background clear color", background_color},
-            {"wireframe_color", "Color of the wireframe lines", wireframe_color}
+            {"wireframe_color", "Color of the wireframe lines", wireframe_color},
+            // Параметры для управления аудио-реакцией
+            {"audio_reactive", "Enable audio reactivity", audio_reactive},
+            {"audio_smoothing", "Smoothing factor for audio (0-1)", audio_smoothing}
         };
     }
 
@@ -437,6 +475,8 @@ public:
             else if (name == "max_rotation_speed") { set_max_rotation_speed(std::get<float>(value)); }
             else if (name == "background_color") { set_background_color(std::get<glm::vec3>(value)); }
             else if (name == "wireframe_color")  { set_wireframe_color(std::get<glm::vec3>(value)); }
+            else if (name == "audio_reactive")   { set_audio_reactive(std::get<bool>(value)); }
+            else if (name == "audio_smoothing")  { set_audio_smoothing(std::get<float>(value)); }
             else {
                  std::cerr << "Warning: Unknown parameter '" << name << "'." << std::endl;
             }
@@ -447,7 +487,6 @@ public:
 };
 
 // --- ЭКСПОРТИРУЕМЫЕ СИ-ФУНКЦИИ ---
-// Эти функции являются точкой входа для менеджера плагинов.
 
 extern "C" {
     WallpaperEffect* create_effect() {

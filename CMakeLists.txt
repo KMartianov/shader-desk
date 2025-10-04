@@ -1,3 +1,5 @@
+# ./CMakeLists.txt
+
 cmake_minimum_required(VERSION 3.13)
 project(interactive-wallpaper LANGUAGES C CXX)
 
@@ -8,18 +10,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Рекомендуется для удобства отладки/IDE
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# --- Пути ---
+set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
+set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+# Определяем путь для вывода всех плагинов. Эта переменная будет унаследована.
+set(PLUGIN_OUTPUT_DIR "${BIN_DIR}/effects")
+file(MAKE_DIRECTORY ${PLUGIN_OUTPUT_DIR})
+
+# --- Зависимости ---
 find_package(PkgConfig REQUIRED)
 find_package(glm REQUIRED)
 find_package(nlohmann_json REQUIRED)
-
-# Пути
-set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-
-# Скопируем общие шейдеры в бинарный каталог
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
-    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/shaders" DESTINATION "${BIN_DIR}")
-endif()
 
 # Wayland/GL ES зависимости через pkg-config
 pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
@@ -181,7 +182,7 @@ if(PROTOCOL_SOURCES STREQUAL "")
     endforeach()
 endif()
 
-# Основные исходники
+# --- Основные исходники приложения ---
 set(APP_SRC_FILES
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/interactive-wallpaper.cpp"
@@ -189,16 +190,14 @@ set(APP_SRC_FILES
     "${SRC_DIR}/input-handler.cpp"
     "${SRC_DIR}/pointer-daemon-client.cpp"
     "${SRC_DIR}/plugin-manager.cpp"
+    "${SRC_DIR}/audio-daemon-client.cpp"
+    
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-# Сборка основного приложения
+# --- Сборка основного приложения ---
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
 
-# Подключаем плагины как подпроект
-add_subdirectory(plugins)
-
-# Настройка основного приложения
 target_include_directories(interactive-wallpaper PRIVATE
     "${BIN_DIR}"
     "${PROTOCOL_OUTPUT_DIR}"
@@ -225,21 +224,7 @@ if(TARGET wayland_protocols)
     add_dependencies(interactive-wallpaper wayland_protocols)
 endif()
 
-# Установка путей для плагинов
-set(PLUGIN_OUTPUT_DIR "${BIN_DIR}/effects")
-file(MAKE_DIRECTORY ${PLUGIN_OUTPUT_DIR})
+# --- Подключаем директорию с плагинами для их сборки ---
+add_subdirectory(plugins)
 
-# Копирование шейдеров плагинов
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/ico-sphere-effect/shaders")
-    add_custom_target(copy_plugin_shaders ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/plugins/ico-sphere-effect/shaders"
-            "${PLUGIN_OUTPUT_DIR}/shaders"
-        COMMENT "Copying plugin shaders"
-    )
-
-    add_dependencies(interactive-wallpaper copy_plugin_shaders)
-endif()
-
-message(STATUS "Protocol sources: ${PROTOCOL_SOURCES}")
-message(STATUS "Include dirs: ${BIN_DIR} ${PROTOCOL_OUTPUT_DIR} ${SRC_DIR}")
+message(STATUS "Main project configured. Plugins will be built into: ${PLUGIN_OUTPUT_DIR}")

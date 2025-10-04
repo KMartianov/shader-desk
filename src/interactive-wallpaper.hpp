@@ -19,6 +19,8 @@
 #include <mutex>           
 #include <nlohmann/json.hpp>
 #include "wallpaper-effect.hpp"
+#include "audio-daemon-client.hpp"
+#include "audio-data.hpp"
 
 enum class RendererType {
     OPENGL_ES,
@@ -31,6 +33,9 @@ struct WallpaperConfig {
     RendererType renderer = RendererType::OPENGL_ES;
     bool interactive = true;
 };
+
+EffectParameterValue json_to_variant(const nlohmann::json& j);
+
 
 class InteractiveWallpaper {
 public:
@@ -143,6 +148,8 @@ private:
     void init_pointer_daemon();
     void handle_daemon_motion(double dx, double dy, double vx, double vy, double dt, bool normalized, const std::string& device_name);
 
+    std::unique_ptr<AudioDaemonClient> audio_client_; // <-- Добавляем клиент
+    void handle_audio_data(const AudioData& data);    // <-- Метод-обработчик данных
 
 
 

@@ -10,24 +10,6 @@
 using json = nlohmann::json;
 
 
-// Вспомогательная функция для конвертации JSON в наш variant
-EffectParameterValue json_to_variant(const json& j) {
-    if (j.is_boolean()) {
-        return j.get<bool>();
-    }
-    if (j.is_number_integer()) {
-        return j.get<int>();
-    }
-    if (j.is_number_float()) {
-        return j.get<float>();
-    }
-    if (j.is_array() && j.size() == 3) {
-        return glm::vec3(j[0].get<float>(), j[1].get<float>(), j[2].get<float>());
-    }
-    // Возвращаем float по умолчанию в случае неопределенного типа
-    return 0.0f; 
-}
-
 std::string get_plugin_directory() {
     // В реальном приложении путь лучше делать более надежным
     return std::string(getenv("HOME")) + "/.config/interactive-wallpaper/effects";

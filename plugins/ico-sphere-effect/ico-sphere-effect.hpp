@@ -3,7 +3,6 @@
 #ifndef ICO_SPHERE_EFFECT_HPP
 #define ICO_SPHERE_EFFECT_HPP
 
-#include "interactive-wallpaper.hpp"
 #include <GLES3/gl3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp> 
@@ -21,9 +20,11 @@ public:
     bool initialize(uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height) override;
     void cleanup() override;
+
+    void handle_audio_data(const AudioData& data) override; 
     void handle_pointer_motion(double dx, double dy, bool is_touchpad) override;
     
-    // --- Методы для конфигурации (остаются без изменений) ---
+    // --- Методы для конфигурации ---
     void set_wireframe_mode(bool enabled) { wireframe_mode = enabled; }
     void set_subdivisions(int value);
 
@@ -44,6 +45,10 @@ public:
     void set_rotation_decay(float value) { rotation_decay = value; }
     void set_min_rotation_speed(float value) { min_rotation_speed = value; }
     void set_max_rotation_speed(float value) { max_rotation_speed = value; }
+    void set_audio_reactive(bool enabled) { audio_reactive = enabled; }
+    void set_audio_smoothing(float value) { audio_smoothing = value; }
+    void set_bass_multiplier(float value) { bass_multiplier = value; }
+
     void update_effect_scaling();
     
     void set_sphere_scale(float scale) { 
@@ -53,11 +58,6 @@ public:
         }
     }
     float get_sphere_scale() const { return sphere_scale; }
-
-    // --- Эти методы больше не часть публичного API через WallpaperEffect, но могут использоваться внутри ---
-    void handle_pointer_move(double x, double y);
-    void handle_pointer_click(double x, double y, uint32_t button);
-
 
 protected:
     GLuint program = 0;
@@ -119,6 +119,17 @@ protected:
 
     GLuint compile_shader(GLenum type, const std::string& source);
     GLuint create_program(const std::string& vertex_src, const std::string& fragment_src);
+
+    // Аудио-реактивность
+    bool audio_reactive;
+    float audio_smoothing;
+    float bass_multiplier;
+    float smoothed_bass;
+    float smoothed_mid;
+    float smoothed_treble;
+    GLuint u_audio_bass;
+    GLuint u_audio_mid;
+    GLuint u_audio_treble;
 };
 
 #endif // ICO_SPHERE_EFFECT_HPP

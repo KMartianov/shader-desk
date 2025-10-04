@@ -18,6 +18,7 @@
 #include <cstdlib>
 
 #include <nlohmann/json.hpp>
+#include "utils.hpp"
 
 using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
 
@@ -100,6 +101,16 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg) : config(
         init_pointer_daemon();
     }
 
+    audio_client_ = std::make_unique<AudioDaemonClient>();
+    audio_client_->set_callback([this](const AudioData& data) {
+        this->handle_audio_data(data);
+    });
+    // get_default_audio_socket_path() взята из utils.hpp демона
+    if (!audio_client_->connect_and_listen(get_default_audio_socket_path())) {
+        std::cerr << "Warning: Could not connect to audio daemon." << std::endl;
+    }
+
+
     mouse_sensitivity = 0.05f;
     touchpad_sensitivity = 20.0f;
     
@@ -133,7 +144,12 @@ void InteractiveWallpaper::handle_pointer_motion(double dx, double dy) {
 // Destructor
 InteractiveWallpaper::~InteractiveWallpaper() {
     // Останавливаем мониторинг конфигурации
+    
     stop_config_monitor();
+
+    if (audio_client_) {
+        audio_client_->disconnect();
+    }
 
     // Clean up EGL resources first
     if (egl_context != EGL_NO_CONTEXT) {
@@ -207,6 +223,16 @@ InteractiveWallpaper::~InteractiveWallpaper() {
     }
     pointer_daemon.disconnect();
 
+}
+
+void InteractiveWallpaper::handle_audio_data(const AudioData& data) {
+    // Передаем данные каждому активному эффекту на каждом мониторе
+    for (auto& pair : outputs) {
+        auto& output = pair.second;
+        if (output && output->effect) {
+            output->effect->handle_audio_data(data);
+        }
+    }
 }
 
 

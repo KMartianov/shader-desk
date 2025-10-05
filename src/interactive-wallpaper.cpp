@@ -824,12 +824,19 @@ void InteractiveWallpaper::layer_surface_configure(void* data,
         // Инициализируем эффект только после первого создания поверхности
         if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
             if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
-                output->effect->initialize(width, height);
-                std::cout << "Effect initialized for output: " << output->name << std::endl;
+                // Проверяем результат инициализации
+                if (output->effect->initialize(width, height)) {
+                    std::cout << "Effect initialized for output: " << output->name << std::endl;
+                } else {
+                    std::cerr << "ERROR: Failed to initialize effect for output: " << output->name << ". Disabling it." << std::endl;
+                    // Если инициализация провалилась, сбрасываем эффект, чтобы не было падения
+                    output->effect.reset();
+                }
             } else {
                 std::cerr << "Failed to make EGL context current for effect initialization" << std::endl;
             }
         }
+
     } else {
         // Если поверхность уже есть, просто меняем размер окна
         if (output->egl_window) {

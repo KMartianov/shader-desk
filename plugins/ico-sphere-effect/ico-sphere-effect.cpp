@@ -83,7 +83,7 @@ IcoSphereEffect::IcoSphereEffect() {
     min_rotation_speed = 0.001f;
     constant_rotation_speed = 0.0f;
     mouse_sensitivity = 0.05f;
-    touchpad_sensitivity = 20.0f;
+    touchpad_sensitivity = 10.0f;
 
     // Инициализация аудио-параметров
     audio_reactive = true;

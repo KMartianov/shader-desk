@@ -191,9 +191,14 @@ set(APP_SRC_FILES
     "${SRC_DIR}/pointer-daemon-client.cpp"
     "${SRC_DIR}/plugin-manager.cpp"
     "${SRC_DIR}/audio-daemon-client.cpp"
+    "${SRC_DIR}/shader-utils.cpp"
     
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
+
+add_library(shader_utils SHARED shader-utils.cpp)
+target_include_directories(shader_utils PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 
 # --- Сборка основного приложения ---
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
@@ -217,6 +222,7 @@ target_link_libraries(interactive-wallpaper PRIVATE
     glm::glm
     dl
     pthread
+    shader_utils
 )
 
 # Если сгенерирован target wayland_protocols — добавить зависимость

@@ -1,6 +1,5 @@
 // src/ico-sphere-effect.cpp
 // Этот файл объединяет логику эффекта и код плагина для компиляции в единый .so файл.
-
 #define GLM_ENABLE_EXPERIMENTAL
 
 // --- НЕОБХОДИМЫЕ ЗАГОЛОВКИ ---
@@ -40,7 +39,6 @@ unsigned int get_midpoint_index(unsigned int i1, unsigned int i2,
                                std::vector<glm::vec3>& vertices,
                                std::map<std::pair<unsigned int, unsigned int>, unsigned int>& cache) {
     std::pair<unsigned int, unsigned int> edge_key(std::min(i1, i2), std::max(i1, i2));
-
     auto it = cache.find(edge_key);
     if (it != cache.end()) {
         return it->second;
@@ -49,7 +47,6 @@ unsigned int get_midpoint_index(unsigned int i1, unsigned int i2,
     glm::vec3 v1 = vertices[i1];
     glm::vec3 v2 = vertices[i2];
     glm::vec3 midpoint = glm::normalize((v1 + v2) * 0.5f);
-
     unsigned int new_index = vertices.size();
     vertices.push_back(midpoint);
     cache[edge_key] = new_index;
@@ -62,11 +59,9 @@ unsigned int get_midpoint_index(unsigned int i1, unsigned int i2,
 IcoSphereEffect::IcoSphereEffect() {
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(-1.0f, 1.0f); 
-
+    std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
     orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     angular_velocity = glm::vec3(dis(gen), dis(gen), dis(gen)) * 0.1f;
-    
     // Инициализация параметров по умолчанию
     wireframe_mode = true;
     subdivisions = 3;
@@ -84,7 +79,6 @@ IcoSphereEffect::IcoSphereEffect() {
     constant_rotation_speed = 0.0f;
     mouse_sensitivity = 0.05f;
     touchpad_sensitivity = 10.0f;
-
     // Инициализация аудио-параметров
     audio_reactive = true;
     audio_smoothing = 0.85f;
@@ -106,7 +100,6 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
     phases.clear();
     normals.clear();
     line_indices.clear();
-
     const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
 
     vertices = {
@@ -117,14 +110,12 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
         glm::normalize(glm::vec3( t,  0, -1)), glm::normalize(glm::vec3( t,  0,  1)),
         glm::normalize(glm::vec3(-t,  0, -1)), glm::normalize(glm::vec3(-t,  0,  1))
     };
-
     indices = {
         0, 11, 5,   0, 5, 1,    0, 1, 7,    0, 7, 10,   0, 10, 11,
         1, 5, 9,    5, 11, 4,   11, 10, 2,  10, 7, 6,   7, 1, 8,
         3, 9, 4,    3, 4, 2,    3, 2, 6,    3, 6, 8,    3, 8, 9,
         4, 9, 5,    2, 4, 11,   6, 2, 10,   8, 6, 7,    9, 8, 1
     };
-
     for (int i = 0; i < subdivisions_level; i++) {
         std::vector<unsigned int> new_indices;
         std::map<std::pair<unsigned int, unsigned int>, unsigned int> midpoint_cache;
@@ -180,12 +171,9 @@ void IcoSphereEffect::update_effect_scaling() {
 
 bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
-    
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
     std::string vert_src = load_shader_file(config_dir + "effects/shaders/sphere_vert.glsl");
     std::string frag_src = load_shader_file(config_dir + "effects/shaders/sphere_frag.glsl");
-
-    
     if (vert_src.empty() || frag_src.empty()) return false;
     
     program = create_program(vert_src, frag_src);
@@ -205,12 +193,10 @@ bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     u_pulse_amp = glGetUniformLocation(program, "pulse_amp");
     u_noise_amp = glGetUniformLocation(program, "noise_amp");
     u_sphere_scale = glGetUniformLocation(program, "sphere_scale");
-
     // Получаем ID новых uniform-переменных
     u_audio_bass = glGetUniformLocation(program, "audio_bass");
     u_audio_mid = glGetUniformLocation(program, "audio_mid");
     u_audio_treble = glGetUniformLocation(program, "audio_treble");
-
     generate_icosphere(subdivisions);
     
     glGenVertexArrays(1, &vao);
@@ -230,7 +216,8 @@ void IcoSphereEffect::update_buffers() {
     glBindVertexArray(vao);
     
     std::vector<float> vertex_data;
-    vertex_data.reserve(vertices.size() * 7); // 3 pos + 1 phase + 3 normal
+    vertex_data.reserve(vertices.size() * 7);
+    // 3 pos + 1 phase + 3 normal
     for (size_t i = 0; i < vertices.size(); i++) {
         vertex_data.push_back(vertices[i].x);
         vertex_data.push_back(vertices[i].y);
@@ -261,30 +248,46 @@ void IcoSphereEffect::update_buffers() {
 }
 
 void IcoSphereEffect::update_rotation(float dt) {
+    // Apply constant rotation if configured
     if (constant_rotation_speed > 0.0f) {
         glm::vec3 constant_axis = glm::vec3(0.0f, 1.0f, 0.0f);
         angular_velocity += constant_axis * constant_rotation_speed * dt;
     }
 
+    // Apply inertia decay
+    angular_velocity *= rotation_decay;
+
     float speed = glm::length(angular_velocity);
-    if (speed > max_rotation_speed) {
-        angular_velocity = glm::normalize(angular_velocity) * max_rotation_speed;
-        speed = max_rotation_speed;
-    }
-    if (speed < min_rotation_speed && speed > 1e-5f) {
-        angular_velocity = glm::normalize(angular_velocity) * min_rotation_speed;
-    }
-    if (speed < 1e-5f) {
-        angular_velocity = glm::vec3(0.0f);
-        return;
+
+    // If speed is below the minimum threshold
+    if (speed < min_rotation_speed) {
+        // If the minimum speed is essentially zero, stop the rotation completely
+        if (min_rotation_speed <= 1e-5f) {
+            angular_velocity = glm::vec3(0.0f);
+            return; // Exit early, no rotation to apply
+        } else {
+            // Otherwise, if there's any motion, boost it to the minimum speed
+            if (speed > 1e-5f) { // Avoid normalizing a zero vector
+                angular_velocity = glm::normalize(angular_velocity) * min_rotation_speed;
+            }
+        }
     }
 
-    glm::vec3 axis = glm::normalize(angular_velocity);
-    float angle = speed * dt;
-    glm::quat rotation_delta = glm::angleAxis(angle, axis);
-    orientation = glm::normalize(rotation_delta * orientation);
-    angular_velocity *= rotation_decay;
+    // Clamp to maximum speed, but only if max_rotation_speed is positive
+    if (max_rotation_speed > 0.0f && speed > max_rotation_speed) {
+        angular_velocity = glm::normalize(angular_velocity) * max_rotation_speed;
+    }
+
+    // Recalculate speed in case it was clamped and check if there's motion
+    speed = glm::length(angular_velocity);
+    if (speed > 1e-5f) {
+        glm::vec3 axis = glm::normalize(angular_velocity);
+        float angle = speed * dt;
+        glm::quat rotation_delta = glm::angleAxis(angle, axis);
+        orientation = glm::normalize(rotation_delta * orientation);
+    }
 }
+
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     if (needs_regeneration) {
@@ -301,7 +304,6 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glClearColor(background_color.r, background_color.g, background_color.b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
-
     glm::mat4 model = glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
@@ -322,9 +324,8 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniform1f(u_pulse_amp, scaled_pulse_amp);
     glUniform1f(u_noise_amp, scaled_noise_amp);
     glUniform1f(u_sphere_scale, sphere_scale);
-    
     // Передаём сглаженные аудиоданные напрямую в шейдер
-    std::cout << smoothed_bass << " " << smoothed_mid << " " << smoothed_treble << '\n';
+    //std::cout << smoothed_bass << " " << smoothed_mid << " " << smoothed_treble << '\n';
     glUniform1f(u_audio_bass, smoothed_bass);
     glUniform1f(u_audio_mid, smoothed_mid);
     glUniform1f(u_audio_treble, smoothed_treble);
@@ -409,7 +410,6 @@ GLuint IcoSphereEffect::create_program(const std::string& vertex_src, const std:
     glAttachShader(prog, vertex_shader);
     glAttachShader(prog, fragment_shader);
     glLinkProgram(prog);
-    
     GLint success;
     glGetProgramiv(prog, GL_LINK_STATUS, &success);
     if (!success) {
@@ -451,6 +451,8 @@ public:
             {"noise_amp", "Noise Amplitude", noise_amp},
             {"rotation_decay", "Inertia decay (0.9-1.0)", rotation_decay},
             {"max_rotation_speed", "Maximum rotation speed", max_rotation_speed},
+            {"min_rotation_speed", "Minimum rotation speed", min_rotation_speed},
+            {"constant_rotation_speed", "Constant rotation speed", constant_rotation_speed},
             {"background_color", "Background clear color", background_color},
             {"wireframe_color", "Color of the wireframe lines", wireframe_color},
             // Параметры для управления аудио-реакцией
@@ -473,6 +475,8 @@ public:
             else if (name == "noise_amp")    { set_noise_amp(std::get<float>(value)); }
             else if (name == "rotation_decay") { set_rotation_decay(std::get<float>(value)); }
             else if (name == "max_rotation_speed") { set_max_rotation_speed(std::get<float>(value)); }
+            else if (name == "min_rotation_speed") { set_min_rotation_speed(std::get<float>(value)); }
+            else if (name == "constant_rotation_speed") { set_constant_rotation_speed(std::get<float>(value)); }
             else if (name == "background_color") { set_background_color(std::get<glm::vec3>(value)); }
             else if (name == "wireframe_color")  { set_wireframe_color(std::get<glm::vec3>(value)); }
             else if (name == "audio_reactive")   { set_audio_reactive(std::get<bool>(value)); }

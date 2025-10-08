@@ -72,7 +72,6 @@ void PluginManager::discover_plugins() {
     }
 }
 
-// ИСПРАВЛЕННАЯ СИГНАТУРА - теперь возвращает WallpaperEffectPtr
 WallpaperEffectPtr PluginManager::create_effect(const std::string& effect_name) {
     for (const auto& plugin : loaded_plugins) {
         if (plugin->name == effect_name) {

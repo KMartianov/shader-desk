@@ -47,3 +47,5 @@ _deps
 CMakeUserPresets.json
 
 build
+utilities
+.log

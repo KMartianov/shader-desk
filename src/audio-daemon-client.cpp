@@ -23,7 +23,6 @@ void AudioDaemonClient::set_callback(AudioDataCallback cb) {
     callback_ = std::move(cb);
 }
 
-// ИСПРАВЛЕННАЯ ВЕРСИЯ МЕТОДА
 bool AudioDaemonClient::connect_and_listen(const std::string& socket_path) {
     socket_path_ = socket_path;
 
@@ -44,8 +43,6 @@ bool AudioDaemonClient::connect_and_listen(const std::string& socket_path) {
     memset(&server_addr_, 0, sizeof(server_addr_));
     server_addr_.sun_family = AF_UNIX;
     strncpy(server_addr_.sun_path, socket_path_.c_str(), sizeof(server_addr_.sun_path) - 1);
-
-    // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
     
     // 1. Удаляем старый файл сокета, если он существует. Это предотвращает ошибку "Address already in use".
     unlink(socket_path_.c_str());
@@ -58,8 +55,6 @@ bool AudioDaemonClient::connect_and_listen(const std::string& socket_path) {
         return false;
     }
     
-    // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
     running_ = true;
     listener_thread_ = std::thread(&AudioDaemonClient::listen_loop, this);
 

@@ -591,9 +591,6 @@ bool InteractiveWallpaper::initialize() {
     return true;
 }
 
-// Main loop
-// src/interactive-wallpaper.cpp (ИСПРАВЛЕННАЯ ВЕРСИЯ)
-
 void InteractiveWallpaper::run() {
     if (!display) return;
 

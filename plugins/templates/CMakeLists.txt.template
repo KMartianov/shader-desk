@@ -34,7 +34,7 @@ target_include_directories({{PROJECT_NAME}} PRIVATE
 target_link_libraries({{PROJECT_NAME}} PRIVATE
     glm::glm
     ${GLESv2_LIBRARIES}
-    shader-utils
+    shader_utils
 )
 
 # --- Copy shaders to build directory post-build ---

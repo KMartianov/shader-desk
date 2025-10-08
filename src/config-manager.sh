@@ -2,68 +2,260 @@
 # config-manager.sh - configuration manager for interactive-wallpaper
 
 CONFIG_DIR="$HOME/.config/interactive-wallpaper"
+EFFECTS_DIR="$CONFIG_DIR/effects"
 CONFIG_FILE="$CONFIG_DIR/config.json"
-DEFAULT_CONFIG='{
-  "effect": "sphere",
-  "interactive": true,
-  "sphere_scale": 1.0,
-  "wireframe_mode": true,
-  "subdivisions": 3,
-  "oscill_amp": 0.1,
-  "oscill_freq": 2.0,
-  "wave_amp": 0.05,
-  "wave_freq": 8.0,
-  "twist_amp": 0.08,
-  "pulse_amp": 0.03,
-  "noise_amp": 0.02,
-  "background_color": [0.1137, 0.1137, 0.1255],
-  "wireframe_color": [0.5, 0.5, 0.7],
-  "touchpad_sensitivity": 0.3,
-  "mouse_sensitivity": 2.5,
-  "constant_rotation_speed": 0.1,
-  "rotation_decay": 0.95,
-  "min_rotation_speed": 0.001,
-  "max_rotation_speed": 5.0
-}'
 
-# Create directory and config file if they don't exist
+# Helper function to check for jq
+check_jq() {
+    if ! command -v jq &> /dev/null; then
+        echo "Error: jq is not installed. It is required for this script." >&2
+        echo "Please install it with: sudo apt install jq" >&2
+        exit 1
+    fi
+}
+
+# Converts a project name like 'ico-sphere-effect' to a pretty name 'Ico Sphere Effect'
+project_to_pretty_name() {
+    local project_name="$1"
+    # Replace hyphens with spaces and capitalize words
+    echo "$project_name" | sed -e 's/-/ /g' -e 's/\b\(.\)/\u\1/g'
+}
+
+# Discovers available plugins by looking for .so files
+discover_plugins() {
+    if [ ! -d "$EFFECTS_DIR" ]; then
+        return
+    fi
+    for so_file in "$EFFECTS_DIR"/*.so; do
+        if [ -f "$so_file" ]; then
+            # Get filename without extension
+            basename "$so_file" .so
+        fi
+    done
+}
+
+# Parses shader files for a given plugin to extract default parameters as a JSON string
+get_plugin_params_json() {
+    local plugin_name="$1"
+    local shader_dir="$EFFECTS_DIR/shaders/$plugin_name"
+    local json_output="{}"
+
+    if [ ! -d "$shader_dir" ]; then
+        echo "{}"
+        return
+    fi
+
+    # Find all shader files in the directory
+    local shader_files
+    shader_files=$(find "$shader_dir" -type f \( -name "*.glsl" -o -name "*.vert" -o -name "*.frag" \))
+
+    if [ -z "$shader_files" ]; then
+        echo "{}"
+        return
+    fi
+
+    # Use process substitution (< <(...)) to avoid creating a subshell for the while loop.
+    # This ensures that modifications to 'json_output' are not lost.
+    while IFS='|' read -r name type value _; do
+        # Trim whitespace
+        name=$(echo "$name" | xargs)
+        type=$(echo "$type" | xargs)
+        value=$(echo "$value" | xargs)
+
+        # Skip empty lines that might result from parsing
+        if [ -z "$name" ]; then
+            continue
+        fi
+
+        local processed_value
+        case "$type" in
+            "bool")
+                # Ensure lowercase true/false for jq
+                processed_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+                ;;
+            "int"|"float")
+                processed_value="$value"
+                ;;
+            "vec3")
+                # Extracts numbers from "glm::vec3(0.1, 0.2, 0.3)" -> "[0.1,0.2,0.3]"
+                processed_value=$(echo "$value" | sed -n 's/.*(\(.*\)).*/[\1]/p' | tr -d '[:space:]f')
+                if [[ -z "$processed_value" ]]; then
+                    # Fallback for simple comma-separated values like "0.1, 0.2, 0.3"
+                    processed_value="[$(echo "$value" | tr -d '[:space:]f')]"
+                fi
+                ;;
+            *)
+                # Unknown type, treat as string. Should be quoted.
+                processed_value="\"$value\""
+                ;;
+        esac
+
+        # jq requires a valid value. If processing failed, skip.
+        if [[ -z "$processed_value" ]]; then
+            echo "Warning: Could not process value for param '$name' ('$value'). Skipping." >&2
+            continue
+        fi
+        
+        json_output=$(echo "$json_output" | jq --arg key "$name" --argjson val "$processed_value" '. + {($key): $val}')
+    done < <(grep -h "// @param" $shader_files | sed 's|// @param||')
+    
+    echo "$json_output"
+}
+
+
+# Create directory and a comprehensive config file
 init_config() {
-    if [ ! -d "$CONFIG_DIR" ]; then
-        mkdir -p "$CONFIG_DIR"
+    check_jq
+
+    if [ ! -d "$EFFECTS_DIR" ]; then
+        mkdir -p "$EFFECTS_DIR"
         echo "Configuration directory created: $CONFIG_DIR"
+        echo "Effects directory created: $EFFECTS_DIR"
+        echo "NOTE: You need to copy your compiled plugin (.so) files and their shaders to this directory."
     fi
     
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo "$DEFAULT_CONFIG" > "$CONFIG_FILE"
-        echo "Default configuration file created: $CONFIG_FILE"
+    echo "Scanning for plugins..."
+    local plugins
+    plugins=$(discover_plugins)
+    
+    if [ -z "$plugins" ]; then
+        echo "Warning: No plugins (.so files) found in $EFFECTS_DIR."
+        echo "Creating a placeholder config file. Please add plugins and run 'init' again."
+        # Create a minimal file if no plugins are found
+        jq -n '{
+          "effect_name": "",
+          "interactive": true,
+          "mouse_sensitivity": 2.5,
+          "touchpad_sensitivity": 0.3,
+          "effect_settings": {},
+          "effects_defaults": {}
+        }' > "$CONFIG_FILE"
+        echo "Placeholder configuration file created: $CONFIG_FILE"
+        return
     fi
+
+    local default_effect_pretty_name=""
+    local defaults_json="{}"
+    
+    for plugin in $plugins; do
+        local pretty_name
+        pretty_name=$(project_to_pretty_name "$plugin")
+        
+        # Set the first found plugin as the default
+        if [ -z "$default_effect_pretty_name" ]; then
+            default_effect_pretty_name="$pretty_name"
+        fi
+        
+        echo " - Found plugin '$pretty_name' ($plugin). Parsing parameters..."
+        local params_json
+        params_json=$(get_plugin_params_json "$plugin")
+        
+        defaults_json=$(echo "$defaults_json" | jq --arg key "$pretty_name" --argjson val "$params_json" '. + {($key): $val}')
+    done
+
+    local default_settings
+    default_settings=$(echo "$defaults_json" | jq --arg key "$default_effect_pretty_name" '.[$key]')
+
+    # Start with a base config and merge in the dynamic parts
+    jq -n \
+      --arg effect_name "$default_effect_pretty_name" \
+      --argjson settings "$default_settings" \
+      --argjson defaults "$defaults_json" \
+      '{
+        "effect_name": $effect_name,
+        "interactive": true,
+        "mouse_sensitivity": 2.5,
+        "touchpad_sensitivity": 0.3
+      } + {"effect_settings": $settings} + {"effects_defaults": $defaults}' > "$CONFIG_FILE"
+
+    echo "Default configuration file created: $CONFIG_FILE"
+    echo "Default effect set to: $default_effect_pretty_name"
 }
 
 # Read value from configuration
 get_config_value() {
     local key="$1"
-    jq -r ".$key" "$CONFIG_FILE" 2>/dev/null
+    # First check in effect_settings, then in the root for global settings
+    local value
+    value=$(jq -r ".effect_settings.\"$key\" // .\"$key\"" "$CONFIG_FILE" 2>/dev/null)
+    
+    if [[ "$value" != "null" ]]; then
+        echo "$value"
+    else
+        echo "Error: Key '$key' not found in configuration." >&2
+        return 1
+    fi
 }
 
 # Set value in configuration
 set_config_value() {
     local key="$1"
     local value="$2"
+    local scope="effect_settings"
+
+    if [[ "$1" == "--global" ]]; then
+        scope="root"
+        key="$2"
+        value="$3"
+    fi
+
+    if [[ "$scope" == "root" ]]; then
+        jq ".$key = $value" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && \
+        mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+        echo "Set global: $key = $value"
+    else
+        jq ".effect_settings.\"$key\" = $value" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && \
+        mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+        echo "Set effect parameter: $key = $value"
+    fi
+}
+
+# List all discovered effects
+list_effects() {
+    echo "Available effects:"
+    local plugins
+    plugins=$(discover_plugins)
+    if [ -z "$plugins" ]; then
+        echo "No plugins found in $EFFECTS_DIR"
+        return
+    fi
+    for plugin in $plugins; do
+        echo "  - $(project_to_pretty_name "$plugin")"
+    done
+}
+
+# Switch the active effect and load its default settings
+switch_effect() {
+    local pretty_name="$1"
     
-    if ! command -v jq &> /dev/null; then
-        echo "Error: jq is not installed. Install with: sudo apt install jq"
+    if ! jq -e ".effects_defaults | has(\"$pretty_name\")" "$CONFIG_FILE" > /dev/null; then
+        echo "Error: Effect '$pretty_name' not found in configuration defaults." >&2
+        echo "Run '$0 list' to see available effects." >&2
         return 1
     fi
     
-    jq ".$key = $value" "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && \
+    # Get the defaults for the new effect
+    local new_settings
+    new_settings=$(jq ".effects_defaults.\"$pretty_name\"" "$CONFIG_FILE")
+    
+    # Update the config file
+    jq \
+      --arg name "$pretty_name" \
+      --argjson settings "$new_settings" \
+      '(.effect_name = $name) | (.effect_settings = $settings)' \
+      "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && \
     mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
-    echo "Set: $key = $value"
+    
+    echo "Switched active effect to: $pretty_name"
+    echo "Effect settings have been reset to default."
 }
+
 
 # Show current configuration
 show_config() {
+    check_jq
     if [ -f "$CONFIG_FILE" ]; then
-        cat "$CONFIG_FILE" | jq .
+        jq . "$CONFIG_FILE"
     else
         echo "Configuration file not found: $CONFIG_FILE"
     fi
@@ -91,61 +283,40 @@ monitor_config() {
     
     echo "Monitoring configuration changes... (Ctrl+C to exit)"
     while true; do
-        inotifywait -e modify "$CONFIG_FILE" 2>/dev/null
-        echo "Configuration changed: $(date)"
-        # Here you can add a call to reload configuration in the application
+        inotifywait -q -e modify "$CONFIG_FILE"
+        echo "Configuration changed: $(date). (The application should reload it automatically)"
     done
 }
-
-# Generate C++ configuration
-generate_cpp_config() {
-    cat << 'EOF'
-// generated_config.hpp - automatically generated configuration file
-#pragma once
-
-struct WallpaperConfig {
-    const char* effect = "sphere";
-    bool wireframe_mode = true;
-    int subdivisions = 3; 
-    float oscill_amp = 0.1f;
-    float oscill_freq = 2.0f;
-    float wave_amp = 0.05f;
-    float wave_freq = 8.0f;
-    float twist_amp = 0.08f;
-    float pulse_amp = 0.03f;
-    float noise_amp = 0.02f;
-    float background_color[3] = {0.1137f, 0.1137f, 0.1255f};
-    float wireframe_color[3] = {0.5f, 0.5f, 0.7f};
-    bool interactive = true;
-};
-
-inline WallpaperConfig load_config() {
-    return WallpaperConfig{};
-}
-EOF
-}
-
 
 # Help
 show_help() {
     cat << EOF
 Usage: $0 [command]
 
+Enhanced configuration manager for interactive-wallpaper with plugin support.
+
 Commands:
-  init      - initialize configuration
-  show      - show current configuration
-  edit      - edit configuration
-  monitor   - monitor configuration changes
-  get [key] - get parameter value
-  set [key] [value] - set parameter value
-  generate  - generate C++ header file
-  help      - show this help
+  init          - Initialize config by scanning for plugins and their parameters.
+  show          - Show the current configuration in JSON format.
+  edit          - Open the configuration file in a text editor.
+  monitor       - Monitor the configuration file for changes.
+  
+  list          - List all available effects (plugins).
+  switch [name] - Switch the active effect to '[name]' and load its defaults.
+                  Use quotes for names with spaces, e.g., '$0 switch "Pulse Color Effect"'.
+  
+  get [key]     - Get a value. Checks effect parameters first, then global settings.
+  set [key] [val] - Set an effect parameter's value.
+  set --global [key] [val] - Set a global configuration value.
 
 Examples:
   $0 init
-  $0 set wireframe_mode false
-  $0 get effect
-  $0 monitor
+  $0 list
+  $0 switch "Pulse Color Effect"
+  $0 set pulse_speed 2.0
+  $0 set --global interactive false
+  $0 get pulse_speed
+  $0 get interactive
 EOF
 }
 
@@ -163,29 +334,49 @@ case "$1" in
     "monitor")
         monitor_config
         ;;
+    "list")
+        list_effects
+        ;;
+    "switch")
+        if [ -z "$2" ]; then
+            echo "Error: Specify the effect name to switch to." >&2
+            exit 1
+        fi
+        switch_effect "$2"
+        ;;
     "get")
         if [ -z "$2" ]; then
-            echo "Specify parameter to read"
+            echo "Error: Specify parameter to read." >&2
             exit 1
         fi
         get_config_value "$2"
         ;;
     "set")
-        if [ -z "$2" ] || [ -z "$3" ]; then
-            echo "Specify parameter and value"
-            exit 1
+        if [[ "$2" == "--global" ]]; then
+            if [ -z "$3" ] || [ -z "$4" ]; then
+                echo "Error: Specify global parameter and value." >&2
+                exit 1
+            fi
+            set_config_value --global "$3" "$4"
+        else
+            if [ -z "$2" ] || [ -z "$3" ]; then
+                echo "Error: Specify parameter and value." >&2
+                exit 1
+            fi
+            set_config_value "$2" "$3"
         fi
-        set_config_value "$2" "$3"
-        ;;
-    "generate")
-        generate_cpp_config
         ;;
     "help"|"-h"|"--help")
         show_help
         ;;
+    "")
+        echo "No command specified." >&2
+        show_help
+        exit 1
+        ;;
     *)
         echo "Unknown command: $1"
-        echo "Use: $0 help for help"
+        echo "Use '$0 help' for a list of commands."
         exit 1
         ;;
 esac

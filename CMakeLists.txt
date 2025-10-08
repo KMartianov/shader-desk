@@ -196,8 +196,8 @@ set(APP_SRC_FILES
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-add_library(shader_utils SHARED shader-utils.cpp)
-target_include_directories(shader_utils PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_library(shader_utils SHARED "${SRC_DIR}/shader-utils.cpp")
+target_include_directories(shader_utils PRIVATE "${SRC_DIR}")
 
 
 # --- Сборка основного приложения ---

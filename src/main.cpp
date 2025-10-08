@@ -35,7 +35,6 @@ int main(int argc, char** argv) {
     std::cout << "Attempting to load effect: '" << effect_name << "'" << std::endl;
 
     // 4. Создание экземпляра эффекта через менеджер
-    // ИЗМЕНЕНИЕ ЗДЕСЬ: Тип переменной effect теперь WallpaperEffectPtr
     WallpaperEffectPtr effect = plugin_manager.create_effect(effect_name);
     
     if (!effect) {

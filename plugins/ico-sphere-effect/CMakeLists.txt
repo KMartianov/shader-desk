@@ -39,7 +39,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
         TARGET ico-sphere-effect POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-                "${PLUGIN_OUTPUT_DIR}/shaders"
+                "${PLUGIN_OUTPUT_DIR}/shaders/ico-sphere-effect"
         COMMENT "Copying ico-sphere-effect shaders"
     )
 endif()

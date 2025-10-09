@@ -187,7 +187,6 @@ set(APP_SRC_FILES
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/interactive-wallpaper.cpp"
     "${SRC_DIR}/config-loader.cpp"
-    "${SRC_DIR}/input-handler.cpp"
     "${SRC_DIR}/pointer-daemon-client.cpp"
     "${SRC_DIR}/plugin-manager.cpp"
     "${SRC_DIR}/audio-daemon-client.cpp"

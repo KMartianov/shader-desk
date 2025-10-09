@@ -81,18 +81,7 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg) : config(
         return;
     }
     
-    // Set up input callbacks
-    input_handler.setCallbacks(
-        [this](double x, double y) { this->handle_pointer_move(x, y); },
-        [this](double x, double y, uint32_t button) { this->handle_pointer_click(x, y, button); },
-        [this](double dx, double dy, double vx, double vy, double dt) {
-            // Существующая логика по перемещению (dx,dy)
-            this->handle_pointer_motion(dx, dy);
-
-            // Новая логика: обработать/передать скорости дальше
-            this->handle_pointer_velocity(vx, vy, dt);
-        }
-    );
+   
 
     if (!init_egl()) {
         std::cerr << "Failed to initialize EGL" << std::endl;
@@ -129,16 +118,9 @@ void InteractiveWallpaper::process_pointer_motion(double dx, double dy, bool is_
     for (auto& pair : outputs) {
         auto& output = pair.second;
         if (output->effect) {
-            output->effect->handle_pointer_motion(effective_dx, effective_dy, is_touchpad);
+            //output->effect->handle_pointer_motion(effective_dx, effective_dy, is_touchpad);
         }
     }
-}
-
-void InteractiveWallpaper::handle_pointer_motion(double dx, double dy) {
-    std::cout << "Wallpaper: Pointer motion vector (" << dx << ", " << dy << ")" << std::endl;
-    
-    // Wayland события считаем мышью (не тачпадом)
-    process_pointer_motion(dx, dy, false);
 }
 
 // Destructor
@@ -240,13 +222,12 @@ void InteractiveWallpaper::init_pointer_daemon() {
     pointer_daemon.set_callbacks(
         [this](double dx, double dy, double vx, double vy, double dt, bool normalized, const std::string& device_name) {
             this->handle_daemon_motion(dx, dy, vx, vy, dt, normalized, device_name);
+            
         },
-        [this](double x, double y) {
-            this->handle_pointer_move(x, y);
-        },
-        [this](double x, double y, uint32_t button) {
-            this->handle_pointer_click(x, y, button);
-        }
+        // 2. MoveCallback (добавили nullptr)
+        nullptr,
+        // 3. ClickCallback (добавили nullptr)
+        nullptr
     );
     
     if (!pointer_daemon.connect()) {
@@ -425,45 +406,6 @@ void InteractiveWallpaper::stop_config_monitor() {
         config_monitor_thread.join();
     }
 }
-
-// ------------------------- Pointer / input handling -------------------------
-
-void InteractiveWallpaper::handle_pointer_velocity(double vx, double vy, double dt) {
-    std::cout << "Wallpaper: Pointer velocity (" << vx << ", " << vy << ") units/s, dt=" << dt << "s" << std::endl;
-
-    for (auto& pair : outputs) {
-        auto& output = pair.second;
-        if (output->effect) {
-            // Если эффект поддерживает velocities — можно вызвать соответствующий метод.
-            // Пока что выводим в лог; при необходимости расширить интерфейс WallpaperEffect.
-            // output->effect->handle_pointer_velocity(vx, vy, dt);
-        }
-    }
-}
-
-void InteractiveWallpaper::handle_pointer_move(double x, double y) {
-    std::cout << "Wallpaper: Pointer moved to (" << x << ", " << y << ")" << std::endl;
-    
-    for (auto& pair : outputs) {
-        auto& output = pair.second;
-        if (output->effect) {
-            //output->effect->handle_pointer_move(x, y);
-        }
-    }
-}
-
-void InteractiveWallpaper::handle_pointer_click(double x, double y, uint32_t button) {
-    std::cout << "Wallpaper: Pointer clicked at (" << x << ", " << y << ") button: " << button << std::endl;
-    
-    for (auto& pair : outputs) {
-        auto& output = pair.second;
-        if (output->effect) {
-            //output->effect->handle_pointer_click(x, y, button);
-        }
-    }
-}
-
-
 
 // ------------------------- EGL initialization -------------------------
 

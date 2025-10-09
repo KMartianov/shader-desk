@@ -172,8 +172,8 @@ void IcoSphereEffect::update_effect_scaling() {
 bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
-    std::string vert_src = load_shader_file(config_dir + "effects/shaders/sphere_vert.glsl");
-    std::string frag_src = load_shader_file(config_dir + "effects/shaders/sphere_frag.glsl");
+    std::string vert_src = load_shader_file(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
+    std::string frag_src = load_shader_file(config_dir + "effects/shaders/ico-sphere-effect/sphere_frag.glsl");
     if (vert_src.empty() || frag_src.empty()) return false;
     
     program = create_program(vert_src, frag_src);

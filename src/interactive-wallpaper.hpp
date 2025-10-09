@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
-#include "input-handler.hpp"
+//#include "input-handler.hpp"
 #include "pointer-daemon-client.hpp"
 #include <thread>          
 #include <atomic>          
@@ -114,7 +114,7 @@ private:
 
     std::atomic<bool> config_needs_apply{false}; 
     // Input handling
-    InputHandler input_handler;
+    //InputHandler input_handler;
 
     // EGL context
     EGLDisplay egl_display = EGL_NO_DISPLAY;
@@ -137,12 +137,6 @@ private:
     void create_egl_surface(Output* output);
     void create_layer_surface(Output* output);
     
-    // Input callbacks
-    void handle_pointer_move(double x, double y);
-    void handle_pointer_click(double x, double y, uint32_t button);
-    void handle_pointer_motion(double dx, double dy);
-    void handle_pointer_velocity(double vx, double vy, double dt);
-
     void check_egl_error(const std::string& operation);
     void apply_config_to_effect(Output* output);
     void init_pointer_daemon();

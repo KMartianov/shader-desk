@@ -5,6 +5,7 @@
 // --- НЕОБХОДИМЫЕ ЗАГОЛОВКИ ---
 #include "ico-sphere-effect.hpp"
 #include "wallpaper-effect.hpp"
+#include "shader-utils.hpp" 
 
 #include <iostream>
 #include <fstream>
@@ -23,7 +24,7 @@
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 // Загружает содержимое текстового файла (шейдера) в строку
-std::string load_shader_file(const std::string& filepath) {
+std::string load_shader_source(const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
         std::cerr << "Failed to open shader file: " << filepath << std::endl;
@@ -172,11 +173,11 @@ void IcoSphereEffect::update_effect_scaling() {
 bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
-    std::string vert_src = load_shader_file(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
-    std::string frag_src = load_shader_file(config_dir + "effects/shaders/ico-sphere-effect/sphere_frag.glsl");
+    std::string vert_src = load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
+    std::string frag_src = load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_frag.glsl");
     if (vert_src.empty() || frag_src.empty()) return false;
     
-    program = create_program(vert_src, frag_src);
+    program = shader_utils::create_shader_program(vert_src, frag_src);
     if (!program) return false;
     
     u_model = glGetUniformLocation(program, "model");
@@ -256,7 +257,6 @@ void IcoSphereEffect::update_rotation(float dt) {
 
     // Apply inertia decay
     angular_velocity *= rotation_decay;
-
     float speed = glm::length(angular_velocity);
 
     // If speed is below the minimum threshold
@@ -357,7 +357,8 @@ void IcoSphereEffect::cleanup() {
 }
 
 void IcoSphereEffect::handle_pointer_motion(double dx, double dy, bool is_touchpad) {
-    float sensitivity = is_touchpad ? touchpad_sensitivity : mouse_sensitivity;
+    float sensitivity = is_touchpad ?
+    touchpad_sensitivity : mouse_sensitivity;
     glm::vec3 impulse = glm::vec3(dy, dx, 0.0f) * sensitivity;
     angular_velocity += impulse;
 }
@@ -384,47 +385,9 @@ void IcoSphereEffect::set_subdivisions(int value) {
     }
 }
 
-GLuint IcoSphereEffect::compile_shader(GLenum type, const std::string& source) {
-    GLuint shader = glCreateShader(type);
-    const char* src = source.c_str();
-    glShaderSource(shader, 1, &src, nullptr);
-    glCompileShader(shader);
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "Shader compilation failed:\n" << infoLog << std::endl;
-        glDeleteShader(shader);
-        return 0;
-    }
-    return shader;
-}
-
-GLuint IcoSphereEffect::create_program(const std::string& vertex_src, const std::string& fragment_src) {
-    GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_src);
-    GLuint fragment_shader = compile_shader(GL_FRAGMENT_SHADER, fragment_src);
-    if (!vertex_shader || !fragment_shader) return 0;
-    
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, vertex_shader);
-    glAttachShader(prog, fragment_shader);
-    glLinkProgram(prog);
-    GLint success;
-    glGetProgramiv(prog, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(prog, 512, nullptr, infoLog);
-        std::cerr << "Program linking failed:\n" << infoLog << std::endl;
-        glDeleteProgram(prog);
-        prog = 0;
-    }
-    
-    glDeleteShader(vertex_shader);
-    glDeleteShader(fragment_shader);
-    return prog;
-}
-
+// FIX 3: Removed the redundant IcoSphereEffect::compile_shader and 
+// IcoSphereEffect::create_shader_program function definitions.
+// The functionality is now provided by shader-utils.hpp.
 
 // --- КЛАСС-АДАПТЕР ДЛЯ ПЛАГИНА ---
 

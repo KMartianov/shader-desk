@@ -31,6 +31,7 @@ target_include_directories(ico-sphere-effect PRIVATE
 target_link_libraries(ico-sphere-effect PRIVATE
     glm::glm
     ${GLESv2_LIBRARIES}
+    shader_utils
 )
 
 

@@ -11,7 +11,6 @@
 #include <unordered_map>
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
-//#include "input-handler.hpp"
 #include "pointer-daemon-client.hpp"
 #include <thread>          
 #include <atomic>          
@@ -59,7 +58,6 @@ public:
         wl_egl_window* egl_window = nullptr;
         EGLSurface egl_surface = EGL_NO_SURFACE;
         
-        // FIX: Add a default constructor to initialize the unique_ptr
         Output() : effect(nullptr, nullptr) {}
     };
 

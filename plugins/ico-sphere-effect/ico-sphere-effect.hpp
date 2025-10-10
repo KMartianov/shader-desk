@@ -9,7 +9,6 @@
 #include <vector>
 #include <string>
 #include <random>
-
 #include "wallpaper-effect.hpp"
 
 class IcoSphereEffect : public WallpaperEffect {
@@ -116,9 +115,6 @@ protected:
 
     float min_rotation_speed = 0.001f;
     float max_rotation_speed = 5.0f;
-
-    GLuint compile_shader(GLenum type, const std::string& source);
-    GLuint create_program(const std::string& vertex_src, const std::string& fragment_src);
 
     // Аудио-реактивность
     bool audio_reactive;

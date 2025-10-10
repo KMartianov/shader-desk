@@ -1,106 +1,140 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERBOSE="${VERBOSE:-}"
-log() { 
-    if [ -n "${VERBOSE:-}" ]; then
-        printf '%s\n' "$*" >&2
-    fi
+# --- Конфигурация путей ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Предполагаем, что скрипт лежит в корне проекта
+PROJECT_ROOT="${PROJECT_ROOT:-$SCRIPT_DIR}"
+
+# Пути к исполняемым файлам
+WP_BIN="${PROJECT_ROOT}/build/interactive-wallpaper"
+# Предположим, что демон мыши - это отдельный проект в той же директории
+MOUSE_DAEMON_DIR="${PROJECT_ROOT}/../mouse" # Пример
+MOUSE_BIN="${MOUSE_DAEMON_DIR}/build/evdev-pointer-daemon"
+
+# --- Настройка сокета ---
+SOCKET_NAME="evdev-pointer.sock"
+DEST_SOCKET="${XDG_RUNTIME_DIR:-/tmp}/${SOCKET_NAME}"
+
+# --- Механизм блокировки (Locking) ---
+# Путь к lock-файлу для предотвращения двойного запуска
+LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/interactive-wallpaper.lock"
+
+# Пытаемся создать lock-директорию. Если не получается - другой скрипт уже работает.
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "Script is already running. Exiting." >&2
+    exit 1
+fi
+# Гарантируем удаление lock-директории при выходе из скрипта
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
+# --- Функции ---
+
+# Проверяет, запущен ли процесс по его имени в командной строке.
+is_running() {
+    local bin_path="$1"
+    # Используем -f для поиска по всей командной строке, так как имя процесса (comm)
+    # может быть обрезано до 15 символов, что вызывает проблемы для длинных имен.
+    pgrep -f "$(basename "$bin_path")" > /dev/null
 }
 
-# Восстановленные переменные для определения путей
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-WP_DIR="${WP_DIR:-${SCRIPT_DIR}}"
-MOUSE_DIR="${MOUSE_DIR:-$(cd "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)/mouse}"
-SOCKET_NAME="${SOCKET_NAME:-evdev-pointer.sock}"
-WP_BIN="${WP_BIN:-${WP_DIR}/build/interactive-wallpaper}"
-MOUSE_BIN="${MOUSE_BIN:-${MOUSE_DIR}/build/evdev-pointer-daemon}"
+# Завершает все экземпляры процесса по полному пути и ждет их остановки.
+kill_and_wait() {
+    local bin_path="$1"
+    local bin_name
+    bin_name="$(basename "$bin_path")"
 
-# default socket computation
-default_socket() {
-    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-        echo "${XDG_RUNTIME_DIR}/${SOCKET_NAME}"
-    else
-        echo "/tmp/evdev-pointer-$(id -u).sock"
+    if ! is_running "$bin_path"; then
+        return 0 # Процесс не запущен, тихо выходим.
     fi
-}
-DEST_SOCKET="$(default_socket)"
 
-# Функция для завершения процессов по пути к бинарнику
-kill_existing() {
-    local bin="$1"
-    local bin_name="$(basename "$bin")"
-    
-    log "Looking for existing processes: $bin_name"
-    
-    # Ищем PID процессов с таким же исполняемым файлом
-    if command -v pgrep >/dev/null 2>&1; then
-        # Используем pgrep для поиска по имени
-        for pid in $(pgrep -x "$bin_name" 2>/dev/null || true); do
-            if [ -r "/proc/$pid/exe" ]; then
-                local exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
-                if [ "$exe" = "$(readlink -f "$bin")" ]; then
-                    log "Killing process $pid: $bin_name"
-                    kill "$pid" 2>/dev/null || true
-                fi
-            fi
-        done
-    fi
-    
-    # Дополнительная проверка через ps
-    for pid in $(ps aux | grep "$(readlink -f "$bin")" | grep -v grep | awk '{print $2}' 2>/dev/null || true); do
-        log "Killing process $pid: $bin_name"
-        kill "$pid" 2>/dev/null || true
+    echo "Stopping all instances of $bin_name..."
+    # Используем -f для поиска по всей командной строке, т.к. pkill -x не работает с именами длиннее 15 символов.
+    pkill -f "$bin_name" || true
+
+    # Ждем до 1 секунды, пока все процессы не завершатся.
+    for _ in {1..10}; do
+        if ! is_running "$bin_path"; then
+            echo "All processes of $bin_name stopped."
+            return 0
+        fi
         sleep 0.1
     done
-    
-    # Принудительное завершение если процессы еще остались
-    for pid in $(pgrep -x "$bin_name" 2>/dev/null || true); do
-        if [ -r "/proc/$pid/exe" ]; then
-            local exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
-            if [ "$exe" = "$(readlink -f "$bin")" ]; then
-                log "Force killing process $pid: $bin_name"
-                kill -9 "$pid" 2>/dev/null || true
-            fi
-        fi
-    done
+
+    echo "Some processes of $bin_name did not respond, sending kill -9..."
+    pkill -9 -f "$bin_name" || true
 }
 
-# Быстрый detached запуск
+# Запускает процесс в фоне с логированием.
 start_detached() {
-    local bin="$1"; shift
+    local bin_path="$1"; shift
+    local bin_name
+    bin_name="$(basename "$bin_path")"
+    local log_path="${XDG_RUNTIME_DIR:-/tmp}/${bin_name}.log"
     local args=("$@")
-    local bin_dir
-    bin_dir="$(dirname "$bin")"
-    log "Starting: $bin ${args[*]}"
-    ( cd "$bin_dir" 2>/dev/null || true; setsid "$bin" "${args[@]}" </dev/null >/dev/null 2>&1 & ) || true
-}
 
-# Основная логика: убить старые процессы и запустить новые
-restart_process() {
-    local bin="$1"; shift
-    local args=("$@")
-    
-    # Проверяем существование бинарника
-    if [ ! -f "$bin" ]; then
-        log "Binary not found: $bin"
+    if [ ! -x "$bin_path" ]; then
+        echo "Error: File not found or not executable: $bin_path" >&2
         return 1
     fi
-    
-    # Завершаем существующие процессы
-    kill_existing "$bin"
-    
-    # Небольшая пауза перед запуском нового процесса
-    sleep 0.2
-    
-    # Запускаем новый процесс
-    start_detached "$bin" "${args[@]}"
+
+    echo "Starting ${bin_name}... Log file: ${log_path}"
+    # setsid гарантирует, что процесс не умрет вместе с родительским скриптом
+    # Перенаправляем stdout и stderr в лог-файл для отладки
+    setsid "$bin_path" "${args[@]}" >"$log_path" 2>&1 &
 }
 
-# Перезапускаем оба процесса
-restart_process "${WP_BIN}"
-restart_process "${MOUSE_BIN}" --socket "${DEST_SOCKET}"
 
-log "All processes restarted"
+# --- Логика управления ---
 
-exit 0
+do_start() {
+    echo "Executing start..."
+
+    # 1. Демон мыши
+    if is_running "$MOUSE_BIN"; then
+        echo "Mouse daemon is already running."
+    else
+        start_detached "$MOUSE_BIN" --socket "${DEST_SOCKET}"
+    fi
+
+    # 2. Основное приложение
+    if is_running "$WP_BIN"; then
+        echo "Interactive wallpaper is already running."
+    else
+        start_detached "$WP_BIN"
+    fi
+    echo "Start command finished."
+}
+
+do_stop() {
+    echo "Executing stop..."
+    # Останавливаем в обратном порядке
+    kill_and_wait "$WP_BIN"
+    kill_and_wait "$MOUSE_BIN"
+    echo "All services have been stopped."
+}
+
+
+# --- Точка входа ---
+# Действие по умолчанию - 'start'
+ACTION="${1:-start}"
+
+case "$ACTION" in
+    start)
+        do_start
+        ;;
+    stop)
+        do_stop
+        ;;
+    restart)
+        echo "Executing restart..."
+        do_stop
+        sleep 0.2 # Небольшая пауза для освобождения ресурсов
+        do_start
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}" >&2
+        exit 1
+        ;;
+esac
+

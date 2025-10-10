@@ -1,4 +1,4 @@
-[README ru](docs/README_ru.md) | [README en](docs/README.md)
+[README ru](README_ru.md) | [README en](README.md)
 # Interactive Wayland Wallpaper
 
 Beautiful, interactive, and easily configurable live wallpapers for your Wayland desktop. The project uses hardware acceleration (OpenGL ES) for rendering dynamic shaders with minimal resource consumption.
@@ -299,7 +299,7 @@ For autostart, you can also create a systemd unit. An example unit is currently 
 
 You can create your own effect if you know how to write GLSL shaders and have a basic understanding of C++.
 
-A detailed guide on creating plugins is in the file [PLUGIN_DEV_GUIDE_en.md](docs/PLUGIN_DEV_GUIDE_en.md).
+A detailed guide on creating plugins is in the file [PLUGIN_DEV_GUIDE_en.md](PLUGIN_DEV_GUIDE_en.md).
 
 ## 🐛 Troubleshooting
 

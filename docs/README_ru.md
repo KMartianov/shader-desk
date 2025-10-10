@@ -300,7 +300,7 @@ cd path/interactive-wallpaper/audio-daemon/
 
 Вы можете создать собственный эффект, если умеете писать GLSL шейдеры и немного разбираетесь в C++.
 
-Подробное руководство по созданию плагинов находится в файле [PLUGIN_DEV_GUIDE_ru.md](docs/PLUGIN_DEV_GUIDE_ru.md).
+Подробное руководство по созданию плагинов находится в файле [PLUGIN_DEV_GUIDE_ru.md](PLUGIN_DEV_GUIDE_ru.md).
 
 
 ## 🐛 Устранение неисправностей

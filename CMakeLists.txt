@@ -229,6 +229,12 @@ if(TARGET wayland_protocols)
     add_dependencies(interactive-wallpaper wayland_protocols)
 endif()
 
+
+# --- Сборка утилиты для опроса плагинов ---
+add_executable(plugin-interrogator "${SRC_DIR}/plugin-interrogator.cpp")
+target_include_directories(plugin-interrogator PRIVATE "${SRC_DIR}")
+target_link_libraries(plugin-interrogator PRIVATE nlohmann_json::nlohmann_json dl)
+
 # --- Подключаем директорию с плагинами для их сборки ---
 add_subdirectory(plugins)
 

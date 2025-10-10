@@ -1,181 +1,331 @@
-[README ru](README_ru.md) | [README en](README.md)
-# Interactive Wayland Wallpaper 🚀
+[README ru](docs/README_ru.md) | [README en](docs/README.md)
+# Interactive Wayland Wallpaper
 
 Beautiful, interactive, and easily configurable live wallpapers for your Wayland desktop. The project uses hardware acceleration (OpenGL ES) for rendering dynamic shaders with minimal resource consumption.
 
-The main effect is an animated icosphere that responds to your cursor movements.
+The main effect is an animated icosphere that responds to your cursor movements and music.
 
 ## ✨ Features
 
-  * **GPU Acceleration**: Smooth rendering using OpenGL ES, without loading the CPU.
-  * **Interactivity**: The wallpaper responds to mouse and touchpad movements.
-  * **Flexible Configuration**: All parameters (animation, colors, detail level) are configurable via a simple JSON file.
-  * **Hot Reload**: Configuration changes are applied on the fly without restarting the application.
-  * **Management Utility**: Comes with a convenient `config-manager.sh` script for managing settings.
-  * **Custom Shader Support**: Easily extensible to use other GLSL shaders.
+- **GPU Acceleration**: Smooth rendering using OpenGL ES, without loading the CPU
+- **Interactivity**: Wallpapers respond to mouse and touchpad movements
+- **Audio Reactivity**: Real-time visualization responds to music
+- **Flexible Configuration**: All parameters configurable via JSON configuration
+- **Hot Reload**: Changes are applied on the fly without restart
+- **Modularity**: Support for plugins with various effects
+- **Automatic Management**: Convenient scripts for launch and configuration
 
------
+## 🎭 Demonstration
 
-## 🎭 Demo
-
-[![Play video](demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
+[![Play video](/demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
 
 [![Play video](demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
 
+## Project Architecture
 
-## 🔧 Installation
+The project consists of several interacting parts:
 
-The project consists of two components: the wallpapers themselves (`interactive-wallpaper`) and an optional but recommended input handling daemon (`evdev-pointer-daemon`).
-They need to be built separately.
+#### Main Components:
+- **`interactive-wallpaper`**: System core, responsible for displaying wallpapers on the GPU.
+- **`evdev-pointer-daemon`** (optional): Daemon for processing mouse/touchpad events bypassing Wayland restrictions.
+- **`audio-daemon`** (optional): Daemon for real-time audio analysis and data transmission to the main application.
 
-### 1. Dependencies
+#### Auxiliary Utilities:
+- **`config-manager.sh`**: Script for convenient management of JSON configuration from the command line.
+- **`run.sh`**: Script for starting, stopping, and restarting all system components.
+- **`plugin-interrogator`**: Utility that allows scripts to get information (name, default parameters) directly from compiled `.so` plugin files.
+- **`generate_plugin.py`**: Script for developers that automatically creates C++/CMake "wrapper" for a new plugin based on comments in the GLSL shader.
 
-First, make sure you have all the necessary dependencies installed.
+> The project was tested and built on Arch Linux with the Niri compositor.
+> Operation on other distributions is possible but not guaranteed.
 
-**Arch Linux:**
+## 🏗️ Installation and Setup
+
+### 1. Preparing the Working Directory
+
+Create a common directory for all project components:
 
 ```bash
-sudo pacman -S cmake gcc git wayland wayland-protocols libglvnd glm nlohmann-json jq inotify-tools
+mkdir path/interactive-wallpaper
+cd path/interactive-wallpaper
 ```
 
-Make sure that the folders `shader-desk` and `mouse` **are in the same directory** if you want to use the script `run.sh `
+### 2. Cloning Repositories
 
-### 2. Building `interactive-wallpaper`
-
-This is the main component responsible for displaying the wallpapers.
+**All three components must be cloned as siblings in the same `path/interactive-wallpaper` directory:**
 
 ```bash
-# 1. Clone the wallpaper repository
-git clone https://gitea.com/SeeTheWall/shader-desk shader-desk
-cd shader-desk
+# Main application
+git clone https://gitea.com/SeeTheWall/shader-desk
 
-# 2. Create a build directory and build the project
-mkdir build
-cd build
-cmake ..
-make -j$(nproc)
-```
-
-After a successful build, the executable will be located at `shader-desk/build/interactive-wallpaper`.
-
-### 3. Building `evdev-pointer-daemon` (Optional)
-
-This daemon reads events directly from `/dev/input/` and allows bypassing compositor restrictions on accessing input events for applications without input focus.
-
-If you want `interactive-wallpaper` to respond to mouse and touchpad movements, you need to build and run this daemon.
-
-**Important preliminary steps:**
-
-```bash
-# Add the user to the input group to access input devices
-sudo usermod -a -G input $USER
-
-# Log out and back in or run the command below to apply group changes
-newgrp input
-```
-
-**Building the daemon:**
-
-```bash
-# 1. Clone the daemon repository
+# Mouse daemon (for input processing)
 git clone https://gitea.com/SeeTheWall/mouse
-cd mouse
 
-# 2. Build the project
-mkdir build
-cd build
+# Audio analyzer daemon (for sound analysis)  
+git clone https://gitea.com/SeeTheWall/audio-daemon
+```
+
+After cloning, the directory structure should look like this:
+```
+path/interactive-wallpaper/
+├── shader-desk/    # Main application
+├── mouse/          # Mouse daemon
+└── audio-daemon/   # Audio analyzer daemon
+```
+
+### 3. Installing Dependencies
+
+Install dependencies only for the components you plan to use.
+#### **Step 1: Main Application (Mandatory)**
+These commands will install everything necessary to build and run the `interactive-wallpaper` core and its utilities.
+
+* **Arch Linux / Manjaro:**
+  ```bash
+  sudo pacman -S base-devel cmake git wayland wayland-protocols libglvnd glm nlohmann-json jq inotify-tools
+  ```
+* **Ubuntu / Debian:**
+  ```bash
+  sudo apt update && sudo apt install build-essential cmake git wayland-protocols libwayland-dev libglvnd-dev libglm-dev nlohmann-json3-dev jq inotify-tools
+  ```
+* **Fedora:**
+  ```bash
+  sudo dnf install cmake gcc-c++ git wayland-devel wayland-protocols-devel mesa-libGL-devel glm-devel nlohmann-json-devel jq inotify-tools
+  ```
+
+#### **Step 2: Mouse Daemon (Optional)**
+Install only if you need interactivity from a mouse or touchpad.
+
+* **Arch Linux / Manjaro:**
+  ```bash
+  sudo pacman -S libevdev
+  ```
+* **Ubuntu / Debian:**
+  ```bash
+  sudo apt install libevdev-dev
+  ```
+* **Fedora:**
+  ```bash
+  sudo dnf install libevdev-devel
+  ```
+
+#### **Step 3: Audio Daemon (Optional)**
+Install only if you need audio reactivity.
+
+* **Arch Linux / Manjaro:**
+  ```bash
+  sudo pacman -S pulseaudio fftw
+  ```
+* **Ubuntu / Debian:**
+  ```bash
+  sudo apt install libpulse-dev libfftw3-dev
+  ```
+* **Fedora:**
+  ```bash
+  sudo dnf install pulseaudio-libs-devel fftw-devel
+  ```
+
+### 4. Building the Main Application
+
+```bash
+cd path/interactive-wallpaper/shader-desk
+mkdir build && cd build
 cmake ..
 make -j$(nproc)
 ```
 
-The executable will be located at `mouse/build/evdev-pointer-daemon`.
+**What happens during the build:**
 
-**Notes:**
-- The daemon must run in the background to provide interactivity
-- After adding to the `input` group, a reboot may be required
-- For Wayland sessions, the daemon provides full access to mouse/touchpad events
+- The main `interactive-wallpaper` application is built
+- All plugins from the `plugins/` folder are automatically compiled:
+- The `build/effects/` folder is formed, containing .so files and a folder with effect shaders.
 
------
+### Configuring Plugins and Shaders
 
-## ⚙️ Configuration
+After successful build, it is necessary to ensure the availability of plugins and shaders for the application:
+
+**Method 1: Copying**
+```bash
+# Copy plugins and shaders to the configuration directory
+cp -r path/interactive-wallpaper/shader-desk/build/effects ~/.config/interactive-wallpaper/
+```
+
+**Method 2: Symbolic Link**
+```bash
+# Create configuration directory if it doesn't exist
+mkdir -p ~/.config/interactive-wallpaper
+
+# Create a symbolic link to the built effects
+ln -sf path/interactive-wallpaper/shader-desk/build/effects ~/.config/interactive-wallpaper/effects
+```
+
+Using a symbolic link is recommended if you plan to experiment with modifications of existing effects and develop your own.
+
+After creating it, there is no need to manually copy the folder after each compilation.
+
+**Installation Check:**
+```bash
+ls -la ~/.config/interactive-wallpaper/effects/
+# Should display:
+# ico-sphere-effect.so  pulse-color-effect.so  shaders/
+```
+
+After this setup, you can proceed to initialize the configuration using `config-manager.sh init`.
+
+### 5. Building the Mouse Daemon (Optional)
+
+**⚠️ Important: The mouse daemon is needed to bypass the restrictions of Wayland compositors**.
+
+In Wayland, compositors prohibit applications without input focus from receiving mouse events. Our daemon solves this problem by reading events directly from `/dev/input/`.
+
+```bash
+# Setting up access rights
+sudo usermod -a -G input $USER
+# Log out and back in or execute:
+newgrp input
+
+# Building the daemon
+cd path/interactive-wallpaper/mouse
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+### 6. Building the Audio Analyzer Daemon (Optional)
+
+```bash
+cd path/interactive-wallpaper/audio-daemon
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+## ⚙️ Configuration Setup
 
 ### Initializing Configuration
 
-All settings are stored in the file
-`~/.config/interactive-wallpaper/config.json`.
-To create a default configuration file, use the `config-manager.sh` script:
-
 ```bash
-# Navigate to the wallpaper directory
-cd /path/to/shader-desk
-
-# Run initialization
+cd path/interactive-wallpaper/shader-desk
 ./src/config-manager.sh init
 ```
 
+This will create a configuration file in `~/.config/interactive-wallpaper/`.
+
 ### Managing Settings
 
-**Show current settings:**
+**Help:**
+```bash
+./src/config-manager.sh help
+```
+
+**Viewing Current Settings:**
 ```bash
 ./src/config-manager.sh show
 ```
 
-**Change the wireframe_mode parameter**
+**List of Available Effects:**
 ```bash
-# Values: true, false, numbers, or arrays in JSON format
+./src/config-manager.sh list
+```
+
+**Changing Parameters:**
+```bash
+# Enable/disable wireframe mode
 ./src/config-manager.sh set wireframe_mode false
-```
 
-**Change the sphere detail level:**
-```bash
+# Set sphere detail level
 ./src/config-manager.sh set subdivisions 4
+
+# Configure mouse sensitivity
+./src/config-manager.sh set --global mouse_sensitivity 3.0
 ```
 
-**Open the config in a text editor ($EDITOR):**
+**Manual Configuration Editing:**
 ```bash
 ./src/config-manager.sh edit
 ```
 
-All changes are applied automatically thanks to hot reloading\!
+You can also write your own scripts to manage the parameters of your effects.
+You can simply write to the file
+`~/.config/interactive-wallpaper/config.json`.
 
------
+## 🚀 System Launch
 
-## 🚀 Launching and Desktop Integration
+### Using the run.sh Script
 
-The `run.sh` script is intended for convenient launching and automatic startup with the system.
-
-### 1. Configuring `run.sh`
-
-Make the script executable:
+The `run.sh` script automatically manages all system components:
 
 ```bash
+# Go to the main application directory
+cd path/interactive-wallpaper/shader-desk
+
+# Make the script executable
 chmod +x run.sh
+
+# Start all components
+./run.sh start
+
+# Stop all components  
+./run.sh stop
+
+# Restart
+./run.sh restart
 ```
 
-### 2. Autostart in Wayland Compositors
+### Manual Component Launch
 
-Add a call to `run.sh` in your compositor's configuration file or implement application autostart in another way.
+You can run the binaries manually or develop your own scripts to run them.
 
------
+**Main Application Only:**
+```bash
+cd path/interactive-wallpaper/shader-desk/
+./build/interactive-wallpaper
 
-## 🚑 Troubleshooting
+cd path/interactive-wallpaper/mouse/
+./build/evdev-pointer-daemon --socket /tmp/evdev-pointer.sock
 
-**Wallpaper won't start**:
+cd path/interactive-wallpaper/audio-daemon/
+./build/audio-daemon
+```
 
-1.  Make sure you have correctly specified the paths in `run.sh`.
-2.  Try running `interactive-wallpaper` directly from the terminal (`./build/interactive-wallpaper`) and check the error output.
-3.  Make sure your Wayland compositor supports the `wlr-layer-shell` protocol.
+### Autostart
 
-**Mouse/touchpad input doesn't work or works strangely**:
+Add the launch of the shell script
+`./path/interactive-wallpaper/shader-desk/run.sh start`
+when your compositor loads.
 
-1.  Make sure `evdev-pointer-daemon` is running.
-2.  The daemon might require permissions to read from `/dev/input/event*`. This can be resolved by adding your user to the `input` group. 
-   `sudo usermod -aG input $USER`
-   After this, a system reboot is required.
+For autostart, you can also create a systemd unit. An example unit is currently missing from the documentation.
 
-## ❤️ Contributing
+## Developing Your Own Effects.
 
-Contributions to the project are welcome\! If you have ideas, suggestions, or fixes, please create Issues or Pull Requests.
+You can create your own effect if you know how to write GLSL shaders and have a basic understanding of C++.
+
+A detailed guide on creating plugins is in the file [PLUGIN_DEV_GUIDE_en.md](docs/PLUGIN_DEV_GUIDE_en.md).
+
+## 🐛 Troubleshooting
+
+**Wallpapers Do Not Start:**
+- Make sure the Wayland compositor supports `wlr-layer-shell`
+- Check the terminal output: `./build/interactive-wallpaper`
+- Ensure configuration is created: `./src/config-manager.sh init`
+- Ensure you copied the effects to the config folder.
+
+**Mouse Daemon Not Working:**
+- Make sure you have completely logged out and back in (logout/login) after adding to the `input` group.
+- After logging back in, check that you are a member of the group:
+  `groups | grep input`
+- Check the socket: `ls -la /tmp/evdev-pointer.sock`
+
+**Audio Not Working:**
+- Ensure the audio analyzer daemon is running
+- Check audio settings in the configuration
+- Ensure there is audio output in the system
+
+**Changes Not Applied:**
+- Ensure the application is running with the correct config and there are no typos in the `config.json` file.
+
+## 🤝 Contribution
+
+Contributions to the project are welcome! If you have ideas, suggestions, or fixes, please create Issues or Pull Requests.
 
 ## 📜 License
 

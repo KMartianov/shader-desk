@@ -17,9 +17,9 @@ The main effect is an animated icosphere that responds to your cursor movements 
 
 ## 🎭 Demonstration
 
-[![Play video](/demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
+[![Play video](../demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
 
-[![Play video](demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
+[![Play video](../demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
 
 ## Project Architecture
 

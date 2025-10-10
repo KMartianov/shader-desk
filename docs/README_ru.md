@@ -18,9 +18,9 @@
 
 ## 🎭 Демонстрация 
 
-[![Play video](demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
+[![Play video](../demo/example_green.png)](https://imgur.com/a/shader-CkNPDLc)
 
-[![Play video](demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
+[![Play video](../demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
 
 ## Архитектура проекта
 

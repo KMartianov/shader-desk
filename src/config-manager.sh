@@ -34,72 +34,29 @@ discover_plugins() {
     done
 }
 
-# Parses shader files for a given plugin to extract default parameters as a JSON string
+# Queries a plugin .so file to extract default parameters as a JSON string
 get_plugin_params_json() {
     local plugin_name="$1"
-    local shader_dir="$EFFECTS_DIR/shaders/$plugin_name"
-    local json_output="{}"
-
-    if [ ! -d "$shader_dir" ]; then
-        echo "{}"
-        return
-    fi
-
-    # Find all shader files in the directory
-    local shader_files
-    shader_files=$(find "$shader_dir" -type f \( -name "*.glsl" -o -name "*.vert" -o -name "*.frag" \))
-
-    if [ -z "$shader_files" ]; then
-        echo "{}"
-        return
-    fi
-
-    # Use process substitution (< <(...)) to avoid creating a subshell for the while loop.
-    # This ensures that modifications to 'json_output' are not lost.
-    while IFS='|' read -r name type value _; do
-        # Trim whitespace
-        name=$(echo "$name" | xargs)
-        type=$(echo "$type" | xargs)
-        value=$(echo "$value" | xargs)
-
-        # Skip empty lines that might result from parsing
-        if [ -z "$name" ]; then
-            continue
-        fi
-
-        local processed_value
-        case "$type" in
-            "bool")
-                # Ensure lowercase true/false for jq
-                processed_value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
-                ;;
-            "int"|"float")
-                processed_value="$value"
-                ;;
-            "vec3")
-                # Extracts numbers from "glm::vec3(0.1, 0.2, 0.3)" -> "[0.1,0.2,0.3]"
-                processed_value=$(echo "$value" | sed -n 's/.*(\(.*\)).*/[\1]/p' | tr -d '[:space:]f')
-                if [[ -z "$processed_value" ]]; then
-                    # Fallback for simple comma-separated values like "0.1, 0.2, 0.3"
-                    processed_value="[$(echo "$value" | tr -d '[:space:]f')]"
-                fi
-                ;;
-            *)
-                # Unknown type, treat as string. Should be quoted.
-                processed_value="\"$value\""
-                ;;
-        esac
-
-        # jq requires a valid value. If processing failed, skip.
-        if [[ -z "$processed_value" ]]; then
-            echo "Warning: Could not process value for param '$name' ('$value'). Skipping." >&2
-            continue
-        fi
-        
-        json_output=$(echo "$json_output" | jq --arg key "$name" --argjson val "$processed_value" '. + {($key): $val}')
-    done < <(grep -h "// @param" $shader_files | sed 's|// @param||')
+    local so_file="$EFFECTS_DIR/${plugin_name}.so"
     
-    echo "$json_output"
+    # Путь к нашей новой утилите. Предполагаем, что скрипт запускается из корня проекта.
+    local interrogator_bin="./build/plugin-interrogator"
+
+    if [ ! -f "$so_file" ]; then
+        echo "Warning: Plugin library not found for '$plugin_name' at '$so_file'." >&2
+        echo "{}"
+        return
+    fi
+    
+    if [ ! -x "$interrogator_bin" ]; then
+        echo "Error: plugin-interrogator tool not found or not executable at '$interrogator_bin'." >&2
+        echo "Please build the project first." >&2
+        echo "{}"
+        return
+    fi
+
+    # Вызываем утилиту и возвращаем её JSON-вывод
+    "$interrogator_bin" "$so_file"
 }
 
 
@@ -120,8 +77,7 @@ init_config() {
     
     if [ -z "$plugins" ]; then
         echo "Warning: No plugins (.so files) found in $EFFECTS_DIR."
-        echo "Creating a placeholder config file. Please add plugins and run 'init' again."
-        # Create a minimal file if no plugins are found
+        # ... (код для создания placeholder-конфига остается тот же) ...
         jq -n '{
           "effect_name": "",
           "interactive": true,
@@ -134,31 +90,44 @@ init_config() {
         return
     fi
 
-    local default_effect_pretty_name=""
+    local default_effect_name=""
     local defaults_json="{}"
     
-    for plugin in $plugins; do
-        local pretty_name
-        pretty_name=$(project_to_pretty_name "$plugin")
+    for plugin_filename in $plugins; do
+        echo " - Querying plugin: $plugin_filename.so..."
         
-        # Set the first found plugin as the default
-        if [ -z "$default_effect_pretty_name" ]; then
-            default_effect_pretty_name="$pretty_name"
+        # Получаем всю информацию (имя и параметры) от утилиты
+        local plugin_info_json
+        plugin_info_json=$(get_plugin_params_json "$plugin_filename")
+
+        # Извлекаем каноническое имя и параметры с помощью jq
+        local canonical_name
+        canonical_name=$(echo "$plugin_info_json" | jq -r '.name')
+        local params_json
+        params_json=$(echo "$plugin_info_json" | jq '.defaults')
+
+        if [ -z "$canonical_name" ] || [ "$canonical_name" == "null" ]; then
+            echo "   Warning: Could not retrieve canonical name for $plugin_filename. Skipping."
+            continue
+        fi
+
+        echo "   -> Found plugin with canonical name: '$canonical_name'"
+
+        # Устанавливаем первый найденный плагин как эффект по умолчанию
+        if [ -z "$default_effect_name" ]; then
+            default_effect_name="$canonical_name"
         fi
         
-        echo " - Found plugin '$pretty_name' ($plugin). Parsing parameters..."
-        local params_json
-        params_json=$(get_plugin_params_json "$plugin")
-        
-        defaults_json=$(echo "$defaults_json" | jq --arg key "$pretty_name" --argjson val "$params_json" '. + {($key): $val}')
+        # Добавляем параметры в общий список defaults
+        defaults_json=$(echo "$defaults_json" | jq --arg key "$canonical_name" --argjson val "$params_json" '. + {($key): $val}')
     done
 
     local default_settings
-    default_settings=$(echo "$defaults_json" | jq --arg key "$default_effect_pretty_name" '.[$key]')
+    default_settings=$(echo "$defaults_json" | jq --arg key "$default_effect_name" '.[$key]')
 
-    # Start with a base config and merge in the dynamic parts
+    # Собираем финальный config.json, используя канонические имена
     jq -n \
-      --arg effect_name "$default_effect_pretty_name" \
+      --arg effect_name "$default_effect_name" \
       --argjson settings "$default_settings" \
       --argjson defaults "$defaults_json" \
       '{
@@ -169,7 +138,7 @@ init_config() {
       } + {"effect_settings": $settings} + {"effects_defaults": $defaults}' > "$CONFIG_FILE"
 
     echo "Default configuration file created: $CONFIG_FILE"
-    echo "Default effect set to: $default_effect_pretty_name"
+    echo "Default effect set to: $default_effect_name"
 }
 
 # Read value from configuration
@@ -210,17 +179,39 @@ set_config_value() {
     fi
 }
 
-# List all discovered effects
+# Discovers and lists available effects by directly querying the plugin files
 list_effects() {
     echo "Available effects:"
-    local plugins
-    plugins=$(discover_plugins)
-    if [ -z "$plugins" ]; then
-        echo "No plugins found in $EFFECTS_DIR"
+    
+    local plugin_files
+    plugin_files=$(discover_plugins) # Gets basenames like 'ico-sphere-effect'
+
+    if [ -z "$plugin_files" ]; then
+        echo "  No plugins (.so files) found in $EFFECTS_DIR"
         return
     fi
-    for plugin in $plugins; do
-        echo "  - $(project_to_pretty_name "$plugin")"
+
+    local interrogator_bin="./build/plugin-interrogator"
+    if [ ! -x "$interrogator_bin" ]; then
+        echo "Error: plugin-interrogator tool not found or not executable at '$interrogator_bin'." >&2
+        echo "Please build the project first." >&2
+        return 1
+    fi
+
+    for plugin_filename in $plugin_files; do
+        local so_file="$EFFECTS_DIR/${plugin_filename}.so"
+        
+        if [ -f "$so_file" ]; then
+            # Query the plugin file directly and parse its JSON output to get the name
+            local canonical_name
+            canonical_name=$("$interrogator_bin" "$so_file" | jq -r '.name')
+            
+            if [ -n "$canonical_name" ] && [ "$canonical_name" != "null" ]; then
+                echo "  - $canonical_name"
+            else
+                echo "  - [Warning] Could not read name from: ${plugin_filename}.so"
+            fi
+        fi
     done
 }
 

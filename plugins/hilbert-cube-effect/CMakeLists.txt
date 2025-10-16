@@ -48,12 +48,12 @@ add_custom_command(
     
     # 2. Copy the fragment shader
     COMMAND ${CMAKE_COMMAND} -E copy
-            "/home/asdcxfrt/FoldersForSync/Projects/shader-desk/plugins/hilbert-cube-effect/shaders/cube_frag.glsl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cube_frag.glsl"
             "${SHADER_DEST_DIR}/cube_frag.glsl"
     
     # 3. Copy the vertex shader if it exists
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "/home/asdcxfrt/FoldersForSync/Projects/shader-desk/plugins/hilbert-cube-effect/shaders/cube_vert.glsl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/cube_vert.glsl"
             "${SHADER_DEST_DIR}/cube_vert.glsl"
             
     COMMENT "Copying hilbert-cube-effect shaders to ${SHADER_DEST_DIR}"

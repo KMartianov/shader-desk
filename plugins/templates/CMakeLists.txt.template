@@ -39,7 +39,7 @@ target_link_libraries({{PROJECT_NAME}} PRIVATE
 
 # --- Copy shaders to build directory post-build ---
 # Create a separate folder for this plugin's shaders to avoid name conflicts.
-set(SHADER_DEST_DIR "${PLUGIN_OUTPUT_DIR}/shaders/{{PROJECT_NAME}}")
+set(SHADER_DEST_DIR "${PLUGIN_OUTPUT_DIR}/shaders/{{PROJECT_NAME}}") [cite: 953]
 
 add_custom_command(
     TARGET {{PROJECT_NAME}} POST_BUILD
@@ -48,12 +48,13 @@ add_custom_command(
     
     # 2. Copy the fragment shader
     COMMAND ${CMAKE_COMMAND} -E copy
-            "{{FRAG_SHADER_SOURCE_PATH}}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/{{FRAG_SHADER_FILENAME}}"
             "${SHADER_DEST_DIR}/{{FRAG_SHADER_FILENAME}}"
     
     # 3. Copy the vertex shader if it exists
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "{{VERT_SHADER_SOURCE_PATH}}"
+         
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/{{VERT_SHADER_FILENAME}}"
             "${SHADER_DEST_DIR}/{{VERT_SHADER_FILENAME}}"
             
     COMMENT "Copying {{PROJECT_NAME}} shaders to ${SHADER_DEST_DIR}"

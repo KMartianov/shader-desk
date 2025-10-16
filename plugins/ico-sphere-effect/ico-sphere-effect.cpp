@@ -21,20 +21,6 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-// Загружает содержимое текстового файла (шейдера) в строку
-std::string load_shader_source(const std::string& filepath) {
-    std::ifstream file(filepath);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open shader file: " << filepath << std::endl;
-        return "";
-    }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
-
 // Вычисляет индекс средней точки ребра для подразделения икосферы
 unsigned int get_midpoint_index(unsigned int i1, unsigned int i2,
                                std::vector<glm::vec3>& vertices,
@@ -173,8 +159,8 @@ void IcoSphereEffect::update_effect_scaling() {
 bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
-    std::string vert_src = load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
-    std::string frag_src = load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_frag.glsl");
+    std::string vert_src = shader_utils::load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_frag.glsl");
     if (vert_src.empty() || frag_src.empty()) return false;
     
     program = shader_utils::create_shader_program(vert_src, frag_src);

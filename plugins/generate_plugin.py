@@ -172,8 +172,6 @@ def main():
         "CPP_FILENAME": f"{project_name}.cpp",
         "VERT_SHADER_FILENAME": vert_shader_path.name if vert_shader_path else "common_vert.glsl",
         "FRAG_SHADER_FILENAME": frag_shader_path.name,
-        "VERT_SHADER_SOURCE_PATH": str(vert_shader_path.resolve()) if vert_shader_path else "",
-        "FRAG_SHADER_SOURCE_PATH": str(frag_shader_path.resolve()),
     }
     
     # --- Generate Code and Fill Templates ---

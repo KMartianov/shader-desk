@@ -22,6 +22,10 @@
 
 [![Play video](../demo/example_red.png)](https://imgur.com/a/shader-CkNPDLc)
 
+[![Play video](../demo/Cube.png)](https://imgur.com/a/shader-CkNPDLc)
+
+[![Play video](../demo/Niri.png)](https://imgur.com/a/shader-CkNPDLc)
+
 ## Архитектура проекта
 
 Проект состоит из нескольких взаимодействующих частей:

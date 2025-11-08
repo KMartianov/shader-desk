@@ -7,13 +7,13 @@ The main effect is an animated icosphere that responds to your cursor movements 
 
 ## ✨ Features
 
-- **GPU Acceleration**: Smooth rendering using OpenGL ES, without loading the CPU
-- **Interactivity**: Wallpapers respond to mouse and touchpad movements
-- **Audio Reactivity**: Real-time visualization responds to music
-- **Flexible Configuration**: All parameters configurable via JSON configuration
-- **Hot Reload**: Changes are applied on the fly without restart
-- **Modularity**: Support for plugins with various effects
-- **Automatic Management**: Convenient scripts for launch and configuration
+- [x] **GPU Acceleration**: Smooth rendering using OpenGL ES, without loading the CPU
+- [x] **Interactivity**: Wallpapers respond to mouse and touchpad movements
+- [ ] **Audio Reactivity**: Real-time visualization responds to music
+- [x] **Flexible Configuration**: All parameters configurable via JSON configuration
+- [x] **Hot Reload**: Changes are applied on the fly without restart
+- [x] **Modularity**: Support for plugins with various effects
+- [x] **Automatic Management**: Convenient scripts for launch and configuration
 
 ## 🎭 Demonstration
 
@@ -65,8 +65,9 @@ git clone https://gitea.com/SeeTheWall/shader-desk
 # Mouse daemon (for input processing)
 git clone https://gitea.com/SeeTheWall/mouse
 
-# Audio analyzer daemon (for sound analysis)  
-git clone https://gitea.com/SeeTheWall/audio-daemon
+# Audio analyzer daemon (for sound analysis)
+# The audio-daemon has not been published (it is not ready yet), and this part should be skipped.
+# git clone https://gitea.com/SeeTheWall/audio-daemon
 ```
 
 After cloning, the directory structure should look like this:
@@ -113,6 +114,10 @@ Install only if you need interactivity from a mouse or touchpad.
   ```
 
 #### **Step 3: Audio Daemon (Optional)**
+
+> This part of the project is not ready at the moment. 
+The Audio Daemon has not been published, and this part should be skipped.
+
 Install only if you need audio reactivity.
 
 * **Arch Linux / Manjaro:**
@@ -195,6 +200,9 @@ make -j$(nproc)
 ```
 
 ### 6. Building the Audio Analyzer Daemon (Optional)
+
+> This part of the project is not ready at the moment. 
+The Audio Daemon has not been published, and this part should be skipped.
 
 ```bash
 cd path/interactive-wallpaper/audio-daemon
@@ -308,7 +316,7 @@ A detailed guide on creating plugins is in the file [PLUGIN_DEV_GUIDE_en.md](PLU
 ## 🐛 Troubleshooting
 
 **Wallpapers Do Not Start:**
-- Make sure the Wayland compositor supports `wlr-layer-shell`
+- Make sure the [Wayland compositor supports `wlr-layer-shell`](https://wayland.app/protocols/wlr-layer-shell-unstable-v1#compositor-support) 
 - Check the terminal output: `./build/interactive-wallpaper`
 - Ensure configuration is created: `./src/config-manager.sh init`
 - Ensure you copied the effects to the config folder.

@@ -9,16 +9,18 @@
 #include <sys/select.h>
 #include <unistd.h>
 
-#include <thread>
 #include <chrono>
 #include <fstream>
 #include <sys/stat.h>
-#include <mutex>
-#include <atomic>
 #include <cstdlib>
+
+#include <sys/epoll.h>
+#include <sys/inotify.h>
 
 #include <nlohmann/json.hpp>
 #include "utils.hpp"
+
+#include <poll.h>
 
 using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
 
@@ -95,16 +97,15 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg) : config(
         this->handle_audio_data(data);
     });
     // get_default_audio_socket_path() взята из utils.hpp демона
-    if (!audio_client_->connect_and_listen(get_default_audio_socket_path())) {
+    if (!audio_client_->connect(get_default_audio_socket_path())) {
         std::cerr << "Warning: Could not connect to audio daemon." << std::endl;
     }
+
 
 
     mouse_sensitivity = 0.05f;
     touchpad_sensitivity = 20.0f;
     
-    // Запускаем мониторинг конфигурации (горячая перезагрузка)
-    start_config_monitor();
 }
 
 void InteractiveWallpaper::process_pointer_motion(double dx, double dy, bool is_touchpad) {
@@ -126,8 +127,6 @@ void InteractiveWallpaper::process_pointer_motion(double dx, double dy, bool is_
 // Destructor
 InteractiveWallpaper::~InteractiveWallpaper() {
     // Останавливаем мониторинг конфигурации
-    
-    stop_config_monitor();
 
     if (audio_client_) {
         audio_client_->disconnect();
@@ -204,6 +203,9 @@ InteractiveWallpaper::~InteractiveWallpaper() {
         display = nullptr;
     }
     pointer_daemon.disconnect();
+
+    if (epoll_fd >= 0) close(epoll_fd);
+    if (inotify_fd >= 0) close(inotify_fd);
 
 }
 
@@ -289,10 +291,7 @@ bool InteractiveWallpaper::reload_config() {
         
         nlohmann::json new_config = nlohmann::json::parse(config_file);
 
-        {
-            std::lock_guard<std::mutex> lock(config_mutex);
-            current_config = std::move(new_config);
-        }
+        current_config = std::move(new_config);
 
         std::cout << "Configuration reloaded successfully: " << config_path << std::endl;
         return true;
@@ -316,7 +315,6 @@ void InteractiveWallpaper::apply_config_to_effect(Output* output) {
     }
 
     // Блокируем мьютекс для безопасного доступа к конфигурации из другого потока
-    std::lock_guard<std::mutex> lock(config_mutex);
     if (current_config.is_null()) {
         std::cout << "apply_config_to_effect: current_config is null, nothing to apply" << std::endl;
         return;
@@ -348,62 +346,67 @@ void InteractiveWallpaper::apply_config_to_effect(Output* output) {
     std::cout << "Configuration applied successfully on output: " << output->name << std::endl;
 }
 
+// ------------------------- Inotify Configuration -------------------------
 
-
-void InteractiveWallpaper::start_config_monitor() {
-    bool expected = false;
-    if (!config_monitor_running.compare_exchange_strong(expected, true)) {
+void InteractiveWallpaper::setup_inotify() {
+    // Инициализируем inotify в неблокирующем режиме
+    inotify_fd = inotify_init1(IN_NONBLOCK);
+    if (inotify_fd < 0) {
+        std::cerr << "Failed to init inotify: " << strerror(errno) << std::endl;
         return;
     }
-
-    config_monitor_thread = std::thread([this]() {
-        const std::string config_path = get_default_config_path();
-
-        struct stat st;
-        if (stat(config_path.c_str(), &st) == 0) {
-            last_config_modification = std::chrono::system_clock::from_time_t(st.st_mtime);
-        } else {
-            last_config_modification = std::chrono::system_clock::from_time_t(0);
-        }
-
-        // Первичная загрузка
-        if (reload_config()) {
-            config_needs_apply.store(true);
-            std::cout << "Initial configuration loaded, will apply in main thread" << std::endl;
-        }
-
-        while (config_monitor_running.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // 1 секунда
-
-            struct stat current_st;
-            if (stat(config_path.c_str(), &current_st) != 0) {
-                continue;
-            }
-
-            auto current_modification = std::chrono::system_clock::from_time_t(current_st.st_mtime);
-            if (current_modification > last_config_modification) {
-                last_config_modification = current_modification;
-                std::cout << "Config file modified, reloading: " << config_path << std::endl;
-                if (reload_config()) {
-                    config_needs_apply.store(true);
-                } else {
-                    std::cerr << "Failed to reload config after modification." << std::endl;
-                }
-            }
-        }
-    });
+    
+    std::string config_path = get_default_config_path();
+    // Наблюдаем только за изменением файла конфигурации
+    inotify_wd = inotify_add_watch(inotify_fd, config_path.c_str(), IN_MODIFY);
+    
+    // Выполняем первичную загрузку конфигурации
+    if (reload_config()) {
+        apply_config_to_all_outputs();
+    }
 }
 
+void InteractiveWallpaper::process_inotify_events() {
+    if (inotify_fd < 0) return;
 
-void InteractiveWallpaper::stop_config_monitor() {
-    bool expected = true;
-    if (!config_monitor_running.compare_exchange_strong(expected, false)) {
-        // монитор уже остановлен
-        return;
+    // Буфер для событий inotify (с правильным выравниванием памяти)
+    char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
+    
+    while (true) {
+        ssize_t len = read(inotify_fd, buf, sizeof(buf));
+        if (len <= 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break; // Данных больше нет
+            std::cerr << "Inotify read error: " << strerror(errno) << std::endl;
+            break;
+        }
+
+        bool config_modified = false;
+        const struct inotify_event *event;
+        
+        // Перебираем все полученные события
+        for (char *ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) {
+            event = (const struct inotify_event *) ptr;
+            if (event->mask & IN_MODIFY) {
+                config_modified = true;
+            }
+        }
+
+        // Если конфиг изменился, перезагружаем его и применяем
+        if (config_modified) {
+            std::cout << "Config file modified, reloading..." << std::endl;
+            if (reload_config()) {
+                apply_config_to_all_outputs();
+            }
+        }
     }
+}
 
-    if (config_monitor_thread.joinable()) {
-        config_monitor_thread.join();
+void InteractiveWallpaper::apply_config_to_all_outputs() {
+    // Безопасно применяем настройки ко всем активным экранам (эффектам)
+    for (auto& pair : outputs) {
+        if (pair.second->effect) {
+            apply_config_to_effect(pair.second.get());
+        }
     }
 }
 
@@ -536,67 +539,89 @@ bool InteractiveWallpaper::initialize() {
 void InteractiveWallpaper::run() {
     if (!display) return;
 
-    std::cout << "Starting main loop..." << std::endl;
-    wl_display_roundtrip(display);
+    // 1. Настраиваем наблюдение за файлом конфигурации
+    setup_inotify();
 
-    bool first_render = true;
+    // 2. Создаем epoll дескриптор
+    epoll_fd = epoll_create1(0);
+    if (epoll_fd < 0) {
+        std::cerr << "Failed to create epoll fd: " << strerror(errno) << std::endl;
+        return;
+    }
+
+    // Хелпер для добавления дескрипторов в epoll
+    auto add_to_epoll = [&](int fd) {
+        if (fd < 0) return;
+        struct epoll_event ev{};
+        ev.events = EPOLLIN;
+        ev.data.fd = fd;
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev);
+    };
+
+    // 3. Добавляем все источники событий в epoll
+    add_to_epoll(wl_display_get_fd(display));
+    add_to_epoll(audio_client_->get_fd());
+    add_to_epoll(pointer_daemon.get_fd());
+    add_to_epoll(inotify_fd);
+
+    std::cout << "Starting main loop (epoll based)..." << std::endl;
+    wl_display_roundtrip(display); // Убеждаемся, что Wayland инициализирован
+
+    const int MAX_EVENTS = 10;
+    struct epoll_event events[MAX_EVENTS];
 
     while (running) {
-        // Нам нужно сбросить флаг только после того, как все мониторы применили конфиг.
-        // Поэтому мы используем локальную переменную.
-        bool config_applied_in_this_cycle = false;
-        
-        // Проверяем, есть ли запрос на применение конфигурации
-        bool needs_apply = config_needs_apply.load() || first_render;
-
+        // Подготавливаем Wayland (сбрасываем исходящий буфер запросов)
         while (wl_display_prepare_read(display) != 0) {
             wl_display_dispatch_pending(display);
         }
         wl_display_flush(display);
-        
-        struct timeval tv = {0, 16000};
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(wl_display_get_fd(display), &fds);
-        
-        if (select(wl_display_get_fd(display) + 1, &fds, NULL, NULL, &tv) > 0) {
-            wl_display_read_events(display);
-            wl_display_dispatch_pending(display);
-        } else {
+
+        // Ждем событий от ОС. 
+        // 16 миллисекунд таймаут — временное решение для 60 FPS,
+        // пока мы не внедрили wl_surface_frame (VSync).
+        int n_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+
+        if (n_events < 0) {
             wl_display_cancel_read(display);
+            if (errno == EINTR) continue; // Прерывание сигналом (например, Ctrl+C)
+            std::cerr << "epoll_wait error: " << strerror(errno) << std::endl;
+            break;
         }
 
-        // Рендеринг
-        bool has_outputs = false;
-        for (auto& pair : outputs) {
-            auto& output = pair.second;
-            if (output->configured && output->effect && output->egl_surface != EGL_NO_SURFACE) {
-                has_outputs = true;
-                
-                if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
-                    
-                    // Применяем конфигурацию в единственно безопасном месте:
-                    // после eglMakeCurrent и прямо перед рендерингом.
-                    if (needs_apply) {
-                        apply_config_to_effect(output.get());
-                        config_applied_in_this_cycle = true;
-                    }
+        if (n_events == 0) {
+            // Таймаут. Отменяем чтение Wayland
+            wl_display_cancel_read(display);
+        } else {
+            bool wayland_event = false;
 
-                    output->effect->render(output->width, output->height);
-                    eglSwapBuffers(egl_display, output->egl_surface);
+            // Распределяем полученные события по их обработчикам
+            for (int i = 0; i < n_events; ++i) {
+                int fd = events[i].data.fd;
+
+                if (fd == wl_display_get_fd(display)) {
+                    wayland_event = true;
+                } else if (fd == audio_client_->get_fd()) {
+                    audio_client_->process_pending_data();
+                } else if (fd == pointer_daemon.get_fd()) {
+                    pointer_daemon.process_pending_data();
+                } else if (fd == inotify_fd) {
+                    process_inotify_events();
                 }
             }
+
+            // Если были события Wayland - читаем их, иначе отменяем подготовку
+            if (wayland_event) {
+                wl_display_read_events(display);
+            } else {
+                wl_display_cancel_read(display);
+            }
+            
+            // Выполняем Wayland-коллбэки
+            wl_display_dispatch_pending(display);
         }
 
-        // Если мы в этом цикле применили конфиг, то теперь можно сбросить глобальный флаг
-        if (config_applied_in_this_cycle) {
-            config_needs_apply.store(false);
-            first_render = false;
-        }
-
-        if (!has_outputs) {
-            usleep(100000);
-        }
+        
     }
 
     std::cout << "Main loop exited" << std::endl;
@@ -716,8 +741,44 @@ void InteractiveWallpaper::output_done(void* data, wl_output* /*wl_output*/) {
     
     if (output->parent && output->width > 0 && output->height > 0) {
         output->parent->create_layer_surface(output);
+        // СОЗДАЕМ ЭФФЕКТ ДЛЯ ЭТОГО МОНИТОРА ЗДЕСЬ:
+        output->parent->apply_effect_to_output(output);
     } else {
         std::cerr << "Cannot create layer surface: invalid output parameters" << std::endl;
+    }
+}
+
+// Добавь реализацию листенера (где-нибудь рядом с другими листенерами)
+static const wl_callback_listener frame_listener = {
+    .done = InteractiveWallpaper::frame_handle_done,
+};
+
+void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, uint32_t /*time*/) {
+    if (callback) {
+        wl_callback_destroy(callback);
+    }
+    Output* output = static_cast<Output*>(data);
+    output->frame_callback = nullptr;
+    
+    // Запускаем отрисовку следующего кадра
+    if (output->parent) {
+        output->parent->render_output(output);
+    }
+}
+
+void InteractiveWallpaper::render_output(Output* output) {
+    if (!output->configured || !output->effect || output->egl_surface == EGL_NO_SURFACE) return;
+
+    if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
+        // Отрисовываем кадр
+        output->effect->render(output->width, output->height);
+        
+        // ВАЖНО: Запрашиваем у Wayland коллбек на следующий кадр ПЕРЕД eglSwapBuffers
+        output->frame_callback = wl_surface_frame(output->surface);
+        wl_callback_add_listener(output->frame_callback, &frame_listener, output);
+        
+        // Отправляем кадр на экран
+        eglSwapBuffers(egl_display, output->egl_surface);
     }
 }
 
@@ -788,8 +849,33 @@ void InteractiveWallpaper::layer_surface_configure(void* data,
     if (output->surface) {
         wl_surface_commit(output->surface);
     }
+    
+    // Запускаем цикл VSync для этого монитора
+    if (!output->frame_callback) {
+        output->parent->render_output(output);
+    }
+
 }
 
+void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::string& effect_name) {
+    plugin_manager_ = pm;
+    current_effect_name_ = effect_name;
+}
+
+void InteractiveWallpaper::apply_effect_to_output(Output* output) {
+    if (!plugin_manager_ || current_effect_name_.empty()) return;
+    
+    output->effect = plugin_manager_->create_effect(current_effect_name_);
+    if (output->effect) {
+        apply_config_to_effect(output); // Сразу применяем настройки
+        
+        if (output->configured && output->egl_surface != EGL_NO_SURFACE) {
+            if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
+                output->effect->initialize(output->width, output->height);
+            }
+        }
+    }
+}
 
 void InteractiveWallpaper::layer_surface_closed(void* data,
                                                zwlr_layer_surface_v1* /*surface*/) {

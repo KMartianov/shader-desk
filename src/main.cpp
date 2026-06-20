@@ -1,25 +1,27 @@
-// main.cpp
+// src/main.cpp
 #include "interactive-wallpaper.hpp"
-#include "plugin-manager.hpp" // Новый менеджер плагинов
+#include "plugin-manager.hpp"
 #include "config-loader.hpp"
 #include <iostream>
-#include <memory>
 #include <string>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
-
 std::string get_plugin_directory() {
-    // В реальном приложении путь лучше делать более надежным
-    return std::string(getenv("HOME")) + "/.config/interactive-wallpaper/effects";
+    // Получаем домашнюю директорию для поиска плагинов
+    const char* home = getenv("HOME");
+    if (home) {
+        return std::string(home) + "/.config/interactive-wallpaper/effects";
+    }
+    return "./effects"; // Fallback
 }
 
 int main(int argc, char** argv) {
-    // 1. Загрузка основной конфигурации
+    // 1. Загрузка глобальной конфигурации
     json config = load_config();
     
-    // 2. Инициализация менеджера плагинов
+    // 2. Инициализация менеджера плагинов и поиск .so файлов
     PluginManager plugin_manager(get_plugin_directory());
     plugin_manager.discover_plugins();
 
@@ -29,44 +31,28 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 3. Определение, какой эффект использовать
-    std::string effect_name = config.value("effect_name", available_effects[0]); // По умолчанию первый найденный
-    
-    std::cout << "Attempting to load effect: '" << effect_name << "'" << std::endl;
+    // 3. Выбор эффекта (из конфига или первого доступного)
+    std::string effect_name = config.value("effect_name", available_effects[0]);
+    std::cout << "Selected effect: '" << effect_name << "'" << std::endl;
 
-    // 4. Создание экземпляра эффекта через менеджер
-    WallpaperEffectPtr effect = plugin_manager.create_effect(effect_name);
-    
-    if (!effect) {
-        std::cerr << "Failed to create an instance of effect '" << effect_name << "'. Exiting." << std::endl;
-        return 1;
-    }
-    
-    std::cout << "Successfully created effect instance." << std::endl;
-
-    // 5. Применение настроек из конфигурации к эффекту
-    if (config.contains("effect_settings")) {
-        std::cout << "Applying settings from config file..." << std::endl;
-        for (const auto& item : config["effect_settings"].items()) {
-            std::cout << "  - Setting '" << item.key() << "'..." << std::endl;
-            effect->set_parameter(item.key(), json_to_variant(item.value()));
-        }
-    }
-
-    // 6. Настройка и запуск приложения обоев
+    // 4. Настройка базовых параметров приложения
     WallpaperConfig wallpaper_config;
-    wallpaper_config.output_name = "*";
+    wallpaper_config.output_name = "*"; // Применять ко всем найденным мониторам
     wallpaper_config.interactive = config.value("interactive", true);
 
     InteractiveWallpaper wallpaper(wallpaper_config);
     
+    // 5. ПЕРЕДАЕМ ФАБРИКУ ПЛАГИНОВ В ЯДРО
+    // Теперь Wayland-клиент сам создаст экземпляр эффекта для каждого монитора (Output)
+    wallpaper.set_plugin_manager(&plugin_manager, effect_name);
+    
+    // 6. Подключение к Wayland, инициализация EGL и IPC-сокетов
     if (!wallpaper.initialize()) {
         std::cerr << "Failed to initialize wallpaper" << std::endl;
         return 1;
     }
 
-    wallpaper.set_effect("*", std::move(effect));
-    
+    // 7. Запуск главного цикла событий (zero-latency epoll loop)
     std::cout << "Starting wallpaper main loop..." << std::endl;
     wallpaper.run();
     

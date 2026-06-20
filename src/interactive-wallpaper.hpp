@@ -1,25 +1,33 @@
 // src/interactive-wallpaper.hpp
-
 #pragma once
 
+// Системные и стандартные библиотеки
 #include <iostream> 
-#include <wayland-client.h>
-#include <wayland-egl.h>
-#include <EGL/egl.h>
 #include <string>
 #include <memory>
 #include <unordered_map>
+
+// Заголовки для работы с epoll и inotify (Zero-latency I/O)
+#include <sys/epoll.h>
+#include <sys/inotify.h>
+
+// Wayland и EGL
+#include <wayland-client.h>
+#include <wayland-egl.h>
+#include <EGL/egl.h>
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
-#include "pointer-daemon-client.hpp"
-#include <thread>          
-#include <atomic>          
-#include <chrono>          
-#include <mutex>           
+
+// JSON
 #include <nlohmann/json.hpp>
+
+// Внутренние компоненты
 #include "wallpaper-effect.hpp"
+#include "pointer-daemon-client.hpp"
 #include "audio-daemon-client.hpp"
 #include "audio-data.hpp"
+
+#include "plugin-manager.hpp" // Добавь инклуд
 
 enum class RendererType {
     OPENGL_ES,
@@ -33,15 +41,18 @@ struct WallpaperConfig {
     bool interactive = true;
 };
 
+// Хелпер для конвертации JSON-конфигов в универсальный тип (std::variant)
 EffectParameterValue json_to_variant(const nlohmann::json& j);
-
 
 class InteractiveWallpaper {
 public:
+    // Структура, описывающая один физический монитор (wl_output)
     struct Output {
         InteractiveWallpaper* parent = nullptr;
         std::string name;
         std::string identifier;
+        
+        // Wayland объекты
         wl_output* output_obj = nullptr;
         wl_surface* surface = nullptr;
         zwlr_layer_surface_v1* layer_surface = nullptr;
@@ -52,104 +63,107 @@ public:
         uint32_t configure_serial = 0;
         bool configured = false;
         
+        // Экземпляр эффекта (плагина), привязанный к этому монитору
         WallpaperEffectPtr effect;
 
-        // EGL resources
+        // EGL ресурсы для рендеринга на этот монитор
         wl_egl_window* egl_window = nullptr;
         EGLSurface egl_surface = EGL_NO_SURFACE;
+
+        wl_callback* frame_callback = nullptr;
         
         Output() : effect(nullptr, nullptr) {}
     };
+    
 
     InteractiveWallpaper(const WallpaperConfig& cfg);
     ~InteractiveWallpaper();
 
     bool initialize();
-    void run();
+    void run();   // Главный цикл программы (теперь на базе epoll)
     void stop();
 
-    void set_effect(const std::string& output_name, WallpaperEffectPtr effect);
+    static void frame_handle_done(void* data, wl_callback* callback, uint32_t time);
+    void render_output(Output* output);
+
+    // Присваивает эффект определенному монитору (или всем, если output_name = "*")
+    void set_plugin_manager(PluginManager* pm, const std::string& effect_name);
+    void apply_effect_to_output(Output* output);
+
 
     wl_shm* get_shm() const { return shm; }
 
-    // Wayland listeners (перемещены в public)
-    static void registry_global(void* data, wl_registry* registry,
-                                uint32_t name, const char* interface, uint32_t version);
+    // --- Wayland Listeners (Статические коллбэки) ---
+    static void registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version);
     static void registry_global_remove(void* data, wl_registry* registry, uint32_t name);
 
-    // Output listeners
-    static void output_geometry(void* data, wl_output* wl_output,
-                                int32_t x, int32_t y, int32_t width_mm, int32_t height_mm,
-                                int32_t subpixel, const char* make, const char* model,
-                                int32_t transform);
-    static void output_mode(void* data, wl_output* wl_output, uint32_t flags,
-                            int32_t width, int32_t height, int32_t refresh);
+    static void output_geometry(void* data, wl_output* wl_output, int32_t x, int32_t y, int32_t width_mm, int32_t height_mm, int32_t subpixel, const char* make, const char* model, int32_t transform);
+    static void output_mode(void* data, wl_output* wl_output, uint32_t flags, int32_t width, int32_t height, int32_t refresh);
     static void output_done(void* data, wl_output* wl_output);
     static void output_scale(void* data, wl_output* wl_output, int32_t scale);
     static void output_name(void* data, wl_output* wl_output, const char* name);
     static void output_description(void* data, wl_output* wl_output, const char* description);
-    void process_pointer_motion(double dx, double dy, bool is_touchpad);
 
-
-    // Layer surface listeners
-    static void layer_surface_configure(void* data, zwlr_layer_surface_v1* surface,
-                                        uint32_t serial, uint32_t width, uint32_t height);
+    static void layer_surface_configure(void* data, zwlr_layer_surface_v1* surface, uint32_t serial, uint32_t width, uint32_t height);
     static void layer_surface_closed(void* data, zwlr_layer_surface_v1* surface);
 
-    bool reload_config();
-    void start_config_monitor();
-    void stop_config_monitor();
-    
-
+    void process_pointer_motion(double dx, double dy, bool is_touchpad);
+    bool reload_config(); // Загружает config.json с диска в память
 
 private:
-    // Wayland globals
+    // --- Wayland Globals ---
     wl_display* display = nullptr;
     wl_compositor* compositor = nullptr;
     wl_shm* shm = nullptr;
     zwlr_layer_shell_v1* layer_shell = nullptr;
     wp_viewporter* viewporter = nullptr;
 
-    std::atomic<bool> config_needs_apply{false}; 
-    // Input handling
-    //InputHandler input_handler;
-
-    // EGL context
+    // --- EGL Context ---
     EGLDisplay egl_display = EGL_NO_DISPLAY;
     EGLContext egl_context = EGL_NO_CONTEXT;
     EGLConfig egl_config = nullptr;
 
+    // --- Состояние приложения ---
     WallpaperConfig config;
     std::unordered_map<wl_output*, std::unique_ptr<Output>> outputs;
     bool running = true;
+    nlohmann::json current_config; // Текущая загруженная конфигурация
 
-    PointerDaemonClient pointer_daemon;
-    bool use_pointer_daemon = true;
-
+    // --- Настройки ввода ---
     float touchpad_sensitivity = 0.3f;
     float mouse_sensitivity = 2.5f;
     float sphere_scale = 1.0f;
 
-    // Internal methods
+    // --- Клиенты для взаимодействия с демонами (IPC) ---
+    PointerDaemonClient pointer_daemon;
+    bool use_pointer_daemon = true;
+    std::unique_ptr<AudioDaemonClient> audio_client_;
+
+    // --- Файловые дескрипторы для мультиплексирования (epoll) ---
+    int epoll_fd = -1;
+    int inotify_fd = -1;
+    int inotify_wd = -1; // Watch descriptor для config.json
+
+    // --- Внутренние методы ---
     bool init_egl();
     void create_egl_surface(Output* output);
     void create_layer_surface(Output* output);
-    
     void check_egl_error(const std::string& operation);
+    
+    // --- Инициализация и обработка событий Inotify ---
+    void setup_inotify();
+    void process_inotify_events();
+    
+    // --- Применение конфигурации ---
+    void apply_config_to_all_outputs();
     void apply_config_to_effect(Output* output);
+
+    // --- Обработчики IPC демонов ---
     void init_pointer_daemon();
     void handle_daemon_motion(double dx, double dy, double vx, double vy, double dt, bool normalized, const std::string& device_name);
+    void handle_audio_data(const AudioData& data);
 
-    std::unique_ptr<AudioDaemonClient> audio_client_; // <-- Добавляем клиент
-    void handle_audio_data(const AudioData& data);    // <-- Метод-обработчик данных
-
-
-
-    std::thread config_monitor_thread;
-    std::atomic<bool> config_monitor_running{false};
-    std::chrono::system_clock::time_point last_config_modification;
-    std::mutex config_mutex;
-    nlohmann::json current_config;
+    PluginManager* plugin_manager_ = nullptr;
+    std::string current_effect_name_;
 
 };
-

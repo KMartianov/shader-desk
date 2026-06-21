@@ -157,6 +157,8 @@ void IcoSphereEffect::update_effect_scaling() {
 }
 
 bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
+    if (program != 0) return true;
+
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
     std::string vert_src = shader_utils::load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
@@ -172,6 +174,12 @@ bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
     u_time = glGetUniformLocation(program, "time");
     u_wireframe_color = glGetUniformLocation(program, "wireframe_color");
     u_is_wireframe_pass = glGetUniformLocation(program, "is_wireframe_pass");
+
+    u_lightColor = glGetUniformLocation(program, "lightColor");
+    u_lightPos = glGetUniformLocation(program, "lightPos");
+    u_viewPos = glGetUniformLocation(program, "viewPos");
+
+
     u_oscill_amp = glGetUniformLocation(program, "oscill_amp");
     u_oscill_freq = glGetUniformLocation(program, "oscill_freq");
     u_wave_amp = glGetUniformLocation(program, "wave_amp");
@@ -297,6 +305,10 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniformMatrix4fv(u_model, 1, GL_FALSE, &model[0][0]);
     glUniformMatrix4fv(u_view, 1, GL_FALSE, &view[0][0]);
     glUniformMatrix4fv(u_projection, 1, GL_FALSE, &projection[0][0]);
+
+    glUniform3f(u_lightColor, 1.0f, 1.0f, 1.0f); // Белый свет
+    glUniform3f(u_lightPos, 5.0f, 5.0f, 5.0f);   // Свет сверху-справа
+    glUniform3f(u_viewPos, 0.0f, 0.0f, 3.0f);    // Позиция камеры (из lookAt)
     
     time += 0.016f;
     glUniform1f(u_time, time);

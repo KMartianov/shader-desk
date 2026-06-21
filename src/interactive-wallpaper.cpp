@@ -20,9 +20,12 @@
 #include <nlohmann/json.hpp>
 #include "utils.hpp"
 
+#include <atomic>
+
 #include <poll.h>
 
 using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
+extern std::atomic<bool> global_running;
 
 EffectParameterValue json_to_variant(const nlohmann::json& j) {
     if (j.is_boolean()) {
@@ -126,13 +129,19 @@ void InteractiveWallpaper::process_pointer_motion(double dx, double dy, bool is_
 
 // Destructor
 InteractiveWallpaper::~InteractiveWallpaper() {
-    // Останавливаем мониторинг конфигурации
-
+    // 1. Отключаем IPC клиенты
     if (audio_client_) {
         audio_client_->disconnect();
     }
+    pointer_daemon.disconnect();
 
-    // Clean up EGL resources first
+    // 2. ВАЖНО: Сначала очищаем все экраны!
+    // При вызове clear() сработает деструктор ~Output, который уничтожит 
+    // EGL-поверхности, wl_surface и другие Wayland-объекты.
+    // Это ОБЯЗАТЕЛЬНО нужно сделать до закрытия EGL контекста и wl_display.
+    outputs.clear();
+
+    // 3. Теперь безопасно завершаем EGL
     if (egl_context != EGL_NO_CONTEXT) {
         eglDestroyContext(egl_display, egl_context);
         egl_context = EGL_NO_CONTEXT;
@@ -143,45 +152,7 @@ InteractiveWallpaper::~InteractiveWallpaper() {
         egl_display = EGL_NO_DISPLAY;
     }
 
-    // Destroy outputs and associated resources
-    for (auto& pair : outputs) {
-        auto& output = pair.second;
-
-        // Clean up EGL resources for this output
-        if (output->egl_surface != EGL_NO_SURFACE) {
-            eglDestroySurface(egl_display, output->egl_surface);
-            output->egl_surface = EGL_NO_SURFACE;
-        }
-        
-        if (output->egl_window) {
-            wl_egl_window_destroy(output->egl_window);
-            output->egl_window = nullptr;
-        }
-
-        // Clean up effect
-        if (output->effect) {
-            output->effect->cleanup();
-            output->effect.reset();
-        }
-
-        // Clean up Wayland resources
-        if (output->layer_surface) {
-            zwlr_layer_surface_v1_destroy(output->layer_surface);
-            output->layer_surface = nullptr;
-        }
-
-        if (output->surface) {
-            wl_surface_destroy(output->surface);
-            output->surface = nullptr;
-        }
-
-        if (output->output_obj) {
-            wl_output_destroy(output->output_obj);
-            output->output_obj = nullptr;
-        }
-    }
-    outputs.clear();
-
+    // 4. Уничтожаем глобальные объекты Wayland
     if (layer_shell) {
         zwlr_layer_shell_v1_destroy(layer_shell);
         layer_shell = nullptr;
@@ -198,23 +169,22 @@ InteractiveWallpaper::~InteractiveWallpaper() {
         wp_viewporter_destroy(viewporter);
         viewporter = nullptr;
     }
+
+    // 5. Отключаемся от дисплея Wayland
     if (display) {
         wl_display_disconnect(display);
         display = nullptr;
     }
-    pointer_daemon.disconnect();
 
+    // 6. Закрываем файловые дескрипторы мультиплексора
     if (epoll_fd >= 0) close(epoll_fd);
     if (inotify_fd >= 0) close(inotify_fd);
-
 }
 
 void InteractiveWallpaper::handle_audio_data(const AudioData& data) {
-    // Передаем данные каждому активному эффекту на каждом мониторе
     for (auto& pair : outputs) {
-        auto& output = pair.second;
-        if (output && output->effect) {
-            output->effect->handle_audio_data(data);
+        if (pair.second && pair.second->effect) {
+            pair.second->effect->handle_audio_data(data); // Прямой вызов
         }
     }
 }
@@ -242,39 +212,26 @@ void InteractiveWallpaper::init_pointer_daemon() {
 
 void InteractiveWallpaper::handle_daemon_motion(double dx, double dy, double vx, double vy, double dt, 
                                                bool normalized, const std::string& device_name) {
-    // Логируем информацию об устройстве
-    //std::cout << "Daemon motion - Device: " << device_name 
-    //          << " Norm: " << (normalized ? "yes" : "no")
-    //          << " dX: " << dx << " dY: " << dy 
-    //          << " vx: " << vx << " vy: " << vy << " dt: " << dt << std::endl;
-    
-    // Определяем тип устройства на основе normalized флага
     bool is_touchpad = normalized;
     float sensitivity = is_touchpad ? touchpad_sensitivity : mouse_sensitivity;
     
-
-    
     double effective_dx, effective_dy;
-    
-    // Выбираем стратегию обработки в зависимости от наличия данных о скорости
     if (std::abs(vx) > 1e-6 && std::abs(dt) > 1e-6) {
-        // Используем скорость для плавного вращения
         effective_dx = vx * sensitivity * dt;
         effective_dy = vy * sensitivity * dt;
     } else {
-        // Используем сырое смещение
         effective_dx = dx * sensitivity;
         effective_dy = dy * sensitivity;
     }
-              
-    // Передаем обработанное движение эффектам
+
+    // Прямой вызов
     for (auto& pair : outputs) {
-        auto& output = pair.second;
-        if (output->effect) {
-            output->effect->handle_pointer_motion(effective_dx, effective_dy, is_touchpad);
+        if (pair.second && pair.second->effect) {
+            pair.second->effect->handle_pointer_motion(effective_dx, effective_dy, is_touchpad);
         }
     }
 }
+
 
 
 // ------------------------- Конфигурация и мониторинг -------------------------
@@ -314,7 +271,6 @@ void InteractiveWallpaper::apply_config_to_effect(Output* output) {
         return;
     }
 
-    // Блокируем мьютекс для безопасного доступа к конфигурации из другого потока
     if (current_config.is_null()) {
         std::cout << "apply_config_to_effect: current_config is null, nothing to apply" << std::endl;
         return;
@@ -357,8 +313,11 @@ void InteractiveWallpaper::setup_inotify() {
     }
     
     std::string config_path = get_default_config_path();
+    std::string config_dir = config_path.substr(0, config_path.find_last_of('/'));
     // Наблюдаем только за изменением файла конфигурации
-    inotify_wd = inotify_add_watch(inotify_fd, config_path.c_str(), IN_MODIFY);
+    //inotify_wd = inotify_add_watch(inotify_fd, config_path.c_str(), IN_MODIFY);
+    inotify_wd = inotify_add_watch(inotify_fd, config_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+
     
     // Выполняем первичную загрузку конфигурации
     if (reload_config()) {
@@ -386,9 +345,10 @@ void InteractiveWallpaper::process_inotify_events() {
         // Перебираем все полученные события
         for (char *ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) {
             event = (const struct inotify_event *) ptr;
-            if (event->mask & IN_MODIFY) {
+            if (event->len > 0 && std::string(event->name) == "config.json") {
                 config_modified = true;
             }
+
         }
 
         // Если конфиг изменился, перезагружаем его и применяем
@@ -570,7 +530,7 @@ void InteractiveWallpaper::run() {
     const int MAX_EVENTS = 10;
     struct epoll_event events[MAX_EVENTS];
 
-    while (running) {
+    while (global_running && running) {
         // Подготавливаем Wayland (сбрасываем исходящий буфер запросов)
         while (wl_display_prepare_read(display) != 0) {
             wl_display_dispatch_pending(display);
@@ -630,41 +590,6 @@ void InteractiveWallpaper::run() {
 void InteractiveWallpaper::stop() {
     running = false;
 }
-
-// Effect management
-void InteractiveWallpaper::set_effect(const std::string& output_name, WallpaperEffectPtr effect) {
-    for (auto& pair : outputs) {
-        auto& output = pair.second;
-        if (output_name == "*" || output->name == output_name || output->identifier == output_name) {
-            // Clean up existing effect
-            if (output->effect) {
-                // The custom deleter in the old unique_ptr will be called automatically
-                // when it's replaced by the new one below.
-            }
-            
-            output->effect = std::move(effect);
-            
-            if (output->configured && output->effect && output->egl_surface != EGL_NO_SURFACE) {
-                // Make context current before initializing effect
-                if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
-                    output->effect->initialize(output->width, output->height);
-                } else {
-                    std::cerr << "Failed to make context current for effect initialization" << std::endl;
-                }
-            }
-            
-            std::cout << "Set effect for output: " << output->name << std::endl;
-            // Since we moved the effect, we might only want to set it on the first match.
-            // If you want the same instance on all monitors, you can't move it.
-            // For now, let's assume we create a new effect instance for each monitor,
-            // so moving it into the first one is correct. If you need it on all monitors,
-            // the logic in main.cpp should change to create an effect for each one.
-            return; // <-- Added to prevent moving the same pointer multiple times
-        }
-    }
-}
-
-
 
 // Wayland registry handler
 void InteractiveWallpaper::registry_global(void* data, wl_registry* registry,
@@ -740,9 +665,15 @@ void InteractiveWallpaper::output_done(void* data, wl_output* /*wl_output*/) {
               << " size=" << output->width << "x" << output->height << std::endl;
     
     if (output->parent && output->width > 0 && output->height > 0) {
-        output->parent->create_layer_surface(output);
-        // СОЗДАЕМ ЭФФЕКТ ДЛЯ ЭТОГО МОНИТОРА ЗДЕСЬ:
-        output->parent->apply_effect_to_output(output);
+        
+        // ВАЖНО: Проверяем, не создали ли мы уже поверхность для этого монитора!
+        if (!output->layer_surface) {
+            // Создаем поверхность
+            output->parent->create_layer_surface(output);
+            // СОЗДАЕМ И ПРИВЯЗЫВАЕМ ЭФФЕКТ К ЭТОМУ МОНИТОРУ
+            output->parent->apply_effect_to_output(output);
+        }
+        
     } else {
         std::cerr << "Cannot create layer surface: invalid output parameters" << std::endl;
     }
@@ -807,6 +738,9 @@ void InteractiveWallpaper::layer_surface_configure(void* data,
                                                   uint32_t serial, uint32_t width, uint32_t height) {
     Output* output = static_cast<Output*>(data);
     
+    // Защита от нулевых размеров (иногда композитор так просит клиента выбрать размер самому)
+    if (width == 0 || height == 0) return;
+
     std::cout << "Layer surface configure: " << width << "x" << height << " (serial: " << serial << ")" << std::endl;
     
     output->width = width;
@@ -814,47 +748,44 @@ void InteractiveWallpaper::layer_surface_configure(void* data,
     output->configure_serial = serial;
     output->configured = true;
 
-    // Acknowledge the configure
+    // 1. Обязательно подтверждаем композитору, что приняли новые размеры
     zwlr_layer_surface_v1_ack_configure(surface, serial);
 
-    // Создаем поверхность только если ее еще нет.
+    // 2. Если EGL-поверхность еще не создана — создаем
     if (output->egl_surface == EGL_NO_SURFACE) {
         output->parent->create_egl_surface(output);
 
-        // Инициализируем эффект только после первого создания поверхности
         if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
             if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
-                // Проверяем результат инициализации
-                if (output->effect->initialize(width, height)) {
-                    std::cout << "Effect initialized for output: " << output->name << std::endl;
-                } else {
-                    std::cerr << "ERROR: Failed to initialize effect for output: " << output->name << ". Disabling it." << std::endl;
-                    // Если инициализация провалилась, сбрасываем эффект, чтобы не было падения
+                if (!output->effect->initialize(width, height)) {
+                    std::cerr << "ERROR: Failed to initialize effect. Disabling it." << std::endl;
                     output->effect.reset();
                 }
-            } else {
-                std::cerr << "Failed to make EGL context current for effect initialization" << std::endl;
             }
+        }
+        
+        // Запускаем отрисовку первого кадра
+        if (!output->frame_callback) {
+            output->parent->render_output(output);
         }
 
     } else {
-        // Если поверхность уже есть, просто меняем размер окна
+        // 3. ПРАВИЛЬНЫЙ РЕСАЙЗ: Если окно уже есть
         if (output->egl_window) {
+            // Сообщаем драйверу EGL о новом размере
             wl_egl_window_resize(output->egl_window, width, height, 0, 0);
             std::cout << "Resized EGL window for output: " << output->name << std::endl;
         }
-    }
-
-    // Commit the surface to make it visible
-    if (output->surface) {
-        wl_surface_commit(output->surface);
-    }
-    
-    // Запускаем цикл VSync для этого монитора
-    if (!output->frame_callback) {
+        
+        // ВАЖНО: Wayland требует, чтобы после ack_configure мы немедленно 
+        // предоставили буфер с НОВЫМ размером. Иначе будет графический глитч.
+        // Поэтому мы отменяем ожидание следующего кадра и рисуем принудительно ПРЯМО СЕЙЧАС.
+        if (output->frame_callback) {
+            wl_callback_destroy(output->frame_callback);
+            output->frame_callback = nullptr;
+        }
         output->parent->render_output(output);
     }
-
 }
 
 void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::string& effect_name) {

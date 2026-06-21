@@ -45,6 +45,7 @@ void SimpleWaveEffectEffect::set_parameter(const std::string& name, const Effect
 }
 
 bool SimpleWaveEffectEffect::initialize(uint32_t width, uint32_t height) {
+    if (program) return true;
     // Note: shader_utils expects shader names relative to a common shader directory
     std::string vert_src = shader_utils::load_shader_source("simple-wave-effect/wave_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source("simple-wave-effect/wave_frag.glsl");
@@ -95,9 +96,6 @@ void SimpleWaveEffectEffect::cleanup() {
     vao = 0;
 }
 
-void SimpleWaveEffectEffect::handle_pointer_motion(double dx, double dy, bool is_touchpad) {
-    // Implement if needed by the shader
-}
 
 // --- Exported C functions for the plugin system ---
 extern "C" {

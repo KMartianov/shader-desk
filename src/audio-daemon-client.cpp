@@ -53,22 +53,19 @@ void AudioDaemonClient::process_pending_data() {
     if (sockfd_ < 0) return;
 
     AudioData audio_data;
-    // Читаем в цикле, пока есть данные (чтобы очистить буфер сокета ОС)
+    AudioData latest_data;
+    bool got_data = false;
+
     while (true) {
         ssize_t n = recvfrom(sockfd_, &audio_data, sizeof(AudioData), 0, nullptr, nullptr);
-
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break; // Больше данных нет, выходим
-            }
-            std::cerr << "AudioClient: recvfrom error: " << strerror(errno) << std::endl;
-            break;
-        }
-
+        if (n < 0) break;
         if (n == sizeof(AudioData) && audio_data.magic == 0x41554431) {
-            if (callback_) {
-                callback_(audio_data);
-            }
+            latest_data = audio_data; // Запоминаем только самый свежий фрейм
+            got_data = true;
         }
+    }
+
+    if (got_data && callback_) {
+        callback_(latest_data);
     }
 }

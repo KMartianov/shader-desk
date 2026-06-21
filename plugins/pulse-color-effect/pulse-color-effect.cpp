@@ -45,6 +45,8 @@ void PulseColorEffectEffect::set_parameter(const std::string& name, const Effect
 }
 
 bool PulseColorEffectEffect::initialize(uint32_t width, uint32_t height) {
+    if (program != 0) return true;
+
     // Note: shader_utils expects shader names relative to a common shader directory
     std::string vert_src = shader_utils::load_shader_source("pulse-color-effect/pulse_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source("pulse-color-effect/pulse_frag.glsl");
@@ -93,10 +95,6 @@ void PulseColorEffectEffect::cleanup() {
     if (vao) glDeleteVertexArrays(1, &vao);
     program = 0;
     vao = 0;
-}
-
-void PulseColorEffectEffect::handle_pointer_motion(double dx, double dy, bool is_touchpad) {
-    // Implement if needed by the shader
 }
 
 // --- Exported C functions for the plugin system ---

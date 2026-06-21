@@ -167,7 +167,9 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
         needs_regeneration = false;
     }
 
-    // --- ADD THIS ---
+    glViewport(0, 0, width, height);
+
+
     // Clear the color and depth buffers with a dark background color.
     glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

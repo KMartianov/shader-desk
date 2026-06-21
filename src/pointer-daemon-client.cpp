@@ -67,24 +67,27 @@ void PointerDaemonClient::process_pending_data() {
     if (sockfd < 0 || !connected) return;
 
     PointerDatagram datagram;
-    
+    bool got_data = false;
+    double sum_dx = 0.0, sum_dy = 0.0;
+    bool is_touchpad = false;
+
     while (true) {
-        // Читаем ровно размер нашей структуры
         ssize_t n = recv(sockfd, &datagram, sizeof(PointerDatagram), 0);
-        
         if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) break; // Буфер пуст
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             std::cerr << "Pointer receive error: " << strerror(errno) << std::endl;
             break;
         } 
-        
-        // Проверяем, что прочитали правильную структуру (сравниваем магическое число)
         if (n == sizeof(PointerDatagram) && datagram.magic == POINTER_MAGIC) {
-            if (on_motion) {
-                // Передаем нулевые скорости (vx, vy) и dt, так как вся интерполяция
-                // теперь должна делаться в самих эффектах, мышь шлет только дельту.
-                on_motion(datagram.dx, datagram.dy, 0.0, 0.0, 0.016, datagram.is_touchpad, "evdev");
-            }
+            sum_dx += datagram.dx;
+            sum_dy += datagram.dy;
+            is_touchpad = datagram.is_touchpad;
+            got_data = true;
         }
+    }
+
+    // Вызываем коллбек ОДИН раз, передавая сумму смещений
+    if (got_data && on_motion) {
+        on_motion(sum_dx, sum_dy, 0.0, 0.0, 0.016, is_touchpad, "evdev");
     }
 }

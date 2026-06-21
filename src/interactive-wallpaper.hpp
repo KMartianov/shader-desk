@@ -73,6 +73,16 @@ public:
         wl_callback* frame_callback = nullptr;
         
         Output() : effect(nullptr, nullptr) {}
+
+        ~Output() {
+            if (effect) { effect->cleanup(); effect.reset(); }
+            if (egl_surface != EGL_NO_SURFACE && parent) eglDestroySurface(parent->egl_display, egl_surface);
+            if (egl_window) wl_egl_window_destroy(egl_window);
+            if (frame_callback) wl_callback_destroy(frame_callback);
+            if (layer_surface) zwlr_layer_surface_v1_destroy(layer_surface);
+            if (surface) wl_surface_destroy(surface);
+            if (output_obj) wl_output_release(output_obj); // wl_output_destroy -> release для версии >= 3
+        }
     };
     
 

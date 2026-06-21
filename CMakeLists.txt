@@ -195,7 +195,8 @@ set(APP_SRC_FILES
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-add_library(shader_utils SHARED "${SRC_DIR}/shader-utils.cpp")
+add_library(shader_utils STATIC "${SRC_DIR}/shader-utils.cpp")
+set_property(TARGET shader_utils PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(shader_utils PRIVATE "${SRC_DIR}")
 
 

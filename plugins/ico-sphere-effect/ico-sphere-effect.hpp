@@ -75,6 +75,10 @@ protected:
     float time = 0.0f;
     bool wireframe_mode = true;
 
+    GLuint u_lightColor = 0;
+    GLuint u_lightPos = 0;
+    GLuint u_viewPos = 0;
+
     float oscill_amp;
     float oscill_freq;
     float wave_amp;

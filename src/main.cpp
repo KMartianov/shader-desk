@@ -5,8 +5,16 @@
 #include <iostream>
 #include <string>
 #include <nlohmann/json.hpp>
+#include <csignal>
+#include <atomic>
 
 using json = nlohmann::json;
+std::atomic<bool> global_running{true};
+
+void handle_signal(int) {
+    global_running = false;
+}
+
 
 std::string get_plugin_directory() {
     // Получаем домашнюю директорию для поиска плагинов
@@ -18,6 +26,11 @@ std::string get_plugin_directory() {
 }
 
 int main(int argc, char** argv) {
+
+    std::signal(SIGINT, handle_signal);
+    std::signal(SIGTERM, handle_signal);
+
+
     // 1. Загрузка глобальной конфигурации
     json config = load_config();
     

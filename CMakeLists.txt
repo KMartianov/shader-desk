@@ -1,6 +1,6 @@
 # ./CMakeLists.txt
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.14) # Повышено до 3.14 для FetchContent
 project(interactive-wallpaper LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -22,12 +22,22 @@ find_package(PkgConfig REQUIRED)
 find_package(glm REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
-# Wayland/GL ES зависимости через pkg-config
+# Wayland, GL ES и LuaJIT зависимости через pkg-config
 pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
 pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+pkg_check_modules(LUAJIT REQUIRED luajit) # <--- ДОБАВЛЕНО: LuaJIT
+
+# Автоматическое скачивание sol2 (C++ <-> Lua binding)
+include(FetchContent)
+FetchContent_Declare(
+    sol2
+    GIT_REPOSITORY https://github.com/ThePhD/sol2.git
+    GIT_TAG main
+)
+FetchContent_MakeAvailable(sol2)
 
 # Optional system wayland-protocols
 pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols)
@@ -50,9 +60,7 @@ if(WAYLAND_SCANNER AND SED)
     # Third-party protocol dir shipped with project
     set(THIRD_PARTY_PROTO_DIR "${SRC_DIR}/third_party/wlr-protocols")
 
-    #
     # --- wlr-layer-shell (unstable) ---
-    #
     set(LAYER_SHELL_XML "${THIRD_PARTY_PROTO_DIR}/unstable/wlr-layer-shell-unstable-v1.xml")
     set(LAYER_SHELL_XML_FIXED "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-fixed.xml")
     set(LAYER_SHELL_HEADER "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-client-protocol.h")
@@ -83,13 +91,10 @@ if(WAYLAND_SCANNER AND SED)
         message(WARNING "wlr-layer-shell xml not found at ${LAYER_SHELL_XML}")
     endif()
 
-    #
     # --- viewporter ---
-    #
     if(WAYLAND_PROTOCOLS_FOUND)
         set(VIEWPORTER_XML "${WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/viewporter/viewporter.xml")
     else()
-        # Try common system paths
         set(VIEWPORTER_XML "/usr/share/wayland-protocols/stable/viewporter/viewporter.xml")
     endif()
 
@@ -107,28 +112,9 @@ if(WAYLAND_SCANNER AND SED)
         )
         list(APPEND PROTOCOL_SOURCES "${VIEWPORTER_SOURCE}")
         list(APPEND GENERATED_PROTOCOL_HEADERS "${VIEWPORTER_HEADER}")
-    else()
-        # try alternate location
-        set(VIEWPORTER_XML_ALT "/usr/local/share/wayland-protocols/stable/viewporter/viewporter.xml")
-        if(EXISTS "${VIEWPORTER_XML_ALT}")
-            add_custom_command(
-                OUTPUT "${VIEWPORTER_HEADER}" "${VIEWPORTER_SOURCE}"
-                COMMAND ${WAYLAND_SCANNER} client-header "${VIEWPORTER_XML_ALT}" "${VIEWPORTER_HEADER}"
-                COMMAND ${WAYLAND_SCANNER} private-code  "${VIEWPORTER_XML_ALT}" "${VIEWPORTER_SOURCE}"
-                DEPENDS "${VIEWPORTER_XML_ALT}"
-                COMMENT "Generating viewporter protocol (alt path)"
-                VERBATIM
-            )
-            list(APPEND PROTOCOL_SOURCES "${VIEWPORTER_SOURCE}")
-            list(APPEND GENERATED_PROTOCOL_HEADERS "${VIEWPORTER_HEADER}")
-        else()
-            message(WARNING "viewporter XML not found. Tried: ${VIEWPORTER_XML} and ${VIEWPORTER_XML_ALT}")
-        endif()
     endif()
 
-    #
     # --- xdg-shell (system) ---
-    #
     if(WAYLAND_PROTOCOLS_FOUND)
         set(XDG_XML "${WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml")
     else()
@@ -149,35 +135,23 @@ if(WAYLAND_SCANNER AND SED)
         )
         list(APPEND PROTOCOL_SOURCES "${XDG_SOURCE}")
         list(APPEND GENERATED_PROTOCOL_HEADERS "${XDG_HEADER}")
-    else()
-        message(WARNING "xdg-shell xml not found at ${XDG_XML}")
     endif()
 
-    # custom target to build all protocols
     add_custom_target(wayland_protocols ALL
         DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_PROTOCOL_HEADERS}
     )
-else()
-    message(WARNING "wayland-scanner or sed not found. CMake will try to use any existing protocol sources in build/ or source tree.")
 endif()
 
-#
-# Если источники протоколов не были сгенерированы, попробуем найти уже готовые файлы
-#
+# Fallback если исходники протоколов уже сгенерированы
 if(PROTOCOL_SOURCES STREQUAL "")
     set(POSSIBLE_PROTO_SRCS
         "${BIN_DIR}/wlr-layer-shell-unstable-v1-client-protocol.c"
         "${BIN_DIR}/viewporter-client-protocol.c"
         "${BIN_DIR}/xdg-shell-client-protocol.c"
-        "${SRC_DIR}/wlr-layer-shell-unstable-v1-client-protocol.c"
-        "${SRC_DIR}/viewporter-client-protocol.c"
-        "${SRC_DIR}/xdg-shell-client-protocol.c"
     )
-
     foreach(_psrc IN LISTS POSSIBLE_PROTO_SRCS)
         if(EXISTS "${_psrc}")
             list(APPEND PROTOCOL_SOURCES "${_psrc}")
-            message(STATUS "Found existing protocol source: ${_psrc}")
         endif()
     endforeach()
 endif()
@@ -186,12 +160,10 @@ endif()
 set(APP_SRC_FILES
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/interactive-wallpaper.cpp"
-    "${SRC_DIR}/config-loader.cpp"
-    "${SRC_DIR}/pointer-daemon-client.cpp"
+    "${SRC_DIR}/lua-engine.cpp"             
+    "${SRC_DIR}/lua-config-generator.cpp"   
     "${SRC_DIR}/plugin-manager.cpp"
-    "${SRC_DIR}/audio-daemon-client.cpp"
     "${SRC_DIR}/shader-utils.cpp"
-    
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
@@ -199,10 +171,10 @@ add_library(shader_utils STATIC "${SRC_DIR}/shader-utils.cpp")
 set_property(TARGET shader_utils PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(shader_utils PRIVATE "${SRC_DIR}")
 
-
 # --- Сборка основного приложения ---
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
 
+# Добавлены ${LUAJIT_INCLUDE_DIRS}
 target_include_directories(interactive-wallpaper PRIVATE
     "${BIN_DIR}"
     "${PROTOCOL_OUTPUT_DIR}"
@@ -211,30 +183,29 @@ target_include_directories(interactive-wallpaper PRIVATE
     ${WAYLAND_EGL_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
     ${GLESv2_INCLUDE_DIRS}
+    ${LUAJIT_INCLUDE_DIRS} 
 )
 
+# Добавлены ${LUAJIT_LIBRARIES} и sol2::sol2
 target_link_libraries(interactive-wallpaper PRIVATE
     ${WAYLAND_CLIENT_LIBRARIES}
     ${WAYLAND_EGL_LIBRARIES}
     ${EGL_LIBRARIES}
     ${GLESv2_LIBRARIES}
+    ${LUAJIT_LIBRARIES}
     nlohmann_json::nlohmann_json
     glm::glm
     dl
     pthread
     shader_utils
+    sol2::sol2
 )
 
-# Если сгенерирован target wayland_protocols — добавить зависимость
 if(TARGET wayland_protocols)
     add_dependencies(interactive-wallpaper wayland_protocols)
 endif()
 
-
-# --- Сборка утилиты для опроса плагинов ---
-add_executable(plugin-interrogator "${SRC_DIR}/plugin-interrogator.cpp")
-target_include_directories(plugin-interrogator PRIVATE "${SRC_DIR}")
-target_link_libraries(plugin-interrogator PRIVATE nlohmann_json::nlohmann_json dl)
+# --- УДАЛЕН БЛОК СБОРКИ plugin-interrogator ---
 
 # --- Подключаем директорию с плагинами для их сборки ---
 add_subdirectory(plugins)

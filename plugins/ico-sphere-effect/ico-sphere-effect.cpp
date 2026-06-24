@@ -156,8 +156,15 @@ void IcoSphereEffect::update_effect_scaling() {
     scaled_noise_amp = noise_amp * sphere_scale;
 }
 
-bool IcoSphereEffect::initialize(uint32_t width, uint32_t height) {
+bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
     if (program != 0) return true;
+
+    // ПРИВЯЗЫВАЕМ ПАМЯТЬ
+    p_mouse_dx = core->get_blackboard().bind_float("mouse.dx");
+    p_mouse_dy = core->get_blackboard().bind_float("mouse.dy");
+    p_audio_bass = core->get_blackboard().bind_float("audio.bass");
+    p_audio_mid = core->get_blackboard().bind_float("audio.mid");
+    p_audio_treble = core->get_blackboard().bind_float("audio.treble");
 
     std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
@@ -284,6 +291,21 @@ void IcoSphereEffect::update_rotation(float dt) {
 
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height) {
+    // === НОВАЯ ЛОГИКА ЧТЕНИЯ ДАННЫХ ===
+    if (p_mouse_dx && p_mouse_dy) {
+        float dx = *p_mouse_dx;
+        float dy = *p_mouse_dy;
+        *p_mouse_dx = 0.0f; // Сбрасываем дельту
+        *p_mouse_dy = 0.0f;
+        angular_velocity += glm::vec3(dy, dx, 0.0f) * mouse_sensitivity;
+    }
+
+    if (audio_reactive && p_audio_bass && p_audio_mid && p_audio_treble) {
+        smoothed_bass = audio_smoothing * smoothed_bass + (1.0f - audio_smoothing) * (*p_audio_bass);
+        smoothed_mid = audio_smoothing * smoothed_mid + (1.0f - audio_smoothing) * (*p_audio_mid);
+        smoothed_treble = audio_smoothing * smoothed_treble + (1.0f - audio_smoothing) * (*p_audio_treble);
+    }
+
     if (needs_regeneration) {
         generate_icosphere(subdivisions);
         update_buffers();
@@ -354,26 +376,7 @@ void IcoSphereEffect::cleanup() {
     std::cout << "IcoSphere effect cleaned up." << std::endl;
 }
 
-void IcoSphereEffect::handle_pointer_motion(double dx, double dy, bool is_touchpad) {
-    float sensitivity = is_touchpad ?
-    touchpad_sensitivity : mouse_sensitivity;
-    glm::vec3 impulse = glm::vec3(dy, dx, 0.0f) * sensitivity;
-    angular_velocity += impulse;
-}
 
-void IcoSphereEffect::handle_audio_data(const AudioData& data) {
-    if (!audio_reactive) {
-        smoothed_bass = 0.0f;
-        smoothed_mid = 0.0f;
-        smoothed_treble = 0.0f;
-        return;
-    }
-
-    // Сглаживаем полученные значения для более плавной анимации
-    smoothed_bass = audio_smoothing * smoothed_bass + (1.0f - audio_smoothing) * static_cast<float>(data.bass);
-    smoothed_mid = audio_smoothing * smoothed_mid + (1.0f - audio_smoothing) * static_cast<float>(data.mid);
-    smoothed_treble = audio_smoothing * smoothed_treble + (1.0f - audio_smoothing) * static_cast<float>(data.treble);
-}
 
 void IcoSphereEffect::set_subdivisions(int value) { 
     int new_subdivisions = std::clamp(value, 0, 6);

@@ -18,7 +18,7 @@ public:
     std::vector<EffectParameter> get_parameters() const override;
     void set_parameter(const std::string& name, const EffectParameterValue& value) override;
 
-    bool initialize(uint32_t width, uint32_t height) override;
+    bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height) override;
     void cleanup() override;
 

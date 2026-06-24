@@ -1,71 +1,78 @@
 // src/main.cpp
 #include "interactive-wallpaper.hpp"
 #include "plugin-manager.hpp"
-#include "config-loader.hpp"
+#include "lua-engine.hpp"
+#include "lua-config-generator.hpp"
 #include <iostream>
 #include <string>
-#include <nlohmann/json.hpp>
-#include <csignal>
 #include <atomic>
+#include <signal.h>
+#include <sys/signalfd.h>
 
-using json = nlohmann::json;
 std::atomic<bool> global_running{true};
 
-void handle_signal(int) {
-    global_running = false;
-}
-
-
 std::string get_plugin_directory() {
-    // Получаем домашнюю директорию для поиска плагинов
     const char* home = getenv("HOME");
-    if (home) {
-        return std::string(home) + "/.config/interactive-wallpaper/effects";
-    }
-    return "./effects"; // Fallback
+    return home ? std::string(home) + "/.config/interactive-wallpaper/effects" : "./effects";
 }
 
 int main(int argc, char** argv) {
+    // 1. Обработка CLI команд (Генерация конфигов)
+    if (argc > 1 && std::string(argv[1]) == "--init-config") {
+        PluginManager pm(get_plugin_directory());
+        pm.discover_plugins();
+        LuaConfigGenerator::generate_configs(pm);
+        return 0; // Выходим, Wayland нам тут не нужен
+    }
 
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
+    // 2. Блокируем сигналы (Они будут обрабатываться через signalfd в epoll)
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    if (sigprocmask(SIG_BLOCK, &mask, nullptr) == -1) {
+        std::cerr << "Failed to block signals" << std::endl;
+        return 1;
+    }
 
+    // 3. Загрузка конфигурации через Lua
+    LuaEngine lua_engine;
+    if (!lua_engine.load()) {
+        std::cerr << "Failed to load Lua configuration!" << std::endl;
+        // Не выходим, попытаемся запуститься с дефолтными значениями
+    }
 
-    // 1. Загрузка глобальной конфигурации
-    json config = load_config();
-    
-    // 2. Инициализация менеджера плагинов и поиск .so файлов
+    // 4. Инициализация менеджера плагинов
     PluginManager plugin_manager(get_plugin_directory());
     plugin_manager.discover_plugins();
 
     auto available_effects = plugin_manager.get_available_effects();
     if (available_effects.empty()) {
-        std::cerr << "No plugins found in " << get_plugin_directory() << ". Exiting." << std::endl;
+        std::cerr << "No visual plugins found! Exiting." << std::endl;
         return 1;
     }
 
-    // 3. Выбор эффекта (из конфига или первого доступного)
-    std::string effect_name = config.value("effect_name", available_effects[0]);
+    // Выбираем эффект: из Lua конфига или первый найденный
+    std::string effect_name = lua_engine.get_active_effect();
+    if (effect_name.empty() || std::find(available_effects.begin(), available_effects.end(), effect_name) == available_effects.end()) {
+        effect_name = available_effects[0];
+    }
     std::cout << "Selected effect: '" << effect_name << "'" << std::endl;
 
-    // 4. Настройка базовых параметров приложения
+    // 5. Настройка базовых параметров
     WallpaperConfig wallpaper_config;
-    wallpaper_config.output_name = "*"; // Применять ко всем найденным мониторам
-    wallpaper_config.interactive = config.value("interactive", true);
+    wallpaper_config.output_name = "*";
+    wallpaper_config.interactive = lua_engine.is_interactive();
 
-    InteractiveWallpaper wallpaper(wallpaper_config);
-    
-    // 5. ПЕРЕДАЕМ ФАБРИКУ ПЛАГИНОВ В ЯДРО
-    // Теперь Wayland-клиент сам создаст экземпляр эффекта для каждого монитора (Output)
+    InteractiveWallpaper wallpaper(wallpaper_config, lua_engine);
     wallpaper.set_plugin_manager(&plugin_manager, effect_name);
     
-    // 6. Подключение к Wayland, инициализация EGL и IPC-сокетов
     if (!wallpaper.initialize()) {
-        std::cerr << "Failed to initialize wallpaper" << std::endl;
+        std::cerr << "Failed to initialize Wayland compositor connection" << std::endl;
         return 1;
     }
+    plugin_manager.initialize_providers(&wallpaper);
 
-    // 7. Запуск главного цикла событий (zero-latency epoll loop)
     std::cout << "Starting wallpaper main loop..." << std::endl;
     wallpaper.run();
     

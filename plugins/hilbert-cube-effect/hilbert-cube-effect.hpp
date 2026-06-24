@@ -18,10 +18,9 @@ public:
     std::vector<EffectParameter> get_parameters() const override;
     void set_parameter(const std::string& name, const EffectParameterValue& value) override;
 
-    bool initialize(uint32_t width, uint32_t height) override;
+    bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height) override;
     void cleanup() override;
-    void handle_pointer_motion(double dx, double dy, bool is_touchpad) override;
 
 private:
     // --- OpenGL объекты ---
@@ -29,6 +28,9 @@ private:
     GLuint curve_vao = 0, curve_vbo = 0;
     GLuint cube_vao = 0, cube_vbo = 0, cube_ebo = 0;
     GLsizei curve_vertex_count = 0;
+
+    float* p_mouse_dx = nullptr;
+    float* p_mouse_dy = nullptr;
 
     // --- Параметры эффекта ---
     int hilbert_order = 4;
@@ -41,8 +43,8 @@ private:
     glm::quat orientation;
     glm::vec3 angular_velocity;
     float rotation_decay = 0.95f;
-    float mouse_sensitivity = 0.05f;
-    float touchpad_sensitivity = 10.0f;
+    float mouse_sensitivity = 20.5f;
+    float touchpad_sensitivity = 80.0f;
     void update_rotation(float dt);
 
     // --- Uniform-переменные ---

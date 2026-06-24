@@ -27,7 +27,7 @@ void {{CLASS_NAME}}::set_parameter(const std::string& name, const EffectParamete
     }
 }
 
-bool {{CLASS_NAME}}::initialize(uint32_t width, uint32_t height) {
+bool {{CLASS_NAME}}::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
     // Note: shader_utils expects shader names relative to a common shader directory
     std::string vert_src = shader_utils::load_shader_source("{{PROJECT_NAME}}/{{VERT_SHADER_FILENAME}}");
     std::string frag_src = shader_utils::load_shader_source("{{PROJECT_NAME}}/{{FRAG_SHADER_FILENAME}}");

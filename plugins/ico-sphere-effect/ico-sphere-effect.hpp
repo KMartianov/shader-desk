@@ -16,12 +16,9 @@ public:
     IcoSphereEffect();
 
     // --- Реализация интерфейса WallpaperEffect ---
-    bool initialize(uint32_t width, uint32_t height) override;
+    bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height) override;
     void cleanup() override;
-
-    void handle_audio_data(const AudioData& data) override; 
-    void handle_pointer_motion(double dx, double dy, bool is_touchpad) override;
     
     // --- Методы для конфигурации ---
     void set_wireframe_mode(bool enabled) { wireframe_mode = enabled; }
@@ -69,6 +66,12 @@ protected:
 
     float mouse_sensitivity;
     float touchpad_sensitivity;
+
+    float* p_mouse_dx = nullptr;
+    float* p_mouse_dy = nullptr;
+    float* p_audio_bass = nullptr;
+    float* p_audio_mid = nullptr;
+    float* p_audio_treble = nullptr;
 
     int subdivisions = 3;
     bool needs_regeneration = false;

@@ -119,9 +119,12 @@ void HilbertCubeEffect::generate_cube_outline() {
 }
 
 
-bool HilbertCubeEffect::initialize(uint32_t width, uint32_t height) {
-    // Add this check to prevent re-creating the program
+bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
     if (program) return true;
+
+    // ПРИВЯЗКА ПАМЯТИ
+    p_mouse_dx = core->get_blackboard().bind_float("mouse.dx");
+    p_mouse_dy = core->get_blackboard().bind_float("mouse.dy");
 
     std::string vert_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_frag.glsl");
@@ -152,6 +155,15 @@ void HilbertCubeEffect::update_rotation(float dt) {
 }
 
 void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
+    // === НОВАЯ ЛОГИКА ЧТЕНИЯ МЫШИ ===
+    if (p_mouse_dx && p_mouse_dy) {
+        float dx = *p_mouse_dx;
+        float dy = *p_mouse_dy;
+        *p_mouse_dx = 0.0f; // Сбрасываем дельту
+        *p_mouse_dy = 0.0f;
+        angular_velocity += glm::vec3(dy, dx, 0.0f) * mouse_sensitivity;
+    }
+
     if (needs_regeneration) {
         // --- CORRECTED REGENERATION LOGIC ---
         // 1. Clean up *only* the old geometry buffers.
@@ -214,11 +226,7 @@ void HilbertCubeEffect::cleanup() {
     program = curve_vao = curve_vbo = cube_vao = cube_vbo = cube_ebo = 0;
 }
 
-void HilbertCubeEffect::handle_pointer_motion(double dx, double dy, bool is_touchpad) {
-    float sensitivity = is_touchpad ? touchpad_sensitivity : mouse_sensitivity;
-    glm::vec3 impulse = glm::vec3(dy, dx, 0.0f) * sensitivity;
-    angular_velocity += impulse;
-}
+
 
 // --- Интерфейс плагина ---
 const char* HilbertCubeEffect::get_name() const {

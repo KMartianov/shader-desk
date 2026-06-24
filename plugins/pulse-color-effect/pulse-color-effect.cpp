@@ -44,7 +44,7 @@ void PulseColorEffectEffect::set_parameter(const std::string& name, const Effect
     }
 }
 
-bool PulseColorEffectEffect::initialize(uint32_t width, uint32_t height) {
+bool PulseColorEffectEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
     if (program != 0) return true;
 
     // Note: shader_utils expects shader names relative to a common shader directory

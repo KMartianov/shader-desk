@@ -67,8 +67,11 @@ protected:
     float mouse_sensitivity;
     float touchpad_sensitivity;
 
-    float* p_mouse_dx = nullptr;
-    float* p_mouse_dy = nullptr;
+    float* p_accum_x = nullptr;
+    float* p_accum_y = nullptr;
+    float last_mouse_x = 0.0f;
+    float last_mouse_y = 0.0f;
+
     float* p_audio_bass = nullptr;
     float* p_audio_mid = nullptr;
     float* p_audio_treble = nullptr;

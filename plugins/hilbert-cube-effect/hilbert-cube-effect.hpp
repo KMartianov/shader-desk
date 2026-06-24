@@ -29,8 +29,13 @@ private:
     GLuint cube_vao = 0, cube_vbo = 0, cube_ebo = 0;
     GLsizei curve_vertex_count = 0;
 
-    float* p_mouse_dx = nullptr;
-    float* p_mouse_dy = nullptr;
+    // Указатели на глобальные накопленные координаты в BlackBoard
+    float* p_accum_x = nullptr;
+    float* p_accum_y = nullptr;
+    
+    // Локальное состояние этого конкретного монитора
+    float last_mouse_x = 0.0f;
+    float last_mouse_y = 0.0f;
 
     // --- Параметры эффекта ---
     int hilbert_order = 4;

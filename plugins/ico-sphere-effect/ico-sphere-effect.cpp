@@ -160,8 +160,9 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     if (program != 0) return true;
 
     // ПРИВЯЗЫВАЕМ ПАМЯТЬ
-    p_mouse_dx = core->get_blackboard().bind_float("mouse.dx");
-    p_mouse_dy = core->get_blackboard().bind_float("mouse.dy");
+    p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
+    p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
+
     p_audio_bass = core->get_blackboard().bind_float("audio.bass");
     p_audio_mid = core->get_blackboard().bind_float("audio.mid");
     p_audio_treble = core->get_blackboard().bind_float("audio.treble");
@@ -291,12 +292,21 @@ void IcoSphereEffect::update_rotation(float dt) {
 
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height) {
-    // === НОВАЯ ЛОГИКА ЧТЕНИЯ ДАННЫХ ===
-    if (p_mouse_dx && p_mouse_dy) {
-        float dx = *p_mouse_dx;
-        float dy = *p_mouse_dy;
-        *p_mouse_dx = 0.0f; // Сбрасываем дельту
-        *p_mouse_dy = 0.0f;
+    // === БЕЗОПАСНАЯ ЛОГИКА ЧТЕНИЯ МЫШИ (Delta-calc) ===
+    if (p_accum_x && p_accum_y) {
+        // Читаем текущее глобальное значение
+        float current_x = *p_accum_x;
+        float current_y = *p_accum_y;
+        
+        // Вычисляем дельту (разницу с прошлым кадром ЭТОГО монитора)
+        float dx = current_x - last_mouse_x;
+        float dy = current_y - last_mouse_y;
+        
+        // Запоминаем текущее значение для следующего кадра
+        last_mouse_x = current_x;
+        last_mouse_y = current_y;
+        
+        // Применяем вращение
         angular_velocity += glm::vec3(dy, dx, 0.0f) * mouse_sensitivity;
     }
 

@@ -123,8 +123,8 @@ bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t 
     if (program) return true;
 
     // ПРИВЯЗКА ПАМЯТИ
-    p_mouse_dx = core->get_blackboard().bind_float("mouse.dx");
-    p_mouse_dy = core->get_blackboard().bind_float("mouse.dy");
+    p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
+    p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
 
     std::string vert_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_frag.glsl");
@@ -155,12 +155,17 @@ void HilbertCubeEffect::update_rotation(float dt) {
 }
 
 void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
-    // === НОВАЯ ЛОГИКА ЧТЕНИЯ МЫШИ ===
-    if (p_mouse_dx && p_mouse_dy) {
-        float dx = *p_mouse_dx;
-        float dy = *p_mouse_dy;
-        *p_mouse_dx = 0.0f; // Сбрасываем дельту
-        *p_mouse_dy = 0.0f;
+    // === БЕЗОПАСНАЯ ЛОГИКА ЧТЕНИЯ МЫШИ (Delta-calc) ===
+    if (p_accum_x && p_accum_y) {
+        float current_x = *p_accum_x;
+        float current_y = *p_accum_y;
+        
+        float dx = current_x - last_mouse_x;
+        float dy = current_y - last_mouse_y;
+        
+        last_mouse_x = current_x;
+        last_mouse_y = current_y;
+        
         angular_velocity += glm::vec3(dy, dx, 0.0f) * mouse_sensitivity;
     }
 

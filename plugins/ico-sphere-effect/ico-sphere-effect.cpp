@@ -49,7 +49,8 @@ IcoSphereEffect::IcoSphereEffect() {
     std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
     orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     angular_velocity = glm::vec3(dis(gen), dis(gen), dis(gen)) * 0.1f;
-    // Инициализация параметров по умолчанию
+    
+    // Инициализация визуальных параметров
     wireframe_mode = true;
     subdivisions = 3;
     sphere_scale = 1.0f;
@@ -64,19 +65,6 @@ IcoSphereEffect::IcoSphereEffect() {
     max_rotation_speed = 3.0f;
     min_rotation_speed = 0.001f;
     constant_rotation_speed = 0.0f;
-    mouse_sensitivity = 0.05f;
-    touchpad_sensitivity = 10.0f;
-    // Инициализация аудио-параметров
-    audio_reactive = true;
-    audio_smoothing = 0.85f;
-    bass_multiplier = 1.0f;
-    smoothed_bass = 0.0f;
-    smoothed_mid = 0.0f;
-    smoothed_treble = 0.0f;
-    u_audio_bass = 0;
-    u_audio_mid = 0;
-    u_audio_treble = 0;
-
 
     update_effect_scaling();
 }
@@ -292,35 +280,23 @@ void IcoSphereEffect::update_rotation(float dt) {
 
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height) {
-    // === БЕЗОПАСНАЯ ЛОГИКА ЧТЕНИЯ МЫШИ (Delta-calc) ===
+    // Вращение от мыши (Данные уже обработаны Провайдером)
     if (p_accum_x && p_accum_y) {
-        // Читаем текущее глобальное значение
         float current_x = *p_accum_x;
         float current_y = *p_accum_y;
-        
-        // Вычисляем дельту (разницу с прошлым кадром ЭТОГО монитора)
         float dx = current_x - last_mouse_x;
         float dy = current_y - last_mouse_y;
-        
-        // Запоминаем текущее значение для следующего кадра
         last_mouse_x = current_x;
         last_mouse_y = current_y;
         
-        // Применяем вращение
-        angular_velocity += glm::vec3(dy, dx, 0.0f) * mouse_sensitivity;
-    }
-
-    if (audio_reactive && p_audio_bass && p_audio_mid && p_audio_treble) {
-        smoothed_bass = audio_smoothing * smoothed_bass + (1.0f - audio_smoothing) * (*p_audio_bass);
-        smoothed_mid = audio_smoothing * smoothed_mid + (1.0f - audio_smoothing) * (*p_audio_mid);
-        smoothed_treble = audio_smoothing * smoothed_treble + (1.0f - audio_smoothing) * (*p_audio_treble);
+        // Оставляем небольшую базовую константу для перевода пикселей в радианы
+        angular_velocity += glm::vec3(dy, dx, 0.0f) * 0.05f; 
     }
 
     if (needs_regeneration) {
         generate_icosphere(subdivisions);
         update_buffers();
         needs_regeneration = false;
-        std::cout << "IcoSphere regenerated with " << subdivisions << " subdivisions." << std::endl;
     }
 
     update_rotation(0.016f);
@@ -330,6 +306,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glClearColor(background_color.r, background_color.g, background_color.b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
+    
     glm::mat4 model = glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
@@ -338,14 +315,13 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniformMatrix4fv(u_view, 1, GL_FALSE, &view[0][0]);
     glUniformMatrix4fv(u_projection, 1, GL_FALSE, &projection[0][0]);
 
-    glUniform3f(u_lightColor, 1.0f, 1.0f, 1.0f); // Белый свет
-    glUniform3f(u_lightPos, 5.0f, 5.0f, 5.0f);   // Свет сверху-справа
-    glUniform3f(u_viewPos, 0.0f, 0.0f, 3.0f);    // Позиция камеры (из lookAt)
+    glUniform3f(u_lightColor, 1.0f, 1.0f, 1.0f); 
+    glUniform3f(u_lightPos, 5.0f, 5.0f, 5.0f);   
+    glUniform3f(u_viewPos, 0.0f, 0.0f, 3.0f);    
     
     time += 0.016f;
     glUniform1f(u_time, time);
     
-    // Передаём базовые параметры анимации из конфига
     glUniform1f(u_oscill_amp, scaled_oscill_amp);
     glUniform1f(u_oscill_freq, oscill_freq);
     glUniform1f(u_wave_amp, scaled_wave_amp);
@@ -354,11 +330,12 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniform1f(u_pulse_amp, scaled_pulse_amp);
     glUniform1f(u_noise_amp, scaled_noise_amp);
     glUniform1f(u_sphere_scale, sphere_scale);
-    // Передаём сглаженные аудиоданные напрямую в шейдер
-    //std::cout << smoothed_bass << " " << smoothed_mid << " " << smoothed_treble << '\n';
-    glUniform1f(u_audio_bass, smoothed_bass);
-    glUniform1f(u_audio_mid, smoothed_mid);
-    glUniform1f(u_audio_treble, smoothed_treble);
+
+    // Прямая передача аудио-данных из BlackBoard в шейдер. 
+    // Данные уже сглажены Провайдером!
+    glUniform1f(u_audio_bass, p_audio_bass ? *p_audio_bass : 0.0f);
+    glUniform1f(u_audio_mid, p_audio_mid ? *p_audio_mid : 0.0f);
+    glUniform1f(u_audio_treble, p_audio_treble ? *p_audio_treble : 0.0f);
 
     glBindVertexArray(vao);
     if (wireframe_mode) {
@@ -428,10 +405,7 @@ public:
             {"min_rotation_speed", "Minimum rotation speed", min_rotation_speed},
             {"constant_rotation_speed", "Constant rotation speed", constant_rotation_speed},
             {"background_color", "Background clear color", background_color},
-            {"wireframe_color", "Color of the wireframe lines", wireframe_color},
-            // Параметры для управления аудио-реакцией
-            {"audio_reactive", "Enable audio reactivity", audio_reactive},
-            {"audio_smoothing", "Smoothing factor for audio (0-1)", audio_smoothing}
+            {"wireframe_color", "Color of the wireframe lines", wireframe_color}
         };
     }
 
@@ -453,8 +427,6 @@ public:
             else if (name == "constant_rotation_speed") { set_constant_rotation_speed(std::get<float>(value)); }
             else if (name == "background_color") { set_background_color(std::get<glm::vec3>(value)); }
             else if (name == "wireframe_color")  { set_wireframe_color(std::get<glm::vec3>(value)); }
-            else if (name == "audio_reactive")   { set_audio_reactive(std::get<bool>(value)); }
-            else if (name == "audio_smoothing")  { set_audio_smoothing(std::get<float>(value)); }
             else {
                  std::cerr << "Warning: Unknown parameter '" << name << "'." << std::endl;
             }

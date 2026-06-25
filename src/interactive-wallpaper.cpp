@@ -11,6 +11,7 @@
 #include <atomic>
 #include <sys/signalfd.h> // Для безопасного перехвата сигналов в epoll
 #include <signal.h>
+#include <filesystem>
 
 using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
 extern std::atomic<bool> global_running;
@@ -131,9 +132,25 @@ void InteractiveWallpaper::setup_inotify() {
     std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
                                         : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
 
-    // Отслеживаем изменения в главной папке (init.lua) и в папке плагинов
+    // 1. Отслеживаем изменения в главной папке (init.lua)
     inotify_add_watch(inotify_fd, config_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+    
+    // 2. Отслеживаем папку конфигов плагинов
     inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+
+    // 3. НОВОЕ: Отслеживаем изменения Шейдеров (Live Coding)
+    std::string shaders_dir = config_dir + "/effects/shaders";
+    // Рекурсивно добавляем watches для всех подпапок с шейдерами
+    try {
+        if (std::filesystem::exists(shaders_dir)) {
+            inotify_add_watch(inotify_fd, shaders_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE);
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(shaders_dir)) {
+                if (entry.is_directory()) {
+                    inotify_add_watch(inotify_fd, entry.path().c_str(), IN_MODIFY | IN_CLOSE_WRITE);
+                }
+            }
+        }
+    } catch (...) {} // Игнорируем ошибки (папки может не быть при первом запуске)
 
     // Регистрируем inotify_fd в epoll Ядра
     register_epoll_fd(inotify_fd, [this](uint32_t) { this->process_inotify_events(); });
@@ -144,6 +161,7 @@ void InteractiveWallpaper::setup_inotify() {
 void InteractiveWallpaper::process_inotify_events() {
     char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
     bool lua_modified = false;
+    bool shader_modified = false; // НОВЫЙ ФЛАГ
     
     while (true) {
         ssize_t len = read(inotify_fd, buf, sizeof(buf));
@@ -154,18 +172,47 @@ void InteractiveWallpaper::process_inotify_events() {
             event = (const struct inotify_event *) ptr;
             if (event->len > 0) {
                 std::string name(event->name);
-                // Реагируем только на изменение .lua файлов
+                // Реагируем на изменение .lua файлов (Конфиги и Пресеты)
                 if (name.find(".lua") != std::string::npos) {
                     lua_modified = true;
+                }
+                // Реагируем на изменение шейдеров
+                else if (name.find(".glsl") != std::string::npos || name.find(".vert") != std::string::npos || name.find(".frag") != std::string::npos) {
+                    shader_modified = true;
                 }
             }
         }
     }
 
     if (lua_modified) {
-        std::cout << "Lua configuration changed. Hot-reloading..." << std::endl;
+        std::cout << "[Hot-Reload] Lua configuration changed..." << std::endl;
         if (lua_engine.reload()) {
             apply_config_to_all_outputs();
+            
+            // Если Lua-конфиг изменился, возможно, изменились настройки Провайдеров.
+            // Применяем новые настройки к Провайдерам на лету!
+            if (plugin_manager_) {
+                plugin_manager_->initialize_providers(this, [this](IDataProvider* p) {
+                    return lua_engine.configure_provider(p);
+                });
+            }
+        }
+    }
+
+    if (shader_modified) {
+        std::cout << "[Hot-Reload] Shader file changed. Recompiling graphics pipeline..." << std::endl;
+        // Заставляем текущие плагины пересобрать свои шейдерные программы
+        for (auto& pair : outputs) {
+            Output* out = pair.second.get();
+            if (out->effect && out->egl_surface != EGL_NO_SURFACE) {
+                if (eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
+                    // Cleanup удалит старую программу
+                    out->effect->cleanup();
+                    // Initialize скомпилирует новую из измененных файлов
+                    out->effect->initialize(this, out->width, out->height);
+                    apply_config_to_effect(out); // Восстанавливаем параметры
+                }
+            }
         }
     }
 }

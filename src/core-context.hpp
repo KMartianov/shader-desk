@@ -30,6 +30,15 @@ public:
         return it->second.data();
     }
 
+    std::vector<std::string> get_all_keys() const {
+        std::vector<std::string> keys;
+        for (const auto& pair : memory_) {
+            keys.push_back(pair.first);
+        }
+        return keys;
+    }
+
+
 private:
     std::unordered_map<std::string, std::vector<float>> memory_;
 };

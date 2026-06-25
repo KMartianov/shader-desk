@@ -1,5 +1,3 @@
-// src/ico-sphere-effect.hpp
-
 #ifndef ICO_SPHERE_EFFECT_HPP
 #define ICO_SPHERE_EFFECT_HPP
 
@@ -20,7 +18,7 @@ public:
     void render(uint32_t width, uint32_t height) override;
     void cleanup() override;
     
-    // --- Методы для конфигурации ---
+    // --- Методы для конфигурации (Только визуал) ---
     void set_wireframe_mode(bool enabled) { wireframe_mode = enabled; }
     void set_subdivisions(int value);
 
@@ -34,16 +32,12 @@ public:
 
     void set_background_color(const glm::vec3& color) { background_color = color; }
     void set_wireframe_color(const glm::vec3& color) { wireframe_color = color; }
-    void set_mouse_sensitivity(float value) { mouse_sensitivity = value; }
-    void set_touchpad_sensitivity(float value) { touchpad_sensitivity = value; }
 
+    // Настройки физики вращения
     void set_constant_rotation_speed(float value) { constant_rotation_speed = value; }
     void set_rotation_decay(float value) { rotation_decay = value; }
     void set_min_rotation_speed(float value) { min_rotation_speed = value; }
     void set_max_rotation_speed(float value) { max_rotation_speed = value; }
-    void set_audio_reactive(bool enabled) { audio_reactive = enabled; }
-    void set_audio_smoothing(float value) { audio_smoothing = value; }
-    void set_bass_multiplier(float value) { bass_multiplier = value; }
 
     void update_effect_scaling();
     
@@ -63,10 +57,10 @@ protected:
     glm::vec3 angular_velocity;
     float rotation_decay = 0.95f;
     float constant_rotation_speed = 0.1f;
+    float min_rotation_speed = 0.001f;
+    float max_rotation_speed = 5.0f;
 
-    float mouse_sensitivity;
-    float touchpad_sensitivity;
-
+    // --- Указатели на BlackBoard (Данные от Провайдеров) ---
     float* p_accum_x = nullptr;
     float* p_accum_y = nullptr;
     float last_mouse_x = 0.0f;
@@ -76,40 +70,35 @@ protected:
     float* p_audio_mid = nullptr;
     float* p_audio_treble = nullptr;
 
+    // --- Внутреннее состояние ---
     int subdivisions = 3;
     bool needs_regeneration = false;
     float time = 0.0f;
     bool wireframe_mode = true;
 
-    GLuint u_lightColor = 0;
-    GLuint u_lightPos = 0;
-    GLuint u_viewPos = 0;
+    // --- Параметры эффекта ---
+    float oscill_amp, oscill_freq;
+    float wave_amp, wave_freq;
+    float twist_amp, pulse_amp, noise_amp;
+    float scaled_oscill_amp, scaled_oscill_freq;
+    float scaled_wave_amp, scaled_wave_freq;
+    float scaled_twist_amp, scaled_pulse_amp, scaled_noise_amp;
+    float sphere_scale = 1.0f;
+    glm::vec3 background_color = {0.1137f, 0.1137f, 0.1255f};
+    glm::vec3 wireframe_color = {0.5f, 0.5f, 0.7f};
 
-    float oscill_amp;
-    float oscill_freq;
-    float wave_amp;
-    float wave_freq;
-    float twist_amp;
-    float pulse_amp;
-    float noise_amp;
-
-    float scaled_oscill_amp;
-    float scaled_oscill_freq;
-    float scaled_wave_amp;
-    float scaled_wave_freq;
-    float scaled_twist_amp;
-    float scaled_pulse_amp;
-    float scaled_noise_amp;
-    
+    // --- Uniforms ---
+    GLuint u_lightColor = 0, u_lightPos = 0, u_viewPos = 0;
     GLuint u_model, u_view, u_projection, u_time;
     GLuint u_wireframe_color, u_background_color, u_is_wireframe_pass;
     GLuint u_oscill_amp, u_oscill_freq, u_wave_amp, u_wave_freq;
     GLuint u_twist_amp, u_pulse_amp, u_noise_amp;
-
     GLuint u_sphere_scale;
-
-    glm::vec3 background_color = {0.1137f, 0.1137f, 0.1255f};
-    glm::vec3 wireframe_color = {0.5f, 0.5f, 0.7f};
+    
+    // Аудио-Uniforms
+    GLuint u_audio_bass = 0;
+    GLuint u_audio_mid = 0;
+    GLuint u_audio_treble = 0;
 
     std::vector<glm::vec3> vertices;
     std::vector<unsigned int> indices;
@@ -117,25 +106,9 @@ protected:
     std::vector<glm::vec3> normals;
     std::vector<unsigned int> line_indices;
 
-    float sphere_scale = 1.0f;
-
     void generate_icosphere(int subdivisions);
     void update_buffers();
     void update_rotation(float dt); 
-
-    float min_rotation_speed = 0.001f;
-    float max_rotation_speed = 5.0f;
-
-    // Аудио-реактивность
-    bool audio_reactive;
-    float audio_smoothing;
-    float bass_multiplier;
-    float smoothed_bass;
-    float smoothed_mid;
-    float smoothed_treble;
-    GLuint u_audio_bass;
-    GLuint u_audio_mid;
-    GLuint u_audio_treble;
 };
 
 #endif // ICO_SPHERE_EFFECT_HPP

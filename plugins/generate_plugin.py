@@ -198,6 +198,29 @@ def main():
         except Exception as e:
             print(f"  ✗ Error generating {output_path}: {e}")
 
+    # --- Generate Default Preset ---
+    preset_dir = args.plugin_dir / "presets"
+    preset_dir.mkdir(exist_ok=True)
+    default_preset_file = preset_dir / "default.lua"
+    
+    if not default_preset_file.exists():
+        try:
+            with open(default_preset_file, 'w', encoding='utf-8') as f:
+                f.write(f"-- Default preset for {effect_name}\n")
+                f.write("return {\n")
+                for p in params:
+                    val = p['default_value']
+                    if p['type'] == 'bool':
+                        val = 'true' if val else 'false'
+                    elif p['type'] == 'vec3':
+                        # Преобразуем glm::vec3(...) в Lua таблицу {...}
+                        val = str(val).replace('glm::vec3(', '{').replace(')', '}').replace('f', '')
+                    f.write(f"    {p['name']} = {val}, -- {p['description']}\n")
+                f.write("}\n")
+            print(f"  ✓ Created preset: {default_preset_file}")
+        except Exception as e:
+            print(f"  ✗ Error generating default preset: {e}")
+
     print("\nGeneration complete!")
     print(f"Next step: Add 'add_subdirectory({args.plugin_dir.name})' to your main plugins/CMakeLists.txt")
 

@@ -8,6 +8,7 @@
 #include <atomic>
 #include <signal.h>
 #include <sys/signalfd.h>
+#include <filesystem>
 
 std::atomic<bool> global_running{true};
 
@@ -18,10 +19,37 @@ std::string get_plugin_directory() {
 
 int main(int argc, char** argv) {
     // 1. Обработка CLI команд (Генерация конфигов)
+    // 1. Обработка CLI команд (Генерация конфигов и копирование пресетов)
     if (argc > 1 && std::string(argv[1]) == "--init-config") {
-        PluginManager pm(get_plugin_directory());
+        std::string plugin_dir = get_plugin_directory();
+        PluginManager pm(plugin_dir);
         pm.discover_plugins();
         LuaConfigGenerator::generate_configs(pm);
+        
+        // Автоматическое копирование пресетов из папок плагинов в ~/.config/...
+        try {
+            namespace fs = std::filesystem;
+            fs::path target_presets = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/presets";
+            fs::create_directories(target_presets);
+            
+            // Ищем все папки "presets" в директории установки плагинов
+            for (const auto& entry : fs::recursive_directory_iterator(plugin_dir)) {
+                if (entry.is_directory() && entry.path().filename() == "presets") {
+                    // Имя родительской папки (имя плагина, например ico-sphere-effect)
+                    std::string plugin_folder_name = entry.path().parent_path().filename().string();
+                    // Чтобы sanitize_plugin_name (с нижними подчеркиваниями) работал правильно:
+                    std::replace(plugin_folder_name.begin(), plugin_folder_name.end(), '-', '_');
+                    
+                    fs::path dest = target_presets / plugin_folder_name;
+                    // Копируем с обновлением существующих файлов
+                    fs::copy(entry.path(), dest, fs::copy_options::recursive | fs::copy_options::update_existing);
+                    std::cout << "Copied presets for: " << plugin_folder_name << std::endl;
+                }
+            }
+        } catch(const std::exception& e) {
+            std::cerr << "Failed to copy presets: " << e.what() << std::endl;
+        }
+
         return 0; // Выходим, Wayland нам тут не нужен
     }
 
@@ -77,7 +105,14 @@ int main(int argc, char** argv) {
         std::cerr << "Failed to initialize Wayland compositor connection" << std::endl;
         return 1;
     }
-    plugin_manager.initialize_providers(&wallpaper);
+
+    // Биндим API Ядра в Lua (теперь доступна функция core.debug.dump_blackboard)
+    lua_engine.bind_core_api(&wallpaper);
+
+    // Инициализируем провайдеры, передавая лямбду, которая применит настройки из Lua
+    plugin_manager.initialize_providers(&wallpaper, [&lua_engine](IDataProvider* p) {
+        return lua_engine.configure_provider(p);
+    });
 
     // 7. Главный цикл (Zero-Latency Epoll Loop)
     std::cout << "Starting wallpaper main loop..." << std::endl;

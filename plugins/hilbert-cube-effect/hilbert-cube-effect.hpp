@@ -48,8 +48,7 @@ private:
     glm::quat orientation;
     glm::vec3 angular_velocity;
     float rotation_decay = 0.95f;
-    float mouse_sensitivity = 20.5f;
-    float touchpad_sensitivity = 80.0f;
+  
     void update_rotation(float dt);
 
     // --- Uniform-переменные ---

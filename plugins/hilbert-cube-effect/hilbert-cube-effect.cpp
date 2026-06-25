@@ -166,7 +166,7 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
         last_mouse_x = current_x;
         last_mouse_y = current_y;
         
-        angular_velocity += glm::vec3(dy, dx, 0.0f) * mouse_sensitivity;
+        angular_velocity += glm::vec3(dy, dx, 0.0f) * 10.0f;
     }
 
     if (needs_regeneration) {

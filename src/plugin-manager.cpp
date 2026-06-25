@@ -124,10 +124,24 @@ void PluginManager::discover_plugins() {
     }
 }
 
-void PluginManager::initialize_providers(ICoreContext* core) {
+void PluginManager::initialize_providers(ICoreContext* core, const std::function<bool(IDataProvider*)>& configure_callback) {
     for (auto& provider : data_providers) {
-        if (!provider->initialize(core)) {
-            std::cerr << "Failed to initialize Data Provider: " << provider->get_name() << std::endl;
+        bool enabled = true;
+        
+        // Если передан коллбэк, отдаем ему Провайдер на настройку.
+        // Коллбэк вызовет set_parameter() и вернет флаг включения.
+        if (configure_callback) {
+            enabled = configure_callback(provider.get());
+        }
+
+        if (enabled) {
+            if (!provider->initialize(core)) {
+                std::cerr << "Failed to initialize Data Provider: " << provider->get_name() << std::endl;
+            } else {
+                std::cout << "Data Provider started: " << provider->get_name() << std::endl;
+            }
+        } else {
+            std::cout << "Data Provider skipped (disabled in config): " << provider->get_name() << std::endl;
         }
     }
 }

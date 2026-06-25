@@ -110,17 +110,28 @@ void LuaConfigGenerator::generate_init_lua(const std::string& filepath, const st
     out << "core.active_effect = \"" << default_effect << "\"\n";
     out << "core.interactive = true\n\n";
 
-    out << "-- 2. Переопределение настроек плагинов (Свободная логика)\n";
-    out << "-- Файлы плагинов из папки `plugins/` загружаются автоматически ДО этого файла.\n";
-    out << "-- Поэтому вы можете безопасно переопределять их значения здесь.\n\n";
+    out << "-- 2. Настройки Провайдеров Данных (Smart Providers)\n";
+    out << "core.providers = {\n";
+    out << "    [\"Evdev Pointer Provider\"] = {\n";
+    out << "        enabled = true,\n";
+    out << "        mouse_sensitivity = 1.0,\n";
+    out << "        touchpad_sensitivity = 3.0,\n";
+    out << "        invert_x = false,\n";
+    out << "        invert_y = false\n";
+    out << "    },\n";
+    out << "    [\"Cava Audio Provider\"] = {\n";
+    out << "        enabled = true,\n";
+    out << "        smoothing = 0.85,\n";
+    out << "        volume_multiplier = 1.0,\n";
+    out << "        bass_multiplier = 1.0,\n";
+    out << "        mid_multiplier = 1.0,\n";
+    out << "        treble_multiplier = 1.0\n";
+    out << "    }\n";
+    out << "}\n\n";
 
-    out << "-- Пример смены настроек в зависимости от времени суток:\n";
-    out << "-- local os = require(\"os\")\n";
-    out << "-- local hour = tonumber(os.date(\"%H\"))\n";
-    out << "-- if hour > 18 or hour < 7 then\n";
-    out << "--     config[\"" << default_effect << "\"].background_color = {0.05, 0.05, 0.08}\n";
-    out << "-- end\n";
-    
+    out << "-- 3. Переопределение настроек плагинов (Свободная логика)\n";
+    out << "-- Файлы плагинов из папки `plugins/` загружаются автоматически ДО этого файла.\n";
+    out << "-- Поэтому вы можете безопасно переопределять их значения здесь.\n";
     out.close();
 }
 
@@ -229,7 +240,10 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     } else {
         out << "\n-- ЗОНА СВОБОДНОЙ ЛОГИКИ ПЛАГИНА:\n";
         out << "-- Пишите здесь функции и переопределения, специфичные для этого плагина.\n";
+        out << "-- Пример загрузки пресета (раскомментируйте, если пресет существует):\n";
+        out << "-- core.utils.apply_preset(p, \"" << plugin_name << "\", \"default\")\n";
     }
 
     out.close();
+
 }

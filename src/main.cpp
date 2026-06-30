@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/signalfd.h>
 #include <filesystem>
+#include <algorithm>
 
 std::atomic<bool> global_running{true};
 
@@ -18,7 +19,6 @@ std::string get_plugin_directory() {
 }
 
 int main(int argc, char** argv) {
-    // 1. Обработка CLI команд (Генерация конфигов)
     // 1. Обработка CLI команд (Генерация конфигов и копирование пресетов)
     if (argc > 1 && std::string(argv[1]) == "--init-config") {
         std::string plugin_dir = get_plugin_directory();
@@ -63,23 +63,29 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 3. Загрузка конфигурации через Lua
+    // 3. Создаем движок Lua (но пока НЕ загружаем скрипты!)
     LuaEngine lua_engine;
-    if (!lua_engine.load()) {
-        std::cerr << "Failed to load Lua configuration!" << std::endl;
-        // Не выходим, попытаемся запуститься с дефолтными значениями
-    }
 
     // 4. Настройка базовых параметров и создание Ядра
     // ВАЖНО (RAII): Ядро объявляется ДО плагинов. 
     // Оно будет жить дольше всех и разрушится самым последним.
     WallpaperConfig wallpaper_config;
     wallpaper_config.output_name = "*";
-    wallpaper_config.interactive = lua_engine.is_interactive();
+    wallpaper_config.interactive = true; // Заглушка, реальное значение прочитаем позже
     
     InteractiveWallpaper wallpaper(wallpaper_config, lua_engine);
 
-    // 5. Инициализация менеджера плагинов
+    // 5. Биндим API Ядра в Lua (теперь доступны core.set_interval, core.set_string и др.)
+    // Делаем это ДО загрузки файлов, чтобы скрипты могли сразу использовать таймеры!
+    lua_engine.bind_core_api(&wallpaper);
+
+    // 6. ТЕПЕРЬ безопасно загружаем конфигурацию через Lua
+    if (!lua_engine.load()) {
+        std::cerr << "Failed to load Lua configuration!" << std::endl;
+        // Не выходим, попытаемся запуститься с дефолтными значениями
+    }
+
+    // 7. Инициализация менеджера плагинов
     // ВАЖНО (RAII): При выходе из main он разрушится ПЕРВЫМ, 
     // корректно отписавшись от еще живого Ядра (epoll/BlackBoard).
     PluginManager plugin_manager(get_plugin_directory());
@@ -100,21 +106,18 @@ int main(int argc, char** argv) {
 
     wallpaper.set_plugin_manager(&plugin_manager, effect_name);
     
-    // 6. Подключение к Wayland и запуск провайдеров
+    // 8. Подключение к Wayland и запуск провайдеров
     if (!wallpaper.initialize()) {
         std::cerr << "Failed to initialize Wayland compositor connection" << std::endl;
         return 1;
     }
-
-    // Биндим API Ядра в Lua (теперь доступна функция core.debug.dump_blackboard)
-    lua_engine.bind_core_api(&wallpaper);
 
     // Инициализируем провайдеры, передавая лямбду, которая применит настройки из Lua
     plugin_manager.initialize_providers(&wallpaper, [&lua_engine](IDataProvider* p) {
         return lua_engine.configure_provider(p);
     });
 
-    // 7. Главный цикл (Zero-Latency Epoll Loop)
+    // 9. Главный цикл (Zero-Latency Epoll Loop)
     std::cout << "Starting wallpaper main loop..." << std::endl;
     wallpaper.run();
     

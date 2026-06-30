@@ -6,12 +6,15 @@
 #include <cstdint>
 #include <vector>
 #include <stdexcept>
+#include <array>
+#include <cstring>
 
 // BlackBoard - центральная шина данных (Zero-Latency Data Router)
 class BlackBoard {
 public:
     // Фиксированный размер блока для каждого ключа, чтобы избежать реаллокации
     static constexpr size_t MAX_ELEMENTS_PER_KEY = 256;
+    static constexpr size_t STRING_BUFFER_SIZE = 256;
 
     float* bind_float(const std::string& key) {
         return bind_float_array(key, 1);
@@ -30,6 +33,22 @@ public:
         return it->second.data();
     }
 
+    char* bind_string(const std::string& key) {
+        auto it = string_memory_.find(key);
+        if (it == string_memory_.end()) {
+            it = string_memory_.emplace(key, std::array<char, STRING_BUFFER_SIZE>{0}).first;
+        }
+        return it->second.data();
+    }
+
+    void set_string(const std::string& key, const std::string& value) {
+        char* buffer = bind_string(key);
+        std::strncpy(buffer, value.c_str(), STRING_BUFFER_SIZE - 1);
+        buffer[STRING_BUFFER_SIZE - 1] = '\0'; // Гарантированный null-терминатор
+    }
+
+
+
     std::vector<std::string> get_all_keys() const {
         std::vector<std::string> keys;
         for (const auto& pair : memory_) {
@@ -41,6 +60,7 @@ public:
 
 private:
     std::unordered_map<std::string, std::vector<float>> memory_;
+    std::unordered_map<std::string, std::array<char, STRING_BUFFER_SIZE>> string_memory_;
 };
 
 // Интерфейс, через который плагины общаются с Ядром

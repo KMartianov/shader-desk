@@ -290,7 +290,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
         last_mouse_y = current_y;
         
         // Оставляем небольшую базовую константу для перевода пикселей в радианы
-        angular_velocity += glm::vec3(dy, dx, 0.0f) * 0.05f; 
+        angular_velocity += glm::vec3(dy, dx, 0.0f); 
     }
 
     if (needs_regeneration) {

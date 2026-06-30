@@ -128,20 +128,23 @@ void PluginManager::initialize_providers(ICoreContext* core, const std::function
     for (auto& provider : data_providers) {
         bool enabled = true;
         
-        // Если передан коллбэк, отдаем ему Провайдер на настройку.
-        // Коллбэк вызовет set_parameter() и вернет флаг включения.
+        // Читаем настройки из Lua (возвращает true, если enabled = true)
         if (configure_callback) {
             enabled = configure_callback(provider.get());
         }
 
         if (enabled) {
+            // Если он уже инициализирован, внутри provider->initialize просто вернется true
             if (!provider->initialize(core)) {
                 std::cerr << "Failed to initialize Data Provider: " << provider->get_name() << std::endl;
             } else {
-                std::cout << "Data Provider started: " << provider->get_name() << std::endl;
+                std::cout << "Data Provider running: " << provider->get_name() << std::endl;
             }
         } else {
-            std::cout << "Data Provider skipped (disabled in config): " << provider->get_name() << std::endl;
+            // НОВОЕ: Если плагин выключили в конфиге на лету — ГАСИМ ЕГО!
+            // cleanup() безопасно отпишет его от epoll и закроет сокет.
+            provider->cleanup();
+            std::cout << "Data Provider stopped (disabled in config): " << provider->get_name() << std::endl;
         }
     }
 }

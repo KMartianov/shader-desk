@@ -13,7 +13,7 @@
 class WallpaperEffect;
 
 // Типы данных, которые можно настраивать через config.json
-using EffectParameterValue = std::variant<bool, int, float, glm::vec3>;
+using EffectParameterValue = std::variant<bool, int, float, glm::vec3, std::string>;
 
 // Умный указатель с кастомным удалителем (необходимо для безопасной выгрузки .so библиотек)
 using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;

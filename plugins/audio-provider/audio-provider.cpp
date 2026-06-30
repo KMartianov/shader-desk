@@ -16,6 +16,7 @@ class AudioProvider : public IDataProvider {
     float* p_bands = nullptr; 
 
     int sockfd = -1;
+    ICoreContext* m_core = nullptr;
 
     // --- Управляемые параметры (из Lua) ---
     float smoothing = 0.85f;
@@ -51,6 +52,10 @@ public:
     }
 
     bool initialize(ICoreContext* core) override {
+        // Защита от Hot-Reload
+        if (sockfd >= 0) return true;
+
+        m_core = core;
         p_volume = core->get_blackboard().bind_float("audio.volume");
         p_bass   = core->get_blackboard().bind_float("audio.bass");
         p_mid    = core->get_blackboard().bind_float("audio.mid");
@@ -70,6 +75,7 @@ public:
         
         if (bind(sockfd, (struct sockaddr*)&addr, addr_len) < 0) {
             close(sockfd);
+            sockfd = -1;
             return false;
         }
 
@@ -107,8 +113,13 @@ public:
     }
 
     void cleanup() override {
-        if (sockfd >= 0) close(sockfd); 
+        if (sockfd >= 0) {
+            if (m_core) m_core->unregister_epoll_fd(sockfd);
+            close(sockfd);
+            sockfd = -1;
+        }
     }
+
 };
 
 extern "C" {

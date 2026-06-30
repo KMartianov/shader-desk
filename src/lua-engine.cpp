@@ -53,6 +53,13 @@ bool LuaEngine::load() {
     core["utils"] = utils;
     core["debug"] = debug;
 
+    //Заново привязываем C++ API к свежесозданному sol::state!
+
+    if (current_core) {
+        bind_core_api(current_core);
+    }
+
+
     // --- РЕГИСТРАЦИЯ СИСТЕМЫ ПРЕСЕТОВ ---
     utils["apply_preset"] = [this](sol::table target, const std::string& plugin_name, const std::string& preset_name) {
         // Функция sanitize_plugin_name должна быть объявлена выше в этом же файле
@@ -165,34 +172,90 @@ bool LuaEngine::configure_provider(IDataProvider* provider) {
 // --- РЕАЛИЗАЦИЯ DEBUG API ---
 void LuaEngine::bind_core_api(ICoreContext* core) {
     if (!core) return;
+    current_core = core; // Сохраняем для использования в clear_timers()
     
-    // БЕЗОПАСНОЕ чтение таблицы core
-    sol::object core_obj = lua["core"];
-    if (!core_obj.is<sol::table>()) return;
-    sol::table core_table = core_obj.as<sol::table>();
-    
-    // Безопасно создаем или получаем таблицу debug
-    if (!core_table["debug"].is<sol::table>()) {
-        core_table["debug"] = lua.create_table();
+     if (lua["core"].get_type() == sol::type::none) {
+        lua["core"] = lua.create_table();
     }
-    sol::table debug = core_table["debug"];
+    sol::table core_table = lua["core"];
     
-    debug["dump_blackboard"] = [core]() {
-        std::cout << "\n=== BLACKBOARD DUMP ===\n";
-        auto keys = core->get_blackboard().get_all_keys();
-        if (keys.empty()) {
-            std::cout << "  (BlackBoard is empty)\n";
-        } else {
-            for (const auto& key : keys) {
-                float val = *core->get_blackboard().bind_float(key);
-                std::cout << "  - " << key << " : " << val << "\n";
-            }
+    // 1. API записи в BlackBoard из Lua (остается как обсуждали)
+    core_table["set_string"] = [core](const std::string& key, const std::string& val) {
+        core->get_blackboard().set_string(key, val);
+    };
+
+    // 2. Создание таймера. Возвращает ID (файл-дескриптор)
+    core_table["set_interval"] = [this](int ms, sol::protected_function callback) -> int {
+        if (ms <= 0 || !callback.valid() || !current_core) return -1;
+
+        // Создаем неблокирующий таймер
+        int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+        if (tfd == -1) {
+            std::cerr << "[LuaEngine] Failed to create timerfd: " << strerror(errno) << std::endl;
+            return -1;
         }
-        std::cout << "=======================\n\n";
+
+        struct itimerspec ts{};
+        ts.it_interval.tv_sec = ms / 1000;
+        ts.it_interval.tv_nsec = (ms % 1000) * 1000000;
+        ts.it_value = ts.it_interval;
+
+        if (timerfd_settime(tfd, 0, &ts, nullptr) == -1) {
+            std::cerr << "[LuaEngine] Failed to set timerfd: " << strerror(errno) << std::endl;
+            close(tfd);
+            return -1;
+        }
+
+        active_timers.insert(tfd);
+
+        // Регистрируем в epoll Ядра
+        current_core->register_epoll_fd(tfd, [this, tfd, callback](uint32_t events) {
+            // [ЗАЩИТА]: Если таймер был отменен (или идет hot-reload), игнорируем
+            if (active_timers.find(tfd) == active_timers.end()) return;
+
+            uint64_t expirations;
+            ssize_t s = read(tfd, &expirations, sizeof(expirations));
+            
+            if (s == sizeof(expirations)) {
+                auto result = callback();
+                if (!result.valid()) {
+                    sol::error err = result;
+                    std::cerr << "[Lua Timer Error] " << err.what() << std::endl;
+                }
+            } else if (s == -1 && errno != EAGAIN) {
+                std::cerr << "[LuaEngine] Error reading timerfd: " << strerror(errno) << std::endl;
+            }
+        });
+
+        return tfd; // Отдаем Lua дескриптор в качестве ID таймера
+    };
+
+    // 3. Отмена таймера (по ID)
+    core_table["clear_interval"] = [this](int tfd) {
+        if (tfd < 0) return;
+        
+        if (active_timers.erase(tfd)) {
+            if (current_core) {
+                current_core->unregister_epoll_fd(tfd); // Убираем из epoll
+            }
+            close(tfd); // Закрываем дескриптор ядра Linux
+        }
     };
 }
 
+void LuaEngine::clear_timers() {
+    for (int tfd : active_timers) {
+        if (current_core) {
+            current_core->unregister_epoll_fd(tfd);
+        }
+        close(tfd);
+    }
+    active_timers.clear();
+}
+
 bool LuaEngine::reload() {
+    std::cout << "[LuaEngine] Clearing active timers before reload..." << std::endl;
+    clear_timers(); // Обязательно вычищаем системные таймеры и epoll перед убийством sol::state
     return load();
 }
 
@@ -227,7 +290,7 @@ void LuaEngine::apply_effect_settings(WallpaperEffect* effect, const std::string
     std::map<std::string, size_t> expected_types;
     for (const auto& p : default_params) {
         expected_types[p.name] = p.value.index(); 
-        // 0: bool, 1: int, 2: float, 3: glm::vec3
+        // 0: bool, 1: int, 2: float, 3: glm::vec3, 4: std::string
     }
 
     // Итерируемся по Lua-таблице плагина
@@ -264,6 +327,9 @@ void LuaEngine::apply_effect_settings(WallpaperEffect* effect, const std::string
                     float b = t.get_or(3, 0.0f);
                     effect->set_parameter(key, glm::vec3(r, g, b));
                 }
+            }
+            else if (expected_type == 4 && val.is<std::string>()) {
+                effect->set_parameter(key, val.as<std::string>());
             }
         } catch (const sol::error& e) {
             std::cerr << "Lua Type Error for parameter '" << key << "': " << e.what() << std::endl;

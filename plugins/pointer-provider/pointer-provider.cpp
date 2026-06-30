@@ -18,6 +18,8 @@ class PointerProvider : public IDataProvider {
     bool invert_x = false;
     bool invert_y = false;
 
+    ICoreContext* m_core = nullptr;
+
 public:
     const char* get_name() const override { return "Evdev Pointer Provider"; }
 
@@ -43,6 +45,11 @@ public:
     }
 
     bool initialize(ICoreContext* core) override {
+        // Защита от Hot-Reload: если сокет уже создан, просто возвращаем true.
+        // Настройки (touchpad_sensitivity и т.д.) уже обновились через set_parameter().
+        if (sockfd >= 0) return true; 
+
+        m_core = core;
         p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
         p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
 
@@ -59,12 +66,14 @@ public:
         
         if (bind(sockfd, (struct sockaddr*)&addr, addr_len) < 0) {
             close(sockfd);
+            sockfd = -1; // <--- ВАЖНО: сбрасываем fd при ошибке
             return false;
         }
 
         core->register_epoll_fd(sockfd, [this](uint32_t) { this->on_data_ready(); });
         return true;
     }
+
 
     void on_data_ready() {
         PointerDatagram datagram;
@@ -90,8 +99,14 @@ public:
     }
 
     void cleanup() override {
-        if (sockfd >= 0) close(sockfd); 
+        if (sockfd >= 0) {
+            // Обязательно отписываемся от epoll, иначе в Ядре будет утечка коллбэков!
+            if (m_core) m_core->unregister_epoll_fd(sockfd);
+            close(sockfd);
+            sockfd = -1;
+        }
     }
+
 };
 
 extern "C" {

@@ -33,7 +33,8 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 # Проверяет, запущен ли процесс по его имени в командной строке.
 is_running() {
     local bin_path="$1"
-    pgrep -f "$(basename "$bin_path")" > /dev/null
+    # Символ ^ означает "строка должна начинаться с этого"
+    pgrep -f "^$bin_path" > /dev/null
 }
 
 # Завершает все экземпляры процесса по имени и ждет их остановки.
@@ -47,7 +48,7 @@ kill_and_wait() {
     fi
 
     echo "Stopping all instances of $bin_name..."
-    pkill -f "$bin_name" || true
+    pkill -f "^$bin_path" || true
 
     for _ in {1..10}; do
         if ! is_running "$bin_path"; then
@@ -58,7 +59,7 @@ kill_and_wait() {
     done
 
     echo "Some processes of $bin_name did not respond, sending kill -9..."
-    pkill -9 -f "$bin_name" || true
+    pkill -9 -f "^$bin_path" || true
 }
 
 # Запускает процесс в фоне с логированием.

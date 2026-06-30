@@ -187,10 +187,27 @@ void InteractiveWallpaper::process_inotify_events() {
     if (lua_modified) {
         std::cout << "[Hot-Reload] Lua configuration changed..." << std::endl;
         if (lua_engine.reload()) {
-            apply_config_to_all_outputs();
             
-            // Если Lua-конфиг изменился, возможно, изменились настройки Провайдеров.
-            // Применяем новые настройки к Провайдерам на лету!
+            // --- НОВОЕ: Проверка на смену активного эффекта ---
+            std::string new_effect = lua_engine.get_active_effect();
+            
+            if (!new_effect.empty() && new_effect != current_effect_name_) {
+                std::cout << "[Hot-Reload] Changing visual effect from '" 
+                          << current_effect_name_ << "' to '" << new_effect << "'" << std::endl;
+                
+                current_effect_name_ = new_effect;
+                
+                // Пересоздаем эффект для всех мониторов (apply_effect_to_output сама удалит старые)
+                for (auto& pair : outputs) {
+                    apply_effect_to_output(pair.second.get());
+                }
+            } else {
+                // Эффект не менялся, просто обновляем его параметры (цвета, скорости)
+                apply_config_to_all_outputs();
+            }
+            
+            // Если Lua-конфиг изменился, обновляем Провайдеров.
+            // Благодаря изменениям в PluginManager, теперь они будут отключаться!
             if (plugin_manager_) {
                 plugin_manager_->initialize_providers(this, [this](IDataProvider* p) {
                     return lua_engine.configure_provider(p);
@@ -370,8 +387,20 @@ void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::stri
 void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     if (!plugin_manager_ || current_effect_name_.empty()) return;
     
+    // 1. БЕЗОПАСНОЕ УДАЛЕНИЕ СТАРОГО ЭФФЕКТА (если он был)
+    if (output->effect) {
+        if (output->egl_surface != EGL_NO_SURFACE) {
+            // Делаем контекст активным, чтобы эффект мог сделать glDeleteProgram()
+            eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context);
+        }
+        output->effect->cleanup();
+        output->effect.reset(); // Уничтожаем объект
+    }
+
+    // 2. СОЗДАНИЕ И ИНИЦИАЛИЗАЦИЯ НОВОГО
     output->effect = plugin_manager_->create_effect(current_effect_name_);
     if (output->effect) {
+        // Применяем настройки сразу (до инициализации или после - неважно, они сохранятся)
         apply_config_to_effect(output);
         
         if (output->configured && output->egl_surface != EGL_NO_SURFACE) {

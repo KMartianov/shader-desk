@@ -123,8 +123,8 @@ bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t 
     if (program) return true;
 
     // ПРИВЯЗКА ПАМЯТИ
-    p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
-    p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
+    p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
+    p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
 
     std::string vert_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_frag.glsl");
@@ -274,10 +274,11 @@ void HilbertCubeEffect::set_parameter(const std::string& name, const EffectParam
 
 // --- Экспортируемые C-функции ---
 extern "C" {
-    WallpaperEffect* create_effect() {
-        return new HilbertCubeEffect();
+    IWallpaperEffectABI* create_effect() {
+        return new HilbertCubeEffect(); 
     }
-    void destroy_effect(WallpaperEffect* effect) {
-        delete effect;
+    void destroy_effect(IWallpaperEffectABI* effect) {
+        delete static_cast<WallpaperEffect*>(effect);
     }
 }
+

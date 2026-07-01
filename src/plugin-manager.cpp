@@ -9,8 +9,9 @@ namespace fs = std::filesystem;
 // Внутренняя структура для хранения информации о визуальном плагине
 struct PluginManager::PluginHandle {
     void* handle = nullptr;
-    WallpaperEffect* (*create_func)() = nullptr;
-    void (*destroy_func)(WallpaperEffect*) = nullptr;
+    // [NEW] Используем C-ABI интерфейс для безопасного создания/удаления
+    IWallpaperEffectABI* (*create_func)() = nullptr;
+    void (*destroy_func)(IWallpaperEffectABI*) = nullptr;
     std::string name;
     std::string path;
 
@@ -69,11 +70,12 @@ void PluginManager::discover_plugins() {
                 bool handle_stored_by_effect = false; // Флаг для предотвращения двойного dlclose
 
                 // --- 1. Попытка загрузить как Визуальный Эффект (Visual Effect) ---
-                auto create_effect_fn = (WallpaperEffect* (*)())dlsym(handle, "create_effect");
-                auto destroy_effect_fn = (void (*)(WallpaperEffect*))dlsym(handle, "destroy_effect");
+                // [NEW] Ожидаем возврата IWallpaperEffectABI* вместо WallpaperEffect*
+                auto create_effect_fn = (IWallpaperEffectABI* (*)())dlsym(handle, "create_effect");
+                auto destroy_effect_fn = (void (*)(IWallpaperEffectABI*))dlsym(handle, "destroy_effect");
                 
                 if (create_effect_fn && destroy_effect_fn) {
-                    WallpaperEffect* temp_effect = create_effect_fn();
+                    IWallpaperEffectABI* temp_effect = create_effect_fn();
                     std::string effect_name = temp_effect->get_name();
                     destroy_effect_fn(temp_effect);
 
@@ -92,12 +94,13 @@ void PluginManager::discover_plugins() {
                 }
 
                 // --- 2. Попытка загрузить как Поставщика Данных (Data Provider) ---
-                auto create_provider_fn = (IDataProvider* (*)())dlsym(handle, "create_provider");
-                auto destroy_provider_fn = (void (*)(IDataProvider*))dlsym(handle, "destroy_provider");
+                // [NEW] Ожидаем возврата IDataProviderABI* вместо IDataProvider*
+                auto create_provider_fn = (IDataProviderABI* (*)())dlsym(handle, "create_provider");
+                auto destroy_provider_fn = (void (*)(IDataProviderABI*))dlsym(handle, "destroy_provider");
 
                 if (create_provider_fn && destroy_provider_fn) {
-                    // Создаем глобальный инстанс провайдера сразу
-                    std::unique_ptr<IDataProvider, void(*)(IDataProvider*)> provider(
+                    // Создаем глобальный инстанс провайдера сразу (с кастомным ABI удалителем)
+                    std::unique_ptr<IDataProviderABI, void(*)(IDataProviderABI*)> provider(
                         create_provider_fn(), 
                         destroy_provider_fn
                     );
@@ -124,7 +127,9 @@ void PluginManager::discover_plugins() {
     }
 }
 
-void PluginManager::initialize_providers(ICoreContext* core, const std::function<bool(IDataProvider*)>& configure_callback) {
+
+
+void PluginManager::initialize_providers(ICoreContextABI* core, const std::function<bool(IDataProviderABI*)>& configure_callback) {
     for (auto& provider : data_providers) {
         bool enabled = true;
         
@@ -149,10 +154,13 @@ void PluginManager::initialize_providers(ICoreContext* core, const std::function
     }
 }
 
+
+
 WallpaperEffectPtr PluginManager::create_effect(const std::string& effect_name) {
     for (const auto& plugin : loaded_plugins) {
         if (plugin->name == effect_name) {
-            WallpaperEffect* raw_ptr = plugin->create_func();
+            // [NEW] Получаем сырой ABI указатель
+            IWallpaperEffectABI* raw_ptr = plugin->create_func();
             if (raw_ptr) {
                 // Возвращаем smart pointer с правильным кастомным deleter'ом из .so
                 return WallpaperEffectPtr(raw_ptr, plugin->destroy_func);

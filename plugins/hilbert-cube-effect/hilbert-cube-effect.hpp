@@ -65,8 +65,9 @@ void hilbert3D(const glm::vec3& start, const glm::vec3& a, const glm::vec3& b, c
 
 // --- Экспортируемые C-функции для системы плагинов ---
 extern "C" {
-    WallpaperEffect* create_effect();
-    void destroy_effect(WallpaperEffect* effect);
+    IWallpaperEffectABI* create_effect();
+    void destroy_effect(IWallpaperEffectABI* effect);
 }
+
 
 #endif // HILBERT_CUBE_EFFECT_HPP

@@ -33,23 +33,24 @@ std::string LuaConfigGenerator::sanitize_filename(std::string name) {
     return name;
 }
 
-// Конвертирует C++ типы (std::variant) в синтаксис языка Lua
-std::string LuaConfigGenerator::value_to_lua_string(const EffectParameterValue& val) {
-    return std::visit([](auto&& arg) -> std::string {
-        using T = std::decay_t<decltype(arg)>;
-        if constexpr (std::is_same_v<T, bool>) {
-            return arg ? "true" : "false";
-        } else if constexpr (std::is_same_v<T, int>) {
-            return std::to_string(arg);
-        } else if constexpr (std::is_same_v<T, float>) {
-            return std::to_string(arg);
-        } else if constexpr (std::is_same_v<T, glm::vec3>) {
-            return "{" + std::to_string(arg.x) + ", " + 
-                         std::to_string(arg.y) + ", " + 
-                         std::to_string(arg.z) + "}";
-        }
-        return "nil";
-    }, val);
+// Конвертирует C-ABI значения (ParamValueABI) в синтаксис языка Lua
+// [NEW] Эта функция теперь работает исключительно с плоскими структурами C, а не с std::variant.
+std::string LuaConfigGenerator::value_to_lua_string(const ParamValueABI& val) {
+    switch (val.type) {
+        case ParamType::TYPE_BOOL: 
+            return val.b_val ? "true" : "false";
+        case ParamType::TYPE_INT: 
+            return std::to_string(val.i_val);
+        case ParamType::TYPE_FLOAT: 
+            return std::to_string(val.f_val);
+        case ParamType::TYPE_VEC3: 
+            return "{" + std::to_string(val.vec3_val[0]) + ", " + 
+                         std::to_string(val.vec3_val[1]) + ", " + 
+                         std::to_string(val.vec3_val[2]) + "}";
+        case ParamType::TYPE_STRING: 
+            return std::string("\"") + val.s_val + "\""; // Оборачиваем в кавычки для Lua
+    }
+    return "nil";
 }
 
 // Удаляет пробелы по краям строки
@@ -135,7 +136,7 @@ void LuaConfigGenerator::generate_init_lua(const std::string& filepath, const st
     out.close();
 }
 
-void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const std::string& plugin_name, WallpaperEffect* effect) {
+void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const std::string& plugin_name, IWallpaperEffectABI* effect) {
     std::map<std::string, std::string> user_values;
     std::vector<std::string> user_logic;
 
@@ -201,18 +202,24 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     out << "-- ==============================================================================\n";
 
     // Записываем актуальные параметры из C++
-    for (const auto& param : effect->get_parameters()) {
-        std::string default_val = value_to_lua_string(param.value);
-
-        out << "p." << param.name << " = ";
+    // [NEW] Используем безопасный C-ABI для получения списка параметров плагина.
+    uint32_t count = effect->get_parameter_count();
+    for (uint32_t i = 0; i < count; ++i) {
+        ParamInfoABI param_info;
+        effect->get_parameter_info(i, &param_info);
         
-        if (user_values.count(param.name)) {
+        std::string default_val = value_to_lua_string(param_info.default_value);
+        std::string param_name(param_info.name);
+
+        out << "p." << param_name << " = ";
+        
+        if (user_values.count(param_name)) {
             // Восстанавливаем то, что написал пользователь
-            out << user_values[param.name] << " -- " << param.description << "\n";
-            user_values.erase(param.name); // Удаляем, чтобы найти DEPRECATED
+            out << user_values[param_name] << " -- " << param_info.description << "\n";
+            user_values.erase(param_name); // Удаляем, чтобы найти DEPRECATED
         } else {
             // Вставляем новое дефолтное значение
-            out << default_val << " -- [NEW] " << param.description << "\n";
+            out << default_val << " -- [NEW] " << param_info.description << "\n";
         }
     }
 
@@ -245,5 +252,4 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     }
 
     out.close();
-
 }

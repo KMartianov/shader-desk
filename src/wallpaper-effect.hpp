@@ -1,101 +1,113 @@
 // src/wallpaper-effect.hpp
 #pragma once
 
+#include "plugin-abi.hpp" 
 #include <vector>
 #include <string>
 #include <variant>
 #include <memory>
 #include <glm/glm.hpp>
 
-// Подключаем интерфейс Ядра (для доступа к BlackBoard)
-#include "core-context.hpp" 
+// Алиас для обратной совместимости. 
+// Плагины смогут использовать ICoreContext, как и раньше.
+using ICoreContext = ICoreContextABI;
 
-class WallpaperEffect;
-
-// Типы данных, которые можно настраивать через config.json
+// Типы данных, которые можно настраивать через Lua
 using EffectParameterValue = std::variant<bool, int, float, glm::vec3, std::string>;
 
-// Умный указатель с кастомным удалителем (необходимо для безопасной выгрузки .so библиотек)
-using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
+// Умный указатель для загрузчика (Ядра)
+using WallpaperEffectPtr = std::unique_ptr<IWallpaperEffectABI, void(*)(IWallpaperEffectABI*)>;
 
-// Структура, описывающая один настраиваемый параметр плагина
+// Структура, описывающая один настраиваемый параметр плагина (C++ стиль)
 struct EffectParameter {
-    std::string name;        // Уникальное имя (совпадает с именем в JSON)
-    std::string description; // Описание (для потенциального GUI)
-    EffectParameterValue value; // Текущее/дефолтное значение
+    std::string name;
+    std::string description;
+    EffectParameterValue value;
 };
 
 // ==============================================================================
-// ИНТЕРФЕЙС ВИЗУАЛЬНОГО ПЛАГИНА (ЭФФЕКТА)
+// ИНТЕРФЕЙС ВИЗУАЛЬНОГО ПЛАГИНА (HEADER-ONLY SDK)
 // ==============================================================================
-class WallpaperEffect {
+class WallpaperEffect : public IWallpaperEffectABI {
 public:
     virtual ~WallpaperEffect() = default;
 
-    // --------------------------------------------------------------------------
-    // 1. ЖИЗНЕННЫЙ ЦИКЛ И РЕНДЕРИНГ
-    // --------------------------------------------------------------------------
-
-    /**
-     * @brief Инициализация плагина.
-     * @param core Указатель на контекст Ядра. Здесь плагин должен запросить
-     *             сырые указатели на нужные ему данные из BlackBoard.
-     *             Пример: p_bass = core->get_blackboard().bind_float("audio.bass");
-     * @param width Ширина экрана
-     * @param height Высота экрана
-     * @return true в случае успеха, false при ошибке (например, не скомпилировался шейдер)
-     */
+    // --- 1. ПРИВЫЧНЫЙ C++ API ДЛЯ АВТОРОВ ПЛАГИНОВ ---
+    // Авторы плагинов переопределяют именно эти методы.
     virtual bool initialize(ICoreContext* core, uint32_t width, uint32_t height) = 0;
-
-    /**
-     * @brief Отрисовка кадра. Вызывается Ядром каждый кадр (синхронизировано с Wayland VSync).
-     *        Здесь плагин должен прочитать значения по полученным ранее указателям
-     *        (например, *p_bass) и передать их в OpenGL (glUniform1f).
-     * @param width Текущая ширина окна (может меняться при ресайзе)
-     * @param height Текущая высота окна
-     */
     virtual void render(uint32_t width, uint32_t height) = 0;
-
-    /**
-     * @brief Очистка ресурсов. Вызывается перед выгрузкой плагина или уничтожением окна.
-     *        Здесь нужно удалять OpenGL объекты (glDeleteProgram, glDeleteBuffers).
-     */
     virtual void cleanup() = 0;
-
-    // ВАЖНО: Обработчики handle_pointer_motion и handle_audio_data удалены!
-    // Архитектура теперь Data-Driven. Эффект сам читает нужные числа из BlackBoard
-    // во время вызова render().
-
-    // --------------------------------------------------------------------------
-    // 2. СИСТЕМА КОНФИГУРАЦИИ (JSON)
-    // --------------------------------------------------------------------------
-
-    /**
-     * @brief Возвращает человекочитаемое имя эффекта.
-     */
     virtual const char* get_name() const = 0;
 
-    /**
-     * @brief Возвращает список всех параметров эффекта и их значения по умолчанию.
-     *        Используется утилитой plugin-interrogator для генерации конфигов.
-     */
     virtual std::vector<EffectParameter> get_parameters() const = 0;
-
-    /**
-     * @brief Применяет параметр, загруженный из config.json.
-     * @param name Имя параметра
-     * @param value Значение параметра
-     */
     virtual void set_parameter(const std::string& name, const EffectParameterValue& value) = 0;
+
+    // ==============================================================================
+    // --- 2. СКРЫТЫЙ СЛОЙ ABI (МАГИЯ ПЕСОЧНЫХ ЧАСОВ) ---
+    // Эти методы помечены как 'final', чтобы плагины не могли их сломать.
+    // ==============================================================================
+    
+    uint32_t get_parameter_count() const final {
+        if (!cache_valid) {
+            param_cache = get_parameters(); // Вызываем C++ метод плагина 1 раз
+            cache_valid = true;
+        }
+        return static_cast<uint32_t>(param_cache.size());
+    }
+
+    void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const final {
+        if (index >= param_cache.size()) return;
+        const auto& p = param_cache[index];
+        
+        // Отдаем указатели на строки из кэша (это безопасно, так как вектор живет в классе)
+        out_info->name = p.name.c_str();
+        out_info->description = p.description.c_str();
+        
+        // Упаковка std::variant в C-Union
+        if (std::holds_alternative<bool>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_BOOL;
+            out_info->default_value.b_val = std::get<bool>(p.value);
+        } else if (std::holds_alternative<int>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_INT;
+            out_info->default_value.i_val = std::get<int>(p.value);
+        } else if (std::holds_alternative<float>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_FLOAT;
+            out_info->default_value.f_val = std::get<float>(p.value);
+        } else if (std::holds_alternative<glm::vec3>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_VEC3;
+            auto v = std::get<glm::vec3>(p.value);
+            out_info->default_value.vec3_val[0] = v.x;
+            out_info->default_value.vec3_val[1] = v.y;
+            out_info->default_value.vec3_val[2] = v.z;
+        } else if (std::holds_alternative<std::string>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_STRING;
+            out_info->default_value.s_val = std::get<std::string>(p.value).c_str();
+        }
+    }
+
+    void set_parameter(const char* name, const ParamValueABI* value) final {
+        EffectParameterValue cpp_val;
+        // Распаковка C-Union в std::variant
+        switch (value->type) {
+            case ParamType::TYPE_BOOL: cpp_val = value->b_val; break;
+            case ParamType::TYPE_INT: cpp_val = value->i_val; break;
+            case ParamType::TYPE_FLOAT: cpp_val = value->f_val; break;
+            case ParamType::TYPE_VEC3: cpp_val = glm::vec3(value->vec3_val[0], value->vec3_val[1], value->vec3_val[2]); break;
+            case ParamType::TYPE_STRING: cpp_val = std::string(value->s_val); break;
+        }
+        // Передаем распакованные данные в красивый C++ метод плагина
+        this->set_parameter(std::string(name), cpp_val);
+    }
+
+private:
+    mutable std::vector<EffectParameter> param_cache;
+    mutable bool cache_valid = false;
 };
 
 // ==============================================================================
-// ФУНКЦИИ ЭКСПОРТА (Обязательны для каждого плагина)
+// ФУНКЦИИ ЭКСПОРТА ABI
 // ==============================================================================
 extern "C" {
-    // Фабричный метод: создает экземпляр эффекта
-    WallpaperEffect* create_effect();
-    
-    // Метод уничтожения: корректно удаляет экземпляр, выделенный внутри .so
-    void destroy_effect(WallpaperEffect* effect);
+    IWallpaperEffectABI* create_effect();
+    void destroy_effect(IWallpaperEffectABI* effect);
 }

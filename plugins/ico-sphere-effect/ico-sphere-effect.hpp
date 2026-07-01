@@ -50,6 +50,14 @@ public:
     float get_sphere_scale() const { return sphere_scale; }
 
 protected:
+
+    // --- Управление шейдерами ---
+    std::string active_shader = "default"; // Имя шейдера по умолчанию
+    bool needs_shader_reload = true;       // Флаг перекомпиляции
+    
+    bool reload_shader_program();          // Функция загрузки шейдера
+    void fetch_uniform_locations();        // Функция привязки Uniforms
+
     GLuint program = 0;
     GLuint vao = 0, vbo = 0, ebo = 0, line_ebo = 0;
     
@@ -65,6 +73,9 @@ protected:
     float* p_accum_y = nullptr;
     float last_mouse_x = 0.0f;
     float last_mouse_y = 0.0f;
+
+    float* p_audio_bands = nullptr;
+
 
     float* p_audio_bass = nullptr;
     float* p_audio_mid = nullptr;
@@ -99,6 +110,8 @@ protected:
     GLuint u_audio_bass = 0;
     GLuint u_audio_mid = 0;
     GLuint u_audio_treble = 0;
+
+    GLuint u_audio_bands = 0;
 
     std::vector<glm::vec3> vertices;
     std::vector<unsigned int> indices;

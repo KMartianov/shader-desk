@@ -96,14 +96,13 @@ void SimpleWaveEffectEffect::cleanup() {
     vao = 0;
 }
 
-
-// --- Exported C functions for the plugin system ---
+// --- Экспортируемые C-функции ---
 extern "C" {
-    WallpaperEffect* create_effect() {
-        return new SimpleWaveEffectEffect();
+    IWallpaperEffectABI* create_effect() {
+        return new SimpleWaveEffectEffect(); // (например, new HilbertCubeEffect())
     }
-
-    void destroy_effect(WallpaperEffect* effect) {
-        delete effect;
+    void destroy_effect(IWallpaperEffectABI* effect) {
+        // static_cast безопасно возвращает нас к классу для вызова деструктора
+        delete static_cast<WallpaperEffect*>(effect);
     }
 }

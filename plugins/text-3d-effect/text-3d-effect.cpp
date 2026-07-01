@@ -204,9 +204,9 @@ void Text3DEffect::upload_texture_if_ready() {
 }
 
 bool Text3DEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
-    p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
-    p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
-    p_dynamic_text = core->get_blackboard().bind_string("lua.custom_text");
+    p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
+    p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
+    p_dynamic_text = core->get_blackboard()->bind_string("lua.custom_text");
 
     std::string vert_src = shader_utils::load_shader_source("text-3d-effect/fullscreen_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source("text-3d-effect/raymarch_frag.glsl");
@@ -322,7 +322,14 @@ void Text3DEffect::cleanup() {
     program = vao = sdf_texture = 0;
 }
 
+
+// --- Экспортируемые C-функции ---
 extern "C" {
-    WallpaperEffect* create_effect() { return new Text3DEffect(); }
-    void destroy_effect(WallpaperEffect* effect) { delete effect; }
+    IWallpaperEffectABI* create_effect() {
+        return new Text3DEffect(); // (например, new HilbertCubeEffect())
+    }
+    void destroy_effect(IWallpaperEffectABI* effect) {
+        // static_cast безопасно возвращает нас к классу для вызова деструктора
+        delete static_cast<WallpaperEffect*>(effect);
+    }
 }

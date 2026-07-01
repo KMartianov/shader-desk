@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     }
 
     // Инициализируем провайдеры, передавая лямбду, которая применит настройки из Lua
-    plugin_manager.initialize_providers(&wallpaper, [&lua_engine](IDataProvider* p) {
+    plugin_manager.initialize_providers(&wallpaper, [&lua_engine](IDataProviderABI* p) {
         return lua_engine.configure_provider(p);
     });
 

@@ -17,8 +17,8 @@ public:
 private:
     static std::string get_config_dir();
     static std::string sanitize_filename(std::string name);
-    static std::string value_to_lua_string(const EffectParameterValue& val);
+    static std::string value_to_lua_string(const ParamValueABI& val);
     
     static void generate_init_lua(const std::string& filepath, const std::string& default_effect);
-    static void update_plugin_config(const std::string& filepath, const std::string& plugin_name, WallpaperEffect* effect);
+    static void update_plugin_config(const std::string& filepath, const std::string& plugin_name, IWallpaperEffectABI* effect);
 };

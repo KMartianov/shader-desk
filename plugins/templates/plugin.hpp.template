@@ -21,7 +21,6 @@ public:
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height) override;
     void cleanup() override;
-    void handle_pointer_motion(double dx, double dy, bool is_touchpad) override;
 
 private:
     GLuint program = 0;

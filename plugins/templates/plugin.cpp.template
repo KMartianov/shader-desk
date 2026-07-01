@@ -72,17 +72,13 @@ void {{CLASS_NAME}}::cleanup() {
     vao = 0;
 }
 
-void {{CLASS_NAME}}::handle_pointer_motion(double dx, double dy, bool is_touchpad) {
-    // Implement if needed by the shader
-}
-
 // --- Exported C functions for the plugin system ---
 extern "C" {
-    WallpaperEffect* create_effect() {
+    IWallpaperEffectABI* create_effect() {
         return new {{CLASS_NAME}}();
     }
-
-    void destroy_effect(WallpaperEffect* effect) {
-        delete effect;
+    void destroy_effect(IWallpaperEffectABI* effect) {
+        // Безопасно возвращаемся к C++ классу для вызова деструктора
+        delete static_cast<{{CLASS_NAME}}*>(effect);
     }
 }

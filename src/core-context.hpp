@@ -1,54 +1,56 @@
 // src/core-context.hpp
 #pragma once
+
+#include "plugin-abi.hpp" // Подключаем интерфейсы ABI
 #include <string>
 #include <unordered_map>
-#include <functional>
-#include <cstdint>
 #include <vector>
-#include <stdexcept>
 #include <array>
 #include <cstring>
+#include <stdexcept>
 
 // BlackBoard - центральная шина данных (Zero-Latency Data Router)
-class BlackBoard {
+// Наследует безопасный ABI интерфейс, чтобы плагины не видели STL-кишки.
+class BlackBoard : public IBlackBoardABI {
 public:
-    // Фиксированный размер блока для каждого ключа, чтобы избежать реаллокации
     static constexpr size_t MAX_ELEMENTS_PER_KEY = 256;
     static constexpr size_t STRING_BUFFER_SIZE = 256;
 
-    float* bind_float(const std::string& key) {
+    // --- 1. РЕАЛИЗАЦИЯ C-ABI МЕТОДОВ ДЛЯ ПЛАГИНОВ ---
+    
+    float* bind_float(const char* key) override {
         return bind_float_array(key, 1);
     }
 
-    float* bind_float_array(const std::string& key, size_t requested_size) {
+    float* bind_float_array(const char* key, size_t requested_size) override {
         if (requested_size > MAX_ELEMENTS_PER_KEY) {
             throw std::runtime_error("BlackBoard: requested size exceeds maximum limit");
         }
-
-        auto it = memory_.find(key);
+        std::string str_key(key);
+        auto it = memory_.find(str_key);
         if (it == memory_.end()) {
-            // Создаем блок памяти один раз и навсегда.
-            it = memory_.emplace(key, std::vector<float>(MAX_ELEMENTS_PER_KEY, 0.0f)).first;
+            it = memory_.emplace(str_key, std::vector<float>(MAX_ELEMENTS_PER_KEY, 0.0f)).first;
         }
         return it->second.data();
     }
 
-    char* bind_string(const std::string& key) {
-        auto it = string_memory_.find(key);
+    char* bind_string(const char* key) override {
+        std::string str_key(key);
+        auto it = string_memory_.find(str_key);
         if (it == string_memory_.end()) {
-            it = string_memory_.emplace(key, std::array<char, STRING_BUFFER_SIZE>{0}).first;
+            it = string_memory_.emplace(str_key, std::array<char, STRING_BUFFER_SIZE>{0}).first;
         }
         return it->second.data();
     }
 
-    void set_string(const std::string& key, const std::string& value) {
+    void set_string(const char* key, const char* value) override {
         char* buffer = bind_string(key);
-        std::strncpy(buffer, value.c_str(), STRING_BUFFER_SIZE - 1);
+        std::strncpy(buffer, value, STRING_BUFFER_SIZE - 1);
         buffer[STRING_BUFFER_SIZE - 1] = '\0'; // Гарантированный null-терминатор
     }
 
-
-
+    // --- 2. ВНУТРЕННИЕ МЕТОДЫ ЯДРА (Недоступны через IBlackBoardABI) ---
+    
     std::vector<std::string> get_all_keys() const {
         std::vector<std::string> keys;
         for (const auto& pair : memory_) {
@@ -57,17 +59,7 @@ public:
         return keys;
     }
 
-
 private:
     std::unordered_map<std::string, std::vector<float>> memory_;
     std::unordered_map<std::string, std::array<char, STRING_BUFFER_SIZE>> string_memory_;
-};
-
-// Интерфейс, через который плагины общаются с Ядром
-class ICoreContext {
-public:
-    virtual ~ICoreContext() = default;
-    virtual BlackBoard& get_blackboard() = 0;
-    virtual void register_epoll_fd(int fd, std::function<void(uint32_t events)> callback) = 0;
-    virtual void unregister_epoll_fd(int fd) = 0;
 };

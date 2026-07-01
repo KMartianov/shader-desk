@@ -9,8 +9,8 @@
 #include <cstring>       // Для strerror
 #include <cerrno>        // Для errno
 
-class IDataProvider;
-class ICoreContext; // Forward declaration
+class IDataProviderABI;
+class ICoreContextABI; // Forward declaration для ABI-интерфейсов
 
 class LuaEngine {
 public:
@@ -23,11 +23,12 @@ public:
     std::string get_active_effect() const;
     bool is_interactive() const;
 
-    void apply_effect_settings(WallpaperEffect* effect, const std::string& effect_name);
-    bool configure_provider(IDataProvider* provider);
+    // [NEW] Заменили типы параметров на ABI интерфейсы
+    void apply_effect_settings(IWallpaperEffectABI* effect, const std::string& effect_name);
+    bool configure_provider(IDataProviderABI* provider);
     
     // Биндинг системного API
-    void bind_core_api(ICoreContext* core);
+    void bind_core_api(ICoreContextABI* core);
 
 private:
     void clear_timers(); // [NEW] Метод для безопасного удаления таймеров
@@ -35,8 +36,9 @@ private:
     sol::state lua;
     std::string config_dir;
     
-    ICoreContext* current_core = nullptr;     // [NEW] Запоминаем Ядро для доступа к epoll
-    std::unordered_set<int> active_timers;    // [NEW] Храним активные дескрипторы timerfd
+    // [NEW] Указатель на ABI ядро для доступа к epoll
+    ICoreContextABI* current_core = nullptr;  
+    std::unordered_map<int, std::function<void(uint32_t)>> active_timers;  // [NEW] Храним активные дескрипторы timerfd
     
     std::string get_config_dir();
 };

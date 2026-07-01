@@ -13,7 +13,6 @@
 #include <signal.h>
 #include <filesystem>
 
-using WallpaperEffectPtr = std::unique_ptr<WallpaperEffect, void(*)(WallpaperEffect*)>;
 extern std::atomic<bool> global_running;
 
 // --- Статические листенеры Wayland ---
@@ -87,11 +86,30 @@ InteractiveWallpaper::~InteractiveWallpaper() {
 }
 
 // ==============================================================================
-// РЕАЛИЗАЦИЯ ИНТЕРФЕЙСА ICoreContext
+// РЕАЛИЗАЦИЯ ИНТЕРФЕЙСА ICoreContextABI
 // ==============================================================================
 
-void InteractiveWallpaper::register_epoll_fd(int fd, std::function<void(uint32_t)> callback) {
+IBlackBoardABI* InteractiveWallpaper::get_blackboard() {
+    return &blackboard;
+}
+
+// ABI-совместимый метод для C-плагинов. 
+// Оборачивает вызов C-функции в std::function и отдает внутреннему механизму.
+void InteractiveWallpaper::register_epoll_fd(int fd, void (*callback)(uint32_t, void*), void* user_data) {
+    register_epoll_fd_cxx(fd, [callback, user_data](uint32_t events) {
+        if (callback) callback(events, user_data);
+    });
+}
+
+void InteractiveWallpaper::unregister_epoll_fd(int fd) {
     if (fd < 0 || epoll_fd < 0) return;
+    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+    epoll_callbacks.erase(fd);
+}
+
+// Внутренний метод для C++ частей Ядра (LuaEngine, Inotify, Signalfd)
+void InteractiveWallpaper::register_epoll_fd_cxx(int fd, std::function<void(uint32_t)> callback) {
+    if (fd < 0 || epoll_fd < 0 || !callback) return;
     struct epoll_event ev{};
     ev.events = EPOLLIN;
     ev.data.fd = fd;
@@ -100,12 +118,6 @@ void InteractiveWallpaper::register_epoll_fd(int fd, std::function<void(uint32_t
     } else {
         std::cerr << "Failed to add fd " << fd << " to epoll: " << strerror(errno) << std::endl;
     }
-}
-
-void InteractiveWallpaper::unregister_epoll_fd(int fd) {
-    if (fd < 0 || epoll_fd < 0) return;
-    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
-    epoll_callbacks.erase(fd);
 }
 
 // ==============================================================================
@@ -153,8 +165,8 @@ void InteractiveWallpaper::setup_inotify() {
     } catch (...) {} // Игнорируем ошибки (папки может не быть при первом запуске)
 
     // Регистрируем inotify_fd в epoll Ядра
-    register_epoll_fd(inotify_fd, [this](uint32_t) { this->process_inotify_events(); });
-
+    
+register_epoll_fd_cxx(inotify_fd, [this](uint32_t) { this->process_inotify_events(); });
     apply_config_to_all_outputs();
 }
 
@@ -209,7 +221,7 @@ void InteractiveWallpaper::process_inotify_events() {
             // Если Lua-конфиг изменился, обновляем Провайдеров.
             // Благодаря изменениям в PluginManager, теперь они будут отключаться!
             if (plugin_manager_) {
-                plugin_manager_->initialize_providers(this, [this](IDataProvider* p) {
+                plugin_manager_->initialize_providers(this, [this](IDataProviderABI* p) {
                     return lua_engine.configure_provider(p);
                 });
             }
@@ -307,7 +319,7 @@ bool InteractiveWallpaper::initialize() {
 
     int sig_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
     if (sig_fd >= 0) {
-        register_epoll_fd(sig_fd, [this, sig_fd](uint32_t) {
+        register_epoll_fd_cxx(sig_fd, [this, sig_fd](uint32_t) {
             struct signalfd_siginfo fdsi;
             while (read(sig_fd, &fdsi, sizeof(fdsi)) > 0) {
                 std::cout << "\nSignal " << fdsi.ssi_signo << " received. Shutting down gracefully..." << std::endl;

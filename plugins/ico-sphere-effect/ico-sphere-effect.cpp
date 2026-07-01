@@ -148,21 +148,32 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     if (program != 0) return true;
 
     // ПРИВЯЗЫВАЕМ ПАМЯТЬ
-    p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
-    p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
+    p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
+    p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
+    p_audio_bass = core->get_blackboard()->bind_float("audio.bass");
+    p_audio_mid = core->get_blackboard()->bind_float("audio.mid");
+    p_audio_treble = core->get_blackboard()->bind_float("audio.treble");
+    p_audio_bands = core->get_blackboard()->bind_float_array("audio.bands", 64);
 
-    p_audio_bass = core->get_blackboard().bind_float("audio.bass");
-    p_audio_mid = core->get_blackboard().bind_float("audio.mid");
-    p_audio_treble = core->get_blackboard().bind_float("audio.treble");
+    // Первичная загрузка шейдера
+    if (!reload_shader_program()) {
+        return false; // Фатальная ошибка, если нет даже дефолтного шейдера
+    }
 
-    std::cout << "Initializing IcoSphere effect with size: " << width << "x" << height << std::endl;
-    std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
-    std::string vert_src = shader_utils::load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source(config_dir + "effects/shaders/ico-sphere-effect/sphere_frag.glsl");
-    if (vert_src.empty() || frag_src.empty()) return false;
+    generate_icosphere(subdivisions);
     
-    program = shader_utils::create_shader_program(vert_src, frag_src);
-    if (!program) return false;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glGenBuffers(1, &ebo);
+    glGenBuffers(1, &line_ebo);
+
+    update_buffers();
+    return true;
+}
+
+
+void IcoSphereEffect::fetch_uniform_locations() {
+    if (!program) return;
     
     u_model = glGetUniformLocation(program, "model");
     u_view = glGetUniformLocation(program, "view");
@@ -170,11 +181,9 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     u_time = glGetUniformLocation(program, "time");
     u_wireframe_color = glGetUniformLocation(program, "wireframe_color");
     u_is_wireframe_pass = glGetUniformLocation(program, "is_wireframe_pass");
-
     u_lightColor = glGetUniformLocation(program, "lightColor");
     u_lightPos = glGetUniformLocation(program, "lightPos");
     u_viewPos = glGetUniformLocation(program, "viewPos");
-
 
     u_oscill_amp = glGetUniformLocation(program, "oscill_amp");
     u_oscill_freq = glGetUniformLocation(program, "oscill_freq");
@@ -184,20 +193,42 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     u_pulse_amp = glGetUniformLocation(program, "pulse_amp");
     u_noise_amp = glGetUniformLocation(program, "noise_amp");
     u_sphere_scale = glGetUniformLocation(program, "sphere_scale");
-    // Получаем ID новых uniform-переменных
+    
     u_audio_bass = glGetUniformLocation(program, "audio_bass");
     u_audio_mid = glGetUniformLocation(program, "audio_mid");
     u_audio_treble = glGetUniformLocation(program, "audio_treble");
-    generate_icosphere(subdivisions);
-    
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ebo);
-    glGenBuffers(1, &line_ebo);
+    u_audio_bands = glGetUniformLocation(program, "audio_bands");
+}
 
-    update_buffers();
+bool IcoSphereEffect::reload_shader_program() {
+    std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
+    std::string base_path = config_dir + "effects/shaders/ico-sphere-effect/" + active_shader;
     
-    std::cout << "IcoSphere effect initialized successfully." << std::endl;
+    std::cout << "[IcoSphere] Attempting to load shader theme: '" << active_shader << "'" << std::endl;
+    
+    std::string vert_src = shader_utils::load_shader_source(base_path + "_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(base_path + "_frag.glsl");
+    
+    if (vert_src.empty() || frag_src.empty()) {
+        std::cerr << "[IcoSphere] Failed to load shader files for theme: " << active_shader << std::endl;
+        return false;
+    }
+    
+    GLuint new_program = shader_utils::create_shader_program(vert_src, frag_src);
+    if (!new_program) {
+        std::cerr << "[IcoSphere] Failed to compile new shader theme." << std::endl;
+        return false;
+    }
+    
+    // Если всё успешно: удаляем старую программу и ставим новую
+    if (program != 0) {
+        glDeleteProgram(program);
+    }
+    
+    program = new_program;
+    fetch_uniform_locations(); // Обновляем адреса Uniforms для новой программы
+    
+    std::cout << "[IcoSphere] Successfully switched to shader theme: '" << active_shader << "'" << std::endl;
     return true;
 }
 
@@ -280,6 +311,20 @@ void IcoSphereEffect::update_rotation(float dt) {
 
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height) {
+    // ПРОВЕРКА ГОРЯЧЕЙ ПЕРЕЗАГРУЗКИ ШЕЙДЕРА
+    if (needs_shader_reload) {
+        reload_shader_program();
+        needs_shader_reload = false;
+    }
+
+    // ПРОВЕРКА ПЕРЕСОЗДАНИЯ СЕТКИ
+    if (needs_regeneration) {
+        generate_icosphere(subdivisions);
+        update_buffers();
+        needs_regeneration = false;
+    }
+
+
     // Вращение от мыши (Данные уже обработаны Провайдером)
     if (p_accum_x && p_accum_y) {
         float current_x = *p_accum_x;
@@ -337,6 +382,11 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniform1f(u_audio_mid, p_audio_mid ? *p_audio_mid : 0.0f);
     glUniform1f(u_audio_treble, p_audio_treble ? *p_audio_treble : 0.0f);
 
+    if (p_audio_bands) {
+        glUniform1fv(u_audio_bands, 64, p_audio_bands);
+    }
+
+
     glBindVertexArray(vao);
     if (wireframe_mode) {
         glUniform3f(u_wireframe_color, wireframe_color.r, wireframe_color.g, wireframe_color.b);
@@ -373,9 +423,6 @@ void IcoSphereEffect::set_subdivisions(int value) {
     }
 }
 
-// FIX 3: Removed the redundant IcoSphereEffect::compile_shader and 
-// IcoSphereEffect::create_shader_program function definitions.
-// The functionality is now provided by shader-utils.hpp.
 
 // --- КЛАСС-АДАПТЕР ДЛЯ ПЛАГИНА ---
 
@@ -390,6 +437,10 @@ public:
 
     std::vector<EffectParameter> get_parameters() const override {
         return {
+            // --- НОВЫЙ ПАРАМЕТР ДЛЯ ВЫБОРА ШЕЙДЕРА ---
+            {"shader_theme", "Shader variation name (e.g., 'default', 'harmonics')", active_shader},
+            
+            // --- СТАРЫЕ ПАРАМЕТРЫ ---
             {"wireframe_mode", "Render as a wireframe", wireframe_mode},
             {"subdivisions", "Level of sphere detail (0-6)", subdivisions},
             {"sphere_scale", "Overall size of the sphere", sphere_scale},
@@ -411,7 +462,17 @@ public:
 
     void set_parameter(const std::string& name, const EffectParameterValue& value) override {
         try {
-            if (name == "wireframe_mode")   { set_wireframe_mode(std::get<bool>(value)); }
+            // --- ОБРАБОТКА НОВОГО ПАРАМЕТРА ШЕЙДЕРА ---
+            if (name == "shader_theme") {
+                std::string new_theme = std::get<std::string>(value);
+                // Загружаем новый шейдер только если имя действительно изменилось
+                if (new_theme != active_shader) {
+                    active_shader = new_theme;
+                    needs_shader_reload = true; 
+                }
+            }
+            // --- ОБРАБОТКА СТАРЫХ ПАРАМЕТРОВ ---
+            else if (name == "wireframe_mode")   { set_wireframe_mode(std::get<bool>(value)); }
             else if (name == "subdivisions") { set_subdivisions(std::get<int>(value)); }
             else if (name == "sphere_scale") { set_sphere_scale(std::get<float>(value)); }
             else if (name == "oscill_amp")   { set_oscill_amp(std::get<float>(value)); }
@@ -436,14 +497,14 @@ public:
     }
 };
 
-// --- ЭКСПОРТИРУЕМЫЕ СИ-ФУНКЦИИ ---
 
+// --- Экспортируемые C-функции ---
 extern "C" {
-    WallpaperEffect* create_effect() {
-        return new IcoSphereEffectPlugin();
+    IWallpaperEffectABI* create_effect() {
+        return new IcoSphereEffectPlugin(); 
     }
-
-    void destroy_effect(WallpaperEffect* effect) {
-        delete effect;
+    void destroy_effect(IWallpaperEffectABI* effect) {
+        // static_cast безопасно возвращает нас к классу для вызова деструктора
+        delete static_cast<WallpaperEffect*>(effect);
     }
 }

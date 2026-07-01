@@ -99,11 +99,10 @@ void PulseColorEffectEffect::cleanup() {
 
 // --- Exported C functions for the plugin system ---
 extern "C" {
-    WallpaperEffect* create_effect() {
-        return new PulseColorEffectEffect();
+    IWallpaperEffectABI* create_effect() {
+        return new PulseColorEffectEffect(); 
     }
-
-    void destroy_effect(WallpaperEffect* effect) {
-        delete effect;
+    void destroy_effect(IWallpaperEffectABI* effect) {
+        delete static_cast<WallpaperEffect*>(effect);
     }
 }

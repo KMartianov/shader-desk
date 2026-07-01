@@ -50,8 +50,8 @@ public:
         if (sockfd >= 0) return true; 
 
         m_core = core;
-        p_accum_x = core->get_blackboard().bind_float("mouse.accum_x");
-        p_accum_y = core->get_blackboard().bind_float("mouse.accum_y");
+        p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
+        p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
 
         sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
         if (sockfd < 0) return false;
@@ -70,7 +70,9 @@ public:
             return false;
         }
 
-        core->register_epoll_fd(sockfd, [this](uint32_t) { this->on_data_ready(); });
+        core->register_epoll_fd(sockfd, [](uint32_t events, void* user_data) {
+            static_cast<PointerProvider*>(user_data)->on_data_ready();
+        }, this);
         return true;
     }
 
@@ -109,7 +111,12 @@ public:
 
 };
 
+
 extern "C" {
-    IDataProvider* create_provider() { return new PointerProvider(); }
-    void destroy_provider(IDataProvider* p) { delete p; }
+    IDataProviderABI* create_provider() { 
+        return new PointerProvider(); // (например, new AudioProvider())
+    }
+    void destroy_provider(IDataProviderABI* p) { 
+        delete static_cast<IDataProvider*>(p); 
+    }
 }

@@ -43,7 +43,7 @@ struct WallpaperConfig {
 // ГЛАВНЫЙ КЛАСС ЯДРА
 // Теперь он наследует ICoreContext, предоставляя плагинам доступ к памяти и epoll
 // ==============================================================================
-class InteractiveWallpaper : public ICoreContext {
+class InteractiveWallpaper : public ICoreContextABI {
 public:
     // Структура, описывающая один физический монитор (wl_output)
     struct Output {
@@ -100,10 +100,14 @@ public:
 
     wl_shm* get_shm() const { return shm; }
 
-    // --- Реализация интерфейса ICoreContext ---
-    BlackBoard& get_blackboard() override { return blackboard; }
-    void register_epoll_fd(int fd, std::function<void(uint32_t)> callback) override;
+    // --- Реализация интерфейса ICoreContextABI (Для плагинов) ---
+    IBlackBoardABI* get_blackboard() override;
+    
+    void register_epoll_fd(int fd, void (*callback)(uint32_t events, void* user_data), void* user_data) override;
     void unregister_epoll_fd(int fd) override;
+
+    // --- Внутренний метод Ядра (Для LuaEngine, Inotify и т.д.) ---
+    void register_epoll_fd_cxx(int fd, std::function<void(uint32_t)> callback);
 
     // --- Wayland Listeners (Статические коллбэки) ---
     static void registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version);

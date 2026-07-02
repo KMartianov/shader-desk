@@ -323,13 +323,13 @@ void Text3DEffect::cleanup() {
 }
 
 
-// --- Экспортируемые C-функции ---
+// --- Exported C-functions ---
 extern "C" {
     IWallpaperEffectABI* create_effect() {
         return new Text3DEffect(); // (например, new HilbertCubeEffect())
     }
     void destroy_effect(IWallpaperEffectABI* effect) {
-        // static_cast безопасно возвращает нас к классу для вызова деструктора
+        // static_cast safely returns us to the class to call the destructor
         delete static_cast<WallpaperEffect*>(effect);
     }
 }

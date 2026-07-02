@@ -23,47 +23,47 @@ public:
     void cleanup() override;
 
 private:
-    // --- OpenGL объекты ---
+    // --- OpenGL Objects ---
     GLuint program = 0;
     GLuint curve_vao = 0, curve_vbo = 0;
     GLuint cube_vao = 0, cube_vbo = 0, cube_ebo = 0;
     GLsizei curve_vertex_count = 0;
 
-    // Указатели на глобальные накопленные координаты в BlackBoard
+    // Pointers to global accumulated coordinates in BlackBoard
     float* p_accum_x = nullptr;
     float* p_accum_y = nullptr;
     
-    // Локальное состояние этого конкретного монитора
+    // Local state for this specific monitor
     float last_mouse_x = 0.0f;
     float last_mouse_y = 0.0f;
 
-    // --- Параметры эффекта ---
+    // --- Effect Parameters ---
     int hilbert_order = 4;
     bool draw_cube_outline = true;
     glm::vec3 curve_color = {1.0f, 0.5f, 0.0f};
     glm::vec3 cube_color = {0.8f, 0.8f, 0.8f};
     bool needs_regeneration = true;
 
-    // --- Логика вращения (аналогично IcoSphere) ---
+    // --- Rotation Logic (Similar to IcoSphere) ---
     glm::quat orientation;
     glm::vec3 angular_velocity;
     float rotation_decay = 0.95f;
   
     void update_rotation(float dt);
 
-    // --- Uniform-переменные ---
+    // --- Uniform Variables ---
     GLuint u_model = 0, u_view = 0, u_projection = 0;
     GLuint u_line_color = 0;
 
-    // --- Генерация геометрии ---
+    // --- Geometry Generation ---
     void generate_hilbert_curve();
     void generate_cube_outline();
     
-    // Рекурсивная функция для генерации кривой
+    // Recursive function to generate the curve
 void hilbert3D(const glm::vec3& start, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c, int order, std::vector<glm::vec3>& vertices);
 };
 
-// --- Экспортируемые C-функции для системы плагинов ---
+// --- Exported C-functions for the plugin system ---
 extern "C" {
     IWallpaperEffectABI* create_effect();
     void destroy_effect(IWallpaperEffectABI* effect);

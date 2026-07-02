@@ -5,7 +5,7 @@
 #include <cstddef>
 
 // ==============================================================================
-// 1. БЕЗОПАСНЫЕ ТИПЫ ДАННЫХ (POD)
+// 1. SAFE DATA TYPES (POD)
 // ==============================================================================
 
 enum class ParamType : uint32_t {
@@ -23,10 +23,10 @@ struct ParamValueABI {
         int i_val;
         float f_val;
         float vec3_val[3];
-        const char* s_val; // Гарантированно нуль-терминированная строка
+        const char* s_val; // Guaranteed null-terminated string
 
-        // РЕЗЕРВ: Жесткая фиксация размера union (64 байта).
-        // Гарантирует, что при добавлении матриц (mat4) старые плагины не сломаются.
+        // RESERVED: Fixed union size (64 bytes).
+        // Ensures forward ABI compatibility (e.g., if mat4 is added later, old plugins won't break).
         uint8_t _padding[64]; 
     };
 };
@@ -38,10 +38,10 @@ struct ParamInfoABI {
 };
 
 // ==============================================================================
-// 2. ИНТЕРФЕЙСЫ (COM-style ABI)
+// 2. INTERFACES (COM-style ABI)
 // ==============================================================================
-// Ни один класс не содержит полей (переменных), только чистые виртуальные методы.
-// Это защищает таблицу виртуальных методов (vtable) от искажений компилятором.
+// None of these classes contain fields (member variables), only pure virtual methods.
+// This protects the virtual method table (vtable) from compiler-specific mangling.
 
 class IBlackBoardABI {
 public:
@@ -57,11 +57,11 @@ class ICoreContextABI {
 public:
     virtual ~ICoreContextABI() = default;
     
-    // Возвращаем ABI-совместимый указатель на BlackBoard
+    // Returns an ABI-compatible pointer to the BlackBoard
     virtual IBlackBoardABI* get_blackboard() = 0;
     
-    // C-style Callback вместо std::function! 
-    // Передача void* user_data обязательна, чтобы плагин мог прокинуть указатель на this (себя).
+    // C-style Callback instead of std::function. 
+    // Passing void* user_data is mandatory so the plugin can pass its 'this' pointer.
     virtual void register_epoll_fd(int fd, void (*callback)(uint32_t events, void* user_data), void* user_data) = 0;
     virtual void unregister_epoll_fd(int fd) = 0;
 };
@@ -76,7 +76,7 @@ public:
     
     virtual const char* get_name() const = 0;
     
-    // ABI замена для std::vector<EffectParameter>
+    // ABI replacement for std::vector<EffectParameter>
     virtual uint32_t get_parameter_count() const = 0;
     virtual void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const = 0;
     virtual void set_parameter(const char* name, const ParamValueABI* value) = 0;
@@ -91,7 +91,7 @@ public:
     
     virtual const char* get_name() const = 0;
     
-    // ABI замена для std::vector<EffectParameter>
+    // ABI replacement for std::vector<EffectParameter>
     virtual uint32_t get_parameter_count() const = 0;
     virtual void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const = 0;
     virtual void set_parameter(const char* name, const ParamValueABI* value) = 0;

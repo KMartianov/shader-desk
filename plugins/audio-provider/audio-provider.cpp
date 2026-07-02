@@ -10,7 +10,7 @@
 #include <cmath>
 
 class AudioProvider : public IDataProvider {
-    // --- Указатели на память ядра (BlackBoard) ---
+    // --- Pointers to Core memory (BlackBoard) ---
     float* p_volume = nullptr;
     float* p_bass = nullptr;
     float* p_mid = nullptr;
@@ -20,8 +20,8 @@ class AudioProvider : public IDataProvider {
     int sockfd = -1;
     ICoreContext* m_core = nullptr;
 
-    // --- Управляемые параметры (из Lua) ---
-    float smoothing = 0.85f; // Скорость падения (Decay)
+    // --- Managed parameters (from Lua) ---
+    float smoothing = 0.85f; // Decay speed
     float volume_multiplier = 1.0f;
     float bass_multiplier = 1.0f;
     float mid_multiplier = 1.0f;
@@ -53,18 +53,18 @@ public:
     }
 
     bool initialize(ICoreContext* core) override {
-        if (sockfd >= 0) return true; // Защита от Hot-Reload
+        if (sockfd >= 0) return true; // Hot-Reload protection
 
         m_core = core;
         
-        // Привязываем переменные к центральной шине
+        // Bind variables to the central data bus
         p_volume = core->get_blackboard()->bind_float("audio.volume");
         p_bass   = core->get_blackboard()->bind_float("audio.bass");
         p_mid    = core->get_blackboard()->bind_float("audio.mid");
         p_treble = core->get_blackboard()->bind_float("audio.treble");
         p_bands  = core->get_blackboard()->bind_float_array("audio.bands", 64);
 
-        // Создаем неблокирующий UNIX Datagram сокет
+        // Create non-blocking UNIX Datagram socket
         sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
         if (sockfd < 0) return false;
 
@@ -72,7 +72,7 @@ public:
         addr.sun_family = AF_UNIX;
         const char* socket_name = "shader-desk-audio";
         
-        // Linux abstract socket namespace (начинается с нулевого байта)
+        // Linux abstract socket namespace (starts with a null byte)
         addr.sun_path[0] = '\0'; 
         strncpy(&addr.sun_path[1], socket_name, sizeof(addr.sun_path) - 2);
         socklen_t addr_len = sizeof(sa_family_t) + 1 + strlen(socket_name);
@@ -83,7 +83,7 @@ public:
             return false;
         }
 
-        // Регистрируем сокет в epoll-цикле ядра Wayland (Zero-Latency)
+        // Register socket in Wayland core's epoll loop (Zero-Latency)
         core->register_epoll_fd(sockfd, [](uint32_t events, void* user_data) {
             static_cast<AudioProvider*>(user_data)->on_data_ready();
         }, this);
@@ -91,31 +91,31 @@ public:
         return true;
     }
 
-    // Вызывается ядром Linux только тогда, когда в сокете есть новые байты
+    // Called by the Linux kernel ONLY when new bytes are in the socket
     void on_data_ready() {
         AudioData datagram;
         AudioData latest_datagram;
         bool has_new_data = false;
 
-        // ВАЖНО: Цикл while крутится, пока в сокете есть данные.
-        // MSG_DONTWAIT гарантирует, что мы не зависнем, когда сокет опустеет.
+        // IMPORTANT: The while loop runs as long as there is data in the socket.
+        // MSG_DONTWAIT ensures we don't block when the socket is empty.
         while (true) {
             ssize_t bytes_read = recv(sockfd, &datagram, sizeof(datagram), MSG_DONTWAIT);
             
             if (bytes_read < 0) {
-                // Сокет пуст (мы вычитали всё старье и догнали реальное время)
+                // Socket empty (we drained stale data and caught up to real-time)
                 if (errno == EAGAIN || errno == EWOULDBLOCK) break; 
                 if (errno == EINTR) continue;
                 break;
             }
 
             if (bytes_read == sizeof(AudioData) && datagram.magic == 0x41554431) {
-                latest_datagram = datagram; // Перезаписываем старые данные более свежими
+                latest_datagram = datagram; // Overwrite old data with fresher packets
                 has_new_data = true;
             }
         }
 
-        // Применяем ТОЛЬКО самый свежий пакет (0 задержки)
+        // Apply ONLY the freshest packet (0 latency)
         if (has_new_data) {
             apply_dynamic_smoothing(*p_volume, latest_datagram.volume, volume_multiplier);
             apply_dynamic_smoothing(*p_bass,   latest_datagram.bass,   bass_multiplier);
@@ -137,28 +137,28 @@ public:
     }
 
 private:
-    // Математически элегантная функция сглаживания
+    // Mathematically elegant smoothing function
     inline void apply_dynamic_smoothing(float& current, float raw_target, float multiplier) {
-        // Умножаем сырое значение и обрезаем, чтобы не выйти за рамки
+        // Multiply raw value and clamp to prevent out-of-bounds
         float target = std::clamp(raw_target * multiplier, 0.0f, 1.0f);
         
         if (target > current) {
-            // FAST ATTACK: Звук стал громче.
-            // Реагируем почти мгновенно (на 85% принимаем новое значение).
-            // Оставшиеся 15% убирают микро-джиттер цифрового сигнала.
+            // FAST ATTACK: Sound became louder.
+            // React almost instantly (accept 85% of the new value).
+            // The remaining 15% eliminates digital signal micro-jitter.
             current = (current * 0.15f) + (target * 0.85f);
         } else {
-            // SMOOTH DECAY: Звук стих.
-            // Плавно опускаем значение вниз под действием параметра `smoothing` из Lua.
+            // SMOOTH DECAY: Sound faded.
+            // Smoothly drop the value based on the Lua `smoothing` parameter.
             current = (current * smoothing) + (target * (1.0f - smoothing));
         }
         
-        // Защита от денормализованных чисел (аппаратное замедление CPU при float близких к нулю)
+        // Protection against denormalized numbers (prevents CPU hardware slowdowns with floats near zero)
         if (current < 1e-5f) current = 0.0f;
     }
 };
 
-// --- ABI ЭКСПОРТ ДЛЯ PLUGIN MANAGER ---
+// --- ABI EXPORT FOR PLUGIN MANAGER ---
 extern "C" {
     IDataProviderABI* create_provider() { 
         return new AudioProvider(); 

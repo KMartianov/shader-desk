@@ -4,13 +4,13 @@
 #include "wallpaper-effect.hpp" // Берем EffectParameter и EffectParameterValue оттуда
 
 // ==============================================================================
-// ИНТЕРФЕЙС ПРОВАЙДЕРА ДАННЫХ (SMART PROVIDER SDK)
+// DATA PROVIDER INTERFACE (SMART PROVIDER SDK)
 // ==============================================================================
 class IDataProvider : public IDataProviderABI {
 public:
     virtual ~IDataProvider() = default;
     
-    // --- 1. ПРИВЫЧНЫЙ C++ API ---
+    // --- 1. STANDARD C++ API ---
     virtual const char* get_name() const = 0;
     virtual bool initialize(ICoreContext* core) = 0;
     virtual void cleanup() = 0;
@@ -18,7 +18,7 @@ public:
     virtual std::vector<EffectParameter> get_parameters() const = 0;
     virtual void set_parameter(const std::string& name, const EffectParameterValue& value) = 0;
 
-    // --- 2. СКРЫТЫЙ СЛОЙ ABI ---
+    // --- 2. HIDDEN ABI LAYER ---
     uint32_t get_parameter_count() const final {
         if (!cache_valid) {
             param_cache = get_parameters();
@@ -72,7 +72,7 @@ private:
     mutable bool cache_valid = false;
 };
 
-// Сигнатуры для C-ABI экспорта из .so библиотек
+// Signatures for C-ABI export from .so libraries
 extern "C" {
     typedef IDataProviderABI* (*CreateProviderFunc)();
     typedef void (*DestroyProviderFunc)(IDataProviderABI*);

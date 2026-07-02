@@ -1,14 +1,14 @@
 // src/interactive-wallpaper.hpp
 #pragma once
 
-// Системные библиотеки
+// System libraries
 #include <iostream> 
 #include <string>
 #include <memory>
 #include <unordered_map>
 #include <functional>
 
-// Заголовки для работы с epoll и inotify (Zero-latency I/O)
+// Headers for epoll and inotify (Zero-latency I/O multiplexing)
 #include <sys/epoll.h>
 #include <sys/inotify.h>
 
@@ -21,10 +21,10 @@
 
 #include "lua-engine.hpp"
 
-// Внутренние компоненты (обрати внимание, демонов ввода больше нет!)
-#include "core-context.hpp"    // Интерфейс Ядра и BlackBoard
-#include "wallpaper-effect.hpp" // Интерфейс визуальных плагинов
-#include "plugin-manager.hpp"   // Загрузчик .so библиотек
+// Internal components (legacy input daemons are removed)
+#include "core-context.hpp"    // Core Interface & BlackBoard
+#include "wallpaper-effect.hpp" // Visual plugin interfaces
+#include "plugin-manager.hpp"   // Dynamic .so loader
 
 enum class RendererType {
     OPENGL_ES,
@@ -40,18 +40,18 @@ struct WallpaperConfig {
 
 
 // ==============================================================================
-// ГЛАВНЫЙ КЛАСС ЯДРА
-// Теперь он наследует ICoreContext, предоставляя плагинам доступ к памяти и epoll
+// MAIN CORE CLASS
+// Inherits ICoreContextABI to provide plugins with memory and epoll access.
 // ==============================================================================
 class InteractiveWallpaper : public ICoreContextABI {
 public:
-    // Структура, описывающая один физический монитор (wl_output)
+    // Structure describing a single physical monitor (wl_output)
     struct Output {
         InteractiveWallpaper* parent = nullptr;
         std::string name;
         std::string identifier;
         
-        // Wayland объекты
+        // Wayland objects
         wl_output* output_obj = nullptr;
         wl_surface* surface = nullptr;
         zwlr_layer_surface_v1* layer_surface = nullptr;
@@ -62,10 +62,10 @@ public:
         uint32_t configure_serial = 0;
         bool configured = false;
         
-        // Экземпляр визуального эффекта (плагина), привязанный к этому монитору
+        // Visual effect plugin instance bound to this specific monitor
         WallpaperEffectPtr effect;
 
-        // EGL ресурсы для рендеринга на этот монитор
+        // EGL resources for rendering on this monitor
         wl_egl_window* egl_window = nullptr;
         EGLSurface egl_surface = EGL_NO_SURFACE;
 
@@ -86,10 +86,10 @@ public:
     
     InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine& engine);
 
-    ~InteractiveWallpaper() override; // Добавлен override деструктора
+    ~InteractiveWallpaper() override; // Added destructor override
 
     bool initialize();
-    void run();   // Главный цикл программы (zero-latency epoll loop)
+    void run();   // Main event loop (zero-latency epoll based)
     void stop();
 
     static void frame_handle_done(void* data, wl_callback* callback, uint32_t time);
@@ -100,16 +100,16 @@ public:
 
     wl_shm* get_shm() const { return shm; }
 
-    // --- Реализация интерфейса ICoreContextABI (Для плагинов) ---
+    // --- ICoreContextABI Implementation (For plugins) ---
     IBlackBoardABI* get_blackboard() override;
     
     void register_epoll_fd(int fd, void (*callback)(uint32_t events, void* user_data), void* user_data) override;
     void unregister_epoll_fd(int fd) override;
 
-    // --- Внутренний метод Ядра (Для LuaEngine, Inotify и т.д.) ---
+    // --- Internal Core Method (For LuaEngine, Inotify, etc.) ---
     void register_epoll_fd_cxx(int fd, std::function<void(uint32_t)> callback);
 
-    // --- Wayland Listeners (Статические коллбэки) ---
+    // --- Wayland Listeners (Static callbacks) ---
     static void registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version);
     static void registry_global_remove(void* data, wl_registry* registry, uint32_t name);
 
@@ -125,7 +125,7 @@ public:
 
 
 private:
-    // --- Архитектура Data-Driven (BlackBoard) ---
+    // --- Data-Driven Architecture (BlackBoard) ---
     BlackBoard blackboard; 
     std::unordered_map<int, std::function<void(uint32_t)>> epoll_callbacks;
 
@@ -146,7 +146,7 @@ private:
     std::unordered_map<wl_output*, std::unique_ptr<Output>> outputs;
     bool running = true;
 
-    // --- Файловые дескрипторы для мультиплексирования (epoll) ---
+    // --- File descriptors for multiplexing (epoll/inotify) ---
     int epoll_fd = -1;
     int inotify_fd = -1;
 
@@ -156,17 +156,17 @@ private:
     LuaEngine& lua_engine;
 
 
-    // --- Внутренние методы ---
+    // --- Internal Methods ---
     bool init_egl();
     void create_egl_surface(Output* output);
     void create_layer_surface(Output* output);
     void check_egl_error(const std::string& operation);
     
-    // --- Инициализация и обработка событий Inotify ---
+    // --- Inotify Initialization & Event Handling ---
     void setup_inotify();
     void process_inotify_events();
     
-    // --- Применение конфигурации ---
+    // --- Configuration Application ---
     void apply_config_to_all_outputs();
     void apply_config_to_effect(Output* output);
 };

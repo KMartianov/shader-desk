@@ -10,13 +10,13 @@
 #include <stdexcept>
 
 // BlackBoard - центральная шина данных (Zero-Latency Data Router)
-// Наследует безопасный ABI интерфейс, чтобы плагины не видели STL-кишки.
+// Inherits a safe ABI interface to hide STL internals from plugins.
 class BlackBoard : public IBlackBoardABI {
 public:
     static constexpr size_t MAX_ELEMENTS_PER_KEY = 256;
     static constexpr size_t STRING_BUFFER_SIZE = 256;
 
-    // --- 1. РЕАЛИЗАЦИЯ C-ABI МЕТОДОВ ДЛЯ ПЛАГИНОВ ---
+    // --- 1. C-ABI METHOD IMPLEMENTATIONS FOR PLUGINS ---
     
     float* bind_float(const char* key) override {
         return bind_float_array(key, 1);
@@ -46,10 +46,10 @@ public:
     void set_string(const char* key, const char* value) override {
         char* buffer = bind_string(key);
         std::strncpy(buffer, value, STRING_BUFFER_SIZE - 1);
-        buffer[STRING_BUFFER_SIZE - 1] = '\0'; // Гарантированный null-терминатор
+        buffer[STRING_BUFFER_SIZE - 1] = '\0'; // Guaranteed null-terminator
     }
 
-    // --- 2. ВНУТРЕННИЕ МЕТОДЫ ЯДРА (Недоступны через IBlackBoardABI) ---
+    // --- 2. INTERNAL CORE METHODS (Not exposed via IBlackBoardABI) ---
     
     std::vector<std::string> get_all_keys() const {
         std::vector<std::string> keys;

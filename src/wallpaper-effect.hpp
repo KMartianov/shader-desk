@@ -8,17 +8,17 @@
 #include <memory>
 #include <glm/glm.hpp>
 
-// Алиас для обратной совместимости. 
-// Плагины смогут использовать ICoreContext, как и раньше.
+// Alias for backward compatibility. 
+// Plugins can use ICoreContext as before.
 using ICoreContext = ICoreContextABI;
 
-// Типы данных, которые можно настраивать через Lua
+// Data types configurable via Lua
 using EffectParameterValue = std::variant<bool, int, float, glm::vec3, std::string>;
 
-// Умный указатель для загрузчика (Ядра)
+// Smart pointer for the loader (Core)
 using WallpaperEffectPtr = std::unique_ptr<IWallpaperEffectABI, void(*)(IWallpaperEffectABI*)>;
 
-// Структура, описывающая один настраиваемый параметр плагина (C++ стиль)
+// Structure describing a single configurable plugin parameter (C++ style)
 struct EffectParameter {
     std::string name;
     std::string description;
@@ -26,14 +26,14 @@ struct EffectParameter {
 };
 
 // ==============================================================================
-// ИНТЕРФЕЙС ВИЗУАЛЬНОГО ПЛАГИНА (HEADER-ONLY SDK)
+// VISUAL PLUGIN INTERFACE (HEADER-ONLY SDK)
 // ==============================================================================
 class WallpaperEffect : public IWallpaperEffectABI {
 public:
     virtual ~WallpaperEffect() = default;
 
-    // --- 1. ПРИВЫЧНЫЙ C++ API ДЛЯ АВТОРОВ ПЛАГИНОВ ---
-    // Авторы плагинов переопределяют именно эти методы.
+    // --- 1. STANDARD C++ API FOR PLUGIN AUTHORS ---
+    // Plugin authors override these specific methods.
     virtual bool initialize(ICoreContext* core, uint32_t width, uint32_t height) = 0;
     virtual void render(uint32_t width, uint32_t height) = 0;
     virtual void cleanup() = 0;
@@ -43,13 +43,13 @@ public:
     virtual void set_parameter(const std::string& name, const EffectParameterValue& value) = 0;
 
     // ==============================================================================
-    // --- 2. СКРЫТЫЙ СЛОЙ ABI (МАГИЯ ПЕСОЧНЫХ ЧАСОВ) ---
-    // Эти методы помечены как 'final', чтобы плагины не могли их сломать.
+    // --- 2. HIDDEN ABI LAYER (HOURGLASS PATTERN) ---
+    // These methods are marked 'final' so plugins cannot break them.
     // ==============================================================================
     
     uint32_t get_parameter_count() const final {
         if (!cache_valid) {
-            param_cache = get_parameters(); // Вызываем C++ метод плагина 1 раз
+            param_cache = get_parameters(); // Call the C++ plugin method exactly once
             cache_valid = true;
         }
         return static_cast<uint32_t>(param_cache.size());
@@ -59,11 +59,11 @@ public:
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
-        // Отдаем указатели на строки из кэша (это безопасно, так как вектор живет в классе)
+        // Return pointers to strings from cache (safe, as vector lives in class)
         out_info->name = p.name.c_str();
         out_info->description = p.description.c_str();
         
-        // Упаковка std::variant в C-Union
+        // Pack std::variant into C-Union
         if (std::holds_alternative<bool>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_BOOL;
             out_info->default_value.b_val = std::get<bool>(p.value);
@@ -87,7 +87,7 @@ public:
 
     void set_parameter(const char* name, const ParamValueABI* value) final {
         EffectParameterValue cpp_val;
-        // Распаковка C-Union в std::variant
+        // Unpack C-Union to std::variant
         switch (value->type) {
             case ParamType::TYPE_BOOL: cpp_val = value->b_val; break;
             case ParamType::TYPE_INT: cpp_val = value->i_val; break;
@@ -95,7 +95,7 @@ public:
             case ParamType::TYPE_VEC3: cpp_val = glm::vec3(value->vec3_val[0], value->vec3_val[1], value->vec3_val[2]); break;
             case ParamType::TYPE_STRING: cpp_val = std::string(value->s_val); break;
         }
-        // Передаем распакованные данные в красивый C++ метод плагина
+        // Pass unpacked data to the clean C++ plugin method
         this->set_parameter(std::string(name), cpp_val);
     }
 
@@ -105,7 +105,7 @@ private:
 };
 
 // ==============================================================================
-// ФУНКЦИИ ЭКСПОРТА ABI
+// ABI EXPORT FUNCTIONS
 // ==============================================================================
 extern "C" {
     IWallpaperEffectABI* create_effect();

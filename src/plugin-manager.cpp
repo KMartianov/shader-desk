@@ -6,10 +6,10 @@
 
 namespace fs = std::filesystem;
 
-// Внутренняя структура для хранения информации о визуальном плагине
+// Internal structure for visual plugin metadata
 struct PluginManager::PluginHandle {
     void* handle = nullptr;
-    // [NEW] Используем C-ABI интерфейс для безопасного создания/удаления
+    // [NEW] Using C-ABI interface for safe creation/destruction
     IWallpaperEffectABI* (*create_func)() = nullptr;
     void (*destroy_func)(IWallpaperEffectABI*) = nullptr;
     std::string name;
@@ -25,23 +25,23 @@ struct PluginManager::PluginHandle {
 PluginManager::PluginManager(const std::string& plugin_dir) : plugin_directory(plugin_dir) {}
 
 PluginManager::~PluginManager() {
-    // ВАЖНО: Правильный порядок уничтожения.
-    // Сначала удаляем сами объекты (вызывая destroy_provider из .so)
+    // IMPORTANT: Correct destruction order.
+    // First, destroy the objects themselves (calling destroy_provider from .so)
     data_providers.clear();
     
-    // А только затем выгружаем библиотеки из памяти системы
+    // Only then unload the libraries from system memory
     for (void* handle : provider_handles) {
         if (handle) dlclose(handle);
     }
     provider_handles.clear();
     
-    // loaded_plugins удалятся сами (и вызовут dlclose в ~PluginHandle)
+    // loaded_plugins will destroy themselves (triggering dlclose in ~PluginHandle)
 }
 
 void PluginManager::discover_plugins() {
     std::cout << "Scanning for plugins in: " << plugin_directory << std::endl;
     
-    // Очистка перед новым сканированием
+    // Cleanup before rescanning
     data_providers.clear();
     for (void* handle : provider_handles) {
         if (handle) dlclose(handle);
@@ -59,7 +59,7 @@ void PluginManager::discover_plugins() {
             if (entry.path().extension() == ".so") {
                 const std::string path_str = entry.path().string();
                 
-                // Загружаем библиотеку
+                // Load shared library
                 void* handle = dlopen(path_str.c_str(), RTLD_LAZY);
                 if (!handle) {
                     std::cerr << "Failed to load plugin " << path_str << ": " << dlerror() << std::endl;
@@ -67,10 +67,10 @@ void PluginManager::discover_plugins() {
                 }
 
                 bool is_valid_plugin = false;
-                bool handle_stored_by_effect = false; // Флаг для предотвращения двойного dlclose
+                bool handle_stored_by_effect = false; // Flag to prevent double dlclose
 
-                // --- 1. Попытка загрузить как Визуальный Эффект (Visual Effect) ---
-                // [NEW] Ожидаем возврата IWallpaperEffectABI* вместо WallpaperEffect*
+                // --- 1. Attempt to load as Visual Effect ---
+                // [NEW] Expecting IWallpaperEffectABI* return instead of WallpaperEffect*
                 auto create_effect_fn = (IWallpaperEffectABI* (*)())dlsym(handle, "create_effect");
                 auto destroy_effect_fn = (void (*)(IWallpaperEffectABI*))dlsym(handle, "destroy_effect");
                 
@@ -93,13 +93,13 @@ void PluginManager::discover_plugins() {
                     handle_stored_by_effect = true; 
                 }
 
-                // --- 2. Попытка загрузить как Поставщика Данных (Data Provider) ---
-                // [NEW] Ожидаем возврата IDataProviderABI* вместо IDataProvider*
+                // --- 2. Attempt to load as Data Provider ---
+                // [NEW] Expecting IDataProviderABI* return instead of IDataProvider*
                 auto create_provider_fn = (IDataProviderABI* (*)())dlsym(handle, "create_provider");
                 auto destroy_provider_fn = (void (*)(IDataProviderABI*))dlsym(handle, "destroy_provider");
 
                 if (create_provider_fn && destroy_provider_fn) {
-                    // Создаем глобальный инстанс провайдера сразу (с кастомным ABI удалителем)
+                    // Create global provider instance immediately (with custom ABI deleter)
                     std::unique_ptr<IDataProviderABI, void(*)(IDataProviderABI*)> provider(
                         create_provider_fn(), 
                         destroy_provider_fn
@@ -108,14 +108,14 @@ void PluginManager::discover_plugins() {
                     std::cout << "  - Discovered Data Provider: '" << provider->get_name() << "' from " << path_str << std::endl;
                     data_providers.push_back(std::move(provider));
                     
-                    // Сохраняем handle, только если он уже не был сохранен визуальным эффектом
+                    // Store handle only if it wasn't already stored by the visual effect
                     if (!handle_stored_by_effect) {
                         provider_handles.push_back(handle);
                     }
                     is_valid_plugin = true;
                 }
 
-                // --- 3. Если в .so нет нужных сигнатур ---
+                // --- 3. If .so lacks required signatures ---
                 if (!is_valid_plugin) {
                     std::cerr << "Plugin " << path_str << " is missing required symbols. Ignored." << std::endl;
                     dlclose(handle);
@@ -133,21 +133,21 @@ void PluginManager::initialize_providers(ICoreContextABI* core, const std::funct
     for (auto& provider : data_providers) {
         bool enabled = true;
         
-        // Читаем настройки из Lua (возвращает true, если enabled = true)
+        // Read Lua settings (returns true if enabled = true)
         if (configure_callback) {
             enabled = configure_callback(provider.get());
         }
 
         if (enabled) {
-            // Если он уже инициализирован, внутри provider->initialize просто вернется true
+            // If already initialized, provider->initialize simply returns true
             if (!provider->initialize(core)) {
                 std::cerr << "Failed to initialize Data Provider: " << provider->get_name() << std::endl;
             } else {
                 std::cout << "Data Provider running: " << provider->get_name() << std::endl;
             }
         } else {
-            // НОВОЕ: Если плагин выключили в конфиге на лету — ГАСИМ ЕГО!
-            // cleanup() безопасно отпишет его от epoll и закроет сокет.
+            // NEW: If plugin was disabled in config on the fly - SHUT IT DOWN!
+            // cleanup() safely unregisters it from epoll and closes the socket.
             provider->cleanup();
             std::cout << "Data Provider stopped (disabled in config): " << provider->get_name() << std::endl;
         }
@@ -159,10 +159,10 @@ void PluginManager::initialize_providers(ICoreContextABI* core, const std::funct
 WallpaperEffectPtr PluginManager::create_effect(const std::string& effect_name) {
     for (const auto& plugin : loaded_plugins) {
         if (plugin->name == effect_name) {
-            // [NEW] Получаем сырой ABI указатель
+            // [NEW] Get raw ABI pointer
             IWallpaperEffectABI* raw_ptr = plugin->create_func();
             if (raw_ptr) {
-                // Возвращаем smart pointer с правильным кастомным deleter'ом из .so
+                // Return smart pointer with correct custom deleter from .so
                 return WallpaperEffectPtr(raw_ptr, plugin->destroy_func);
             }
         }

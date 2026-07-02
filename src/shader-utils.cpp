@@ -8,7 +8,7 @@
 namespace shader_utils {
 
 std::string load_shader_source(const std::string& relative_path) {
-    // Сначала пробуем загрузить из системной конфигурационной директории
+    // First, try to load from system configuration directory
     std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/effects/shaders/";
     std::string filepath = config_dir + relative_path;
     
@@ -20,7 +20,7 @@ std::string load_shader_source(const std::string& relative_path) {
         return buffer.str();
     }
     
-    // Fallback: пробуем загрузить из текущей рабочей директории (для разработки)
+    // Fallback: try loading from current working directory (for development)
     file.open(relative_path);
     if (file.is_open()) {
         std::stringstream buffer;

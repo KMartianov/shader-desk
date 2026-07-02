@@ -12,7 +12,7 @@ class PointerProvider : public IDataProvider {
     float* p_accum_y = nullptr;
     int sockfd = -1;
 
-    // --- Управляемые параметры (из Lua) ---
+    // --- Managed parameters (from Lua) ---
     float mouse_sensitivity = 1.0f;
     float touchpad_sensitivity = 3.0f;
     bool invert_x = false;
@@ -23,7 +23,7 @@ class PointerProvider : public IDataProvider {
 public:
     const char* get_name() const override { return "Evdev Pointer Provider"; }
 
-    // --- Реализация нового интерфейса параметров ---
+    // --- Implementation of the new parameter interface ---
     std::vector<EffectParameter> get_parameters() const override {
         return {
             {"mouse_sensitivity", "Чувствительность обычной мыши", mouse_sensitivity},
@@ -45,8 +45,8 @@ public:
     }
 
     bool initialize(ICoreContext* core) override {
-        // Защита от Hot-Reload: если сокет уже создан, просто возвращаем true.
-        // Настройки (touchpad_sensitivity и т.д.) уже обновились через set_parameter().
+        // Hot-Reload protection: if the socket is already created, just return true.
+        // Settings (touchpad_sensitivity, etc.) were already updated via set_parameter().
         if (sockfd >= 0) return true; 
 
         m_core = core;
@@ -66,7 +66,7 @@ public:
         
         if (bind(sockfd, (struct sockaddr*)&addr, addr_len) < 0) {
             close(sockfd);
-            sockfd = -1; // <--- ВАЖНО: сбрасываем fd при ошибке
+            sockfd = -1; // <--- IMPORTANT: reset fd on error
             return false;
         }
 
@@ -88,8 +88,8 @@ public:
             }
 
             if (bytes_read == sizeof(PointerDatagram) && datagram.magic == POINTER_MAGIC) {
-                // --- SMART PROVIDER ЛОГИКА ---
-                // Применяем чувствительность и инверсию до записи в BlackBoard
+                // --- SMART PROVIDER LOGIC ---
+                // Apply sensitivity and inversion BEFORE writing to BlackBoard
                 float sens = datagram.is_touchpad ? touchpad_sensitivity : mouse_sensitivity;
                 float dx = datagram.dx * sens * (invert_x ? -1.0f : 1.0f);
                 float dy = datagram.dy * sens * (invert_y ? -1.0f : 1.0f);
@@ -102,7 +102,7 @@ public:
 
     void cleanup() override {
         if (sockfd >= 0) {
-            // Обязательно отписываемся от epoll, иначе в Ядре будет утечка коллбэков!
+            // Mandatory: unregister from epoll, otherwise the Core will leak callbacks!
             if (m_core) m_core->unregister_epoll_fd(sockfd);
             close(sockfd);
             sockfd = -1;
@@ -114,7 +114,7 @@ public:
 
 extern "C" {
     IDataProviderABI* create_provider() { 
-        return new PointerProvider(); // (например, new AudioProvider())
+        return new PointerProvider(); // (e.g., new AudioProvider())
     }
     void destroy_provider(IDataProviderABI* p) { 
         delete static_cast<IDataProvider*>(p); 

@@ -9,13 +9,13 @@
 #include <chrono>
 #include <cstdlib>
 #include <atomic>
-#include <sys/signalfd.h> // Для безопасного перехвата сигналов в epoll
+#include <sys/signalfd.h> // For safe signal handling via epoll
 #include <signal.h>
 #include <filesystem>
 
 extern std::atomic<bool> global_running;
 
-// --- Статические листенеры Wayland ---
+// --- Static Wayland listeners ---
 static const wl_registry_listener registry_listener = {
     .global = InteractiveWallpaper::registry_global,
     .global_remove = InteractiveWallpaper::registry_global_remove,
@@ -36,7 +36,7 @@ static const zwlr_layer_surface_v1_listener layer_surface_listener = {
 };
 
 // ==============================================================================
-// КОНСТРУКТОР / ДЕСТРУКТОР
+// CONSTRUCTOR / DESTRUCTOR
 // ==============================================================================
 
 InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine& engine) 
@@ -52,7 +52,7 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine
         std::cerr << "Failed to initialize EGL" << std::endl;
     }
 
-    // Создаем epoll дескриптор один раз при запуске
+    // Create epoll file descriptor once during startup
     epoll_fd = epoll_create1(IN_CLOEXEC);
     if (epoll_fd < 0) {
         std::cerr << "Failed to create epoll fd: " << strerror(errno) << std::endl;
@@ -86,15 +86,15 @@ InteractiveWallpaper::~InteractiveWallpaper() {
 }
 
 // ==============================================================================
-// РЕАЛИЗАЦИЯ ИНТЕРФЕЙСА ICoreContextABI
+// ICoreContextABI IMPLEMENTATION
 // ==============================================================================
 
 IBlackBoardABI* InteractiveWallpaper::get_blackboard() {
     return &blackboard;
 }
 
-// ABI-совместимый метод для C-плагинов. 
-// Оборачивает вызов C-функции в std::function и отдает внутреннему механизму.
+// ABI-compatible method for C-plugins. 
+// Wraps the C-function call in std::function and passes it to the internal engine.
 void InteractiveWallpaper::register_epoll_fd(int fd, void (*callback)(uint32_t, void*), void* user_data) {
     register_epoll_fd_cxx(fd, [callback, user_data](uint32_t events) {
         if (callback) callback(events, user_data);
@@ -107,7 +107,7 @@ void InteractiveWallpaper::unregister_epoll_fd(int fd) {
     epoll_callbacks.erase(fd);
 }
 
-// Внутренний метод для C++ частей Ядра (LuaEngine, Inotify, Signalfd)
+// Internal method for C++ Core components (LuaEngine, Inotify, Signalfd)
 void InteractiveWallpaper::register_epoll_fd_cxx(int fd, std::function<void(uint32_t)> callback) {
     if (fd < 0 || epoll_fd < 0 || !callback) return;
     struct epoll_event ev{};
@@ -121,12 +121,12 @@ void InteractiveWallpaper::register_epoll_fd_cxx(int fd, std::function<void(uint
 }
 
 // ==============================================================================
-// КОНФИГУРАЦИЯ (Lua) И INOTIFY (Горячая перезагрузка)
+// CONFIGURATION (Lua) & INOTIFY (Hot-Reloading)
 // ==============================================================================
 
 void InteractiveWallpaper::apply_config_to_effect(Output* output) {
     if (!output || !output->effect) return;
-    // Делегируем передачу параметров в LuaEngine
+    // Delegate parameter application to LuaEngine
     lua_engine.apply_effect_settings(output->effect.get(), current_effect_name_);
 }
 
@@ -144,15 +144,15 @@ void InteractiveWallpaper::setup_inotify() {
     std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
                                         : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
 
-    // 1. Отслеживаем изменения в главной папке (init.lua)
+    // 1. Track changes in the main configuration directory (init.lua)
     inotify_add_watch(inotify_fd, config_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
     
-    // 2. Отслеживаем папку конфигов плагинов
+    // 2. Track the plugin configuration directory
     inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
 
-    // 3. НОВОЕ: Отслеживаем изменения Шейдеров (Live Coding)
+    // 3. NEW: Track Shader changes for Live Coding
     std::string shaders_dir = config_dir + "/effects/shaders";
-    // Рекурсивно добавляем watches для всех подпапок с шейдерами
+    // Recursively add watches for all shader subdirectories
     try {
         if (std::filesystem::exists(shaders_dir)) {
             inotify_add_watch(inotify_fd, shaders_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE);
@@ -162,9 +162,9 @@ void InteractiveWallpaper::setup_inotify() {
                 }
             }
         }
-    } catch (...) {} // Игнорируем ошибки (папки может не быть при первом запуске)
+    } catch (...) {} // Ignore errors (directory might not exist on first run)
 
-    // Регистрируем inotify_fd в epoll Ядра
+    // Register inotify_fd in the core epoll loop
     
 register_epoll_fd_cxx(inotify_fd, [this](uint32_t) { this->process_inotify_events(); });
     apply_config_to_all_outputs();
@@ -184,11 +184,11 @@ void InteractiveWallpaper::process_inotify_events() {
             event = (const struct inotify_event *) ptr;
             if (event->len > 0) {
                 std::string name(event->name);
-                // Реагируем на изменение .lua файлов (Конфиги и Пресеты)
+                // React to .lua file modifications (Configs and Presets)
                 if (name.find(".lua") != std::string::npos) {
                     lua_modified = true;
                 }
-                // Реагируем на изменение шейдеров
+                // React to shader modifications
                 else if (name.find(".glsl") != std::string::npos || name.find(".vert") != std::string::npos || name.find(".frag") != std::string::npos) {
                     shader_modified = true;
                 }
@@ -200,7 +200,7 @@ void InteractiveWallpaper::process_inotify_events() {
         std::cout << "[Hot-Reload] Lua configuration changed..." << std::endl;
         if (lua_engine.reload()) {
             
-            // --- НОВОЕ: Проверка на смену активного эффекта ---
+            // --- NEW: Check for active effect changes ---
             std::string new_effect = lua_engine.get_active_effect();
             
             if (!new_effect.empty() && new_effect != current_effect_name_) {
@@ -209,17 +209,17 @@ void InteractiveWallpaper::process_inotify_events() {
                 
                 current_effect_name_ = new_effect;
                 
-                // Пересоздаем эффект для всех мониторов (apply_effect_to_output сама удалит старые)
+                // Recreate the effect for all monitors (apply_effect_to_output handles cleanup)
                 for (auto& pair : outputs) {
                     apply_effect_to_output(pair.second.get());
                 }
             } else {
-                // Эффект не менялся, просто обновляем его параметры (цвета, скорости)
+                // Effect remains the same, just update parameters (colors, speeds, etc.)
                 apply_config_to_all_outputs();
             }
             
-            // Если Lua-конфиг изменился, обновляем Провайдеров.
-            // Благодаря изменениям в PluginManager, теперь они будут отключаться!
+            // If Lua config changed, update Providers.
+            // Thanks to PluginManager updates, disabled providers will gracefully shut down.
             if (plugin_manager_) {
                 plugin_manager_->initialize_providers(this, [this](IDataProviderABI* p) {
                     return lua_engine.configure_provider(p);
@@ -230,16 +230,16 @@ void InteractiveWallpaper::process_inotify_events() {
 
     if (shader_modified) {
         std::cout << "[Hot-Reload] Shader file changed. Recompiling graphics pipeline..." << std::endl;
-        // Заставляем текущие плагины пересобрать свои шейдерные программы
+        // Force current plugins to recompile their shader programs
         for (auto& pair : outputs) {
             Output* out = pair.second.get();
             if (out->effect && out->egl_surface != EGL_NO_SURFACE) {
                 if (eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
-                    // Cleanup удалит старую программу
+                    // Cleanup deletes the old program
                     out->effect->cleanup();
-                    // Initialize скомпилирует новую из измененных файлов
+                    // Initialize compiles the new one from the modified files
                     out->effect->initialize(this, out->width, out->height);
-                    apply_config_to_effect(out); // Восстанавливаем параметры
+                    apply_config_to_effect(out); // Restore parameters
                 }
             }
         }
@@ -247,7 +247,7 @@ void InteractiveWallpaper::process_inotify_events() {
 }
 
 // ==============================================================================
-// EGL И ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ
+// EGL AND SYSTEM INITIALIZATION
 // ==============================================================================
 
 bool InteractiveWallpaper::init_egl() {
@@ -302,7 +302,7 @@ bool InteractiveWallpaper::initialize() {
 
     if (!compositor || !layer_shell) return false;
 
-    // Регистрация сокета Wayland в нашем мультиплексоре Epoll
+    // Register Wayland socket in our epoll multiplexer
     int wl_fd = wl_display_get_fd(display);
     struct epoll_event ev{};
     ev.events = EPOLLIN;
@@ -311,7 +311,7 @@ bool InteractiveWallpaper::initialize() {
 
     setup_inotify();
 
-    // БЕЗОПАСНЫЙ ПЕРЕХВАТ СИГНАЛОВ ЧЕРЕЗ EPOLL
+    // SAFE SIGNAL HANDLING VIA EPOLL
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -336,7 +336,7 @@ bool InteractiveWallpaper::initialize() {
 }
 
 // ==============================================================================
-// ГЛАВНЫЙ ЦИКЛ ПРОГРАММЫ (ZERO-LATENCY EPOLL LOOP)
+// MAIN EVENT LOOP (ZERO-LATENCY EPOLL BASED)
 // ==============================================================================
 
 void InteractiveWallpaper::run() {
@@ -388,7 +388,7 @@ void InteractiveWallpaper::run() {
 void InteractiveWallpaper::stop() { running = false; }
 
 // ==============================================================================
-// WAYLAND И РЕНДЕРИНГ ЭФФЕКТОВ
+// WAYLAND AND EFFECT RENDERING
 // ==============================================================================
 
 void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::string& effect_name) {
@@ -399,20 +399,20 @@ void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::stri
 void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     if (!plugin_manager_ || current_effect_name_.empty()) return;
     
-    // 1. БЕЗОПАСНОЕ УДАЛЕНИЕ СТАРОГО ЭФФЕКТА (если он был)
+    // 1. SAFELY REMOVE THE OLD EFFECT (if any)
     if (output->effect) {
         if (output->egl_surface != EGL_NO_SURFACE) {
-            // Делаем контекст активным, чтобы эффект мог сделать glDeleteProgram()
+            // Make context current so the effect can safely call glDeleteProgram()
             eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context);
         }
         output->effect->cleanup();
-        output->effect.reset(); // Уничтожаем объект
+        output->effect.reset(); // Destroy the object
     }
 
-    // 2. СОЗДАНИЕ И ИНИЦИАЛИЗАЦИЯ НОВОГО
+    // 2. CREATE AND INITIALIZE THE NEW EFFECT
     output->effect = plugin_manager_->create_effect(current_effect_name_);
     if (output->effect) {
-        // Применяем настройки сразу (до инициализации или после - неважно, они сохранятся)
+        // Apply settings immediately (order doesn't matter, they are cached)
         apply_config_to_effect(output);
         
         if (output->configured && output->egl_surface != EGL_NO_SURFACE) {
@@ -449,7 +449,7 @@ void InteractiveWallpaper::render_output(Output* output) {
 }
 
 // ==============================================================================
-// WAYLAND ПРОТОКОЛЫ (СТАНДАРТНАЯ БОЙЛЕРПЛЕЙТ-ЛОГИКА)
+// WAYLAND PROTOCOLS (STANDARD BOILERPLATE LOGIC)
 // ==============================================================================
 
 void InteractiveWallpaper::registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
@@ -512,7 +512,7 @@ void InteractiveWallpaper::create_layer_surface(Output* output) {
         ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "wallpaper");
 
     zwlr_layer_surface_v1_set_size(output->layer_surface, 0, 0);
-    zwlr_layer_surface_v1_set_anchor(output->layer_surface, 15); // Все стороны (1|2|4|8)
+    zwlr_layer_surface_v1_set_anchor(output->layer_surface, 15); // All anchors (1|2|4|8)
     zwlr_layer_surface_v1_set_exclusive_zone(output->layer_surface, -1);
     zwlr_layer_surface_v1_set_keyboard_interactivity(output->layer_surface, 0);
 

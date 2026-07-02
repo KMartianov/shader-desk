@@ -2,17 +2,17 @@
 #pragma once
 #include <cstdint>
 
-// Мы больше не используем #pragma pack. 
-// Структура выровнена вручную (кратно 4 байтам), что безопасно для любой архитектуры.
+// We no longer use #pragma pack. 
+// The structure is manually aligned (multiple of 4 bytes), which is safe for any architecture.
 struct PointerDatagram {
     uint32_t magic;      // 4 байта
-    float dx;            // 4 байта (double тут избыточен, float хватит за глаза)
+    float dx;            // 4 bytes (double is excessive here, float is plenty)
     float dy;            // 4 байта
     uint8_t is_touchpad; // 1 байт
-    uint8_t padding[3];  // 3 байта резерва для ровного размера структуры (16 байт)
+    uint8_t padding[3];  // 3 bytes reserved to pad structure to a clean 16 bytes
 };
 
-// Для аудио пока оставим как есть, но выровняем позже
+// For audio, leave as is for now, but align later
 struct AudioDatagram {
     uint32_t magic;
     float volume;

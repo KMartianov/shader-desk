@@ -1,8 +1,8 @@
 // src/ico-sphere-effect.cpp
-// Этот файл объединяет логику эффекта и код плагина для компиляции в единый .so файл.
+// This file combines effect logic and plugin code to compile into a single .so file.
 #define GLM_ENABLE_EXPERIMENTAL
 
-// --- НЕОБХОДИМЫЕ ЗАГОЛОВКИ ---
+// --- REQUIRED HEADERS ---
 #include "ico-sphere-effect.hpp"
 #include "wallpaper-effect.hpp"
 #include "shader-utils.hpp" 
@@ -21,7 +21,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-// Вычисляет индекс средней точки ребра для подразделения икосферы
+// Calculates the midpoint index of an edge for icosphere subdivision
 unsigned int get_midpoint_index(unsigned int i1, unsigned int i2,
                                std::vector<glm::vec3>& vertices,
                                std::map<std::pair<unsigned int, unsigned int>, unsigned int>& cache) {
@@ -41,7 +41,7 @@ unsigned int get_midpoint_index(unsigned int i1, unsigned int i2,
 }
 
 
-// --- РЕАЛИЗАЦИЯ КЛАССА IcoSphereEffect ---
+// --- IcoSphereEffect CLASS IMPLEMENTATION ---
 
 IcoSphereEffect::IcoSphereEffect() {
     std::random_device rd;
@@ -50,7 +50,7 @@ IcoSphereEffect::IcoSphereEffect() {
     orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     angular_velocity = glm::vec3(dis(gen), dis(gen), dis(gen)) * 0.1f;
     
-    // Инициализация визуальных параметров
+    // Visual parameters initialization
     wireframe_mode = true;
     subdivisions = 3;
     sphere_scale = 1.0f;
@@ -147,7 +147,7 @@ void IcoSphereEffect::update_effect_scaling() {
 bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
     if (program != 0) return true;
 
-    // ПРИВЯЗЫВАЕМ ПАМЯТЬ
+    // BIND MEMORY
     p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
     p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
     p_audio_bass = core->get_blackboard()->bind_float("audio.bass");
@@ -155,9 +155,9 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     p_audio_treble = core->get_blackboard()->bind_float("audio.treble");
     p_audio_bands = core->get_blackboard()->bind_float_array("audio.bands", 64);
 
-    // Первичная загрузка шейдера
+    // Initial shader loading
     if (!reload_shader_program()) {
-        return false; // Фатальная ошибка, если нет даже дефолтного шейдера
+        return false; // Fatal error if not even the default shader is present
     }
 
     generate_icosphere(subdivisions);
@@ -220,13 +220,13 @@ bool IcoSphereEffect::reload_shader_program() {
         return false;
     }
     
-    // Если всё успешно: удаляем старую программу и ставим новую
+    // If successful: delete the old program and set the new one
     if (program != 0) {
         glDeleteProgram(program);
     }
     
     program = new_program;
-    fetch_uniform_locations(); // Обновляем адреса Uniforms для новой программы
+    fetch_uniform_locations(); // Update Uniform addresses for the new program
     
     std::cout << "[IcoSphere] Successfully switched to shader theme: '" << active_shader << "'" << std::endl;
     return true;
@@ -311,13 +311,13 @@ void IcoSphereEffect::update_rotation(float dt) {
 
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height) {
-    // ПРОВЕРКА ГОРЯЧЕЙ ПЕРЕЗАГРУЗКИ ШЕЙДЕРА
+    // CHECK FOR SHADER HOT-RELOAD
     if (needs_shader_reload) {
         reload_shader_program();
         needs_shader_reload = false;
     }
 
-    // ПРОВЕРКА ПЕРЕСОЗДАНИЯ СЕТКИ
+    // CHECK FOR MESH REGENERATION
     if (needs_regeneration) {
         generate_icosphere(subdivisions);
         update_buffers();
@@ -325,7 +325,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     }
 
 
-    // Вращение от мыши (Данные уже обработаны Провайдером)
+    // Mouse rotation (Data is already processed by the Provider)
     if (p_accum_x && p_accum_y) {
         float current_x = *p_accum_x;
         float current_y = *p_accum_y;
@@ -334,7 +334,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
         last_mouse_x = current_x;
         last_mouse_y = current_y;
         
-        // Оставляем небольшую базовую константу для перевода пикселей в радианы
+        // Small base constant to convert pixels to radians
         angular_velocity += glm::vec3(dy, dx, 0.0f); 
     }
 
@@ -376,8 +376,8 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniform1f(u_noise_amp, scaled_noise_amp);
     glUniform1f(u_sphere_scale, sphere_scale);
 
-    // Прямая передача аудио-данных из BlackBoard в шейдер. 
-    // Данные уже сглажены Провайдером!
+    // Direct transfer of audio data from BlackBoard to shader. 
+    // Data is already smoothed by the Provider!
     glUniform1f(u_audio_bass, p_audio_bass ? *p_audio_bass : 0.0f);
     glUniform1f(u_audio_mid, p_audio_mid ? *p_audio_mid : 0.0f);
     glUniform1f(u_audio_treble, p_audio_treble ? *p_audio_treble : 0.0f);
@@ -424,7 +424,7 @@ void IcoSphereEffect::set_subdivisions(int value) {
 }
 
 
-// --- КЛАСС-АДАПТЕР ДЛЯ ПЛАГИНА ---
+// --- PLUGIN ADAPTER CLASS ---
 
 class IcoSphereEffectPlugin : public IcoSphereEffect {
 public:
@@ -437,10 +437,10 @@ public:
 
     std::vector<EffectParameter> get_parameters() const override {
         return {
-            // --- НОВЫЙ ПАРАМЕТР ДЛЯ ВЫБОРА ШЕЙДЕРА ---
+            // --- NEW PARAMETER FOR SHADER SELECTION ---
             {"shader_theme", "Shader variation name (e.g., 'default', 'harmonics')", active_shader},
             
-            // --- СТАРЫЕ ПАРАМЕТРЫ ---
+            // --- OLD PARAMETERS ---
             {"wireframe_mode", "Render as a wireframe", wireframe_mode},
             {"subdivisions", "Level of sphere detail (0-6)", subdivisions},
             {"sphere_scale", "Overall size of the sphere", sphere_scale},
@@ -462,16 +462,16 @@ public:
 
     void set_parameter(const std::string& name, const EffectParameterValue& value) override {
         try {
-            // --- ОБРАБОТКА НОВОГО ПАРАМЕТРА ШЕЙДЕРА ---
+            // --- PROCESS NEW SHADER PARAMETER ---
             if (name == "shader_theme") {
                 std::string new_theme = std::get<std::string>(value);
-                // Загружаем новый шейдер только если имя действительно изменилось
+                // Load new shader only if the name actually changed
                 if (new_theme != active_shader) {
                     active_shader = new_theme;
                     needs_shader_reload = true; 
                 }
             }
-            // --- ОБРАБОТКА СТАРЫХ ПАРАМЕТРОВ ---
+            // --- PROCESS OLD PARAMETERS ---
             else if (name == "wireframe_mode")   { set_wireframe_mode(std::get<bool>(value)); }
             else if (name == "subdivisions") { set_subdivisions(std::get<int>(value)); }
             else if (name == "sphere_scale") { set_sphere_scale(std::get<float>(value)); }
@@ -498,13 +498,13 @@ public:
 };
 
 
-// --- Экспортируемые C-функции ---
+// --- Exported C-functions ---
 extern "C" {
     IWallpaperEffectABI* create_effect() {
         return new IcoSphereEffectPlugin(); 
     }
     void destroy_effect(IWallpaperEffectABI* effect) {
-        // static_cast безопасно возвращает нас к классу для вызова деструктора
+        // static_cast safely returns us to the class to call the destructor
         delete static_cast<WallpaperEffect*>(effect);
     }
 }

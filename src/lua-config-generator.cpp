@@ -10,7 +10,7 @@
 namespace fs = std::filesystem;
 
 // ==============================================================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// HELPER FUNCTIONS
 // ==============================================================================
 
 std::string LuaConfigGenerator::get_config_dir() {
@@ -24,7 +24,7 @@ std::string LuaConfigGenerator::get_config_dir() {
     return base_dir + "/interactive-wallpaper";
 }
 
-// Превращает "Ico Sphere Effect" в "ico_sphere_effect"
+// Converts "Ico Sphere Effect" to "ico_sphere_effect"
 std::string LuaConfigGenerator::sanitize_filename(std::string name) {
     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
         if (std::isspace(c) || c == '-') return '_';
@@ -33,8 +33,8 @@ std::string LuaConfigGenerator::sanitize_filename(std::string name) {
     return name;
 }
 
-// Конвертирует C-ABI значения (ParamValueABI) в синтаксис языка Lua
-// [NEW] Эта функция теперь работает исключительно с плоскими структурами C, а не с std::variant.
+// Converts C-ABI values (ParamValueABI) to Lua syntax
+// [NEW] This function now works exclusively with flat C-structs, not std::variant.
 std::string LuaConfigGenerator::value_to_lua_string(const ParamValueABI& val) {
     switch (val.type) {
         case ParamType::TYPE_BOOL: 
@@ -48,12 +48,12 @@ std::string LuaConfigGenerator::value_to_lua_string(const ParamValueABI& val) {
                          std::to_string(val.vec3_val[1]) + ", " + 
                          std::to_string(val.vec3_val[2]) + "}";
         case ParamType::TYPE_STRING: 
-            return std::string("\"") + val.s_val + "\""; // Оборачиваем в кавычки для Lua
+            return std::string("\"") + val.s_val + "\""; // Wrap in quotes for Lua
     }
     return "nil";
 }
 
-// Удаляет пробелы по краям строки
+// Trims whitespace from string edges
 static std::string trim(const std::string& str) {
     size_t first = str.find_first_not_of(" \t");
     if (std::string::npos == first) return "";
@@ -62,14 +62,14 @@ static std::string trim(const std::string& str) {
 }
 
 // ==============================================================================
-// ОСНОВНАЯ ЛОГИКА ГЕНЕРАЦИИ
+// MAIN GENERATION LOGIC
 // ==============================================================================
 
 void LuaConfigGenerator::generate_configs(PluginManager& pm) {
     std::string config_dir = get_config_dir();
     fs::path plugins_dir = fs::path(config_dir) / "plugins";
 
-    // Создаем директории, если их нет
+    // Create directories if they do not exist
     fs::create_directories(plugins_dir);
 
     auto available_effects = pm.get_available_effects();
@@ -80,13 +80,13 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm) {
 
     std::cout << "Generating Lua configs in: " << config_dir << std::endl;
 
-    // 1. Создаем главный init.lua (Только если его нет! Мы никогда не затираем логику пользователя)
+    // 1. Create main init.lua (Only if it doesn't exist! Never overwrite user logic)
     fs::path init_lua_path = fs::path(config_dir) / "init.lua";
     if (!fs::exists(init_lua_path)) {
         generate_init_lua(init_lua_path.string(), available_effects[0]);
     }
 
-    // 2. Итерируемся по плагинам и обновляем/создаем их индивидуальные конфиги
+    // 2. Iterate through plugins to update/create their individual configs
     for (const auto& effect_name : available_effects) {
         auto effect = pm.create_effect(effect_name);
         if (!effect) continue;
@@ -140,7 +140,7 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     std::map<std::string, std::string> user_values;
     std::vector<std::string> user_logic;
 
-    // --- ШАГ 1: Парсинг существующего файла (если есть) ---
+    // --- STEP 1: Parse existing file (if any) ---
     if (fs::exists(filepath)) {
         std::ifstream in(filepath);
         std::string line;
@@ -157,8 +157,8 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
             }
 
             if (in_managed) {
-                // Ищем конструкцию вида: p.key = value -- comment
-                // Это примитивный, но надежный парсер для наших нужд.
+                // Looking for pattern: p.key = value -- comment
+                // This is a primitive but reliable parser for our needs.
                 auto dot_pos = line.find("p.");
                 auto eq_pos = line.find("=");
                 
@@ -166,7 +166,7 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
                     std::string key = trim(line.substr(dot_pos + 2, eq_pos - (dot_pos + 2)));
                     std::string rest = line.substr(eq_pos + 1);
                     
-                    // Отрезаем комментарии от значения (ищем '--')
+                    // Strip comments from the value (looking for '--')
                     auto comment_pos = rest.find("--");
                     std::string value;
                     if (comment_pos != std::string::npos) {
@@ -175,13 +175,13 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
                         value = trim(rest);
                     }
                     
-                    // Если значение заканчивается запятой (случайность), отрезаем её
+                    // If the value ends with a trailing comma, remove it
                     if (!value.empty() && value.back() == ',') value.pop_back();
 
                     user_values[key] = value;
                 }
             } else {
-                // Сохраняем свободную логику пользователя (пропуская шаблонный заголовок)
+                // Save user's free logic (skipping the template header)
                 if (line.find("config[\"") == std::string::npos && line.find("local p =") == std::string::npos) {
                     user_logic.push_back(line);
                 }
@@ -189,10 +189,10 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
         }
     }
 
-    // --- ШАГ 2: Генерация обновленного файла ---
+    // --- STEP 2: Generate updated file ---
     std::ofstream out(filepath);
     
-    // Стандартный заголовок
+    // Standard header
     out << "config[\"" << plugin_name << "\"] = config[\"" << plugin_name << "\"] or {}\n";
     out << "local p = config[\"" << plugin_name << "\"]\n\n";
     
@@ -201,8 +201,8 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     out << "-- Не удаляйте маркеры. Изменяйте значения справа от знака '='.\n";
     out << "-- ==============================================================================\n";
 
-    // Записываем актуальные параметры из C++
-    // [NEW] Используем безопасный C-ABI для получения списка параметров плагина.
+    // Write actual parameters from C++
+    // [NEW] Use safe C-ABI to get the plugin parameter list.
     uint32_t count = effect->get_parameter_count();
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI param_info;
@@ -214,18 +214,18 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
         out << "p." << param_name << " = ";
         
         if (user_values.count(param_name)) {
-            // Восстанавливаем то, что написал пользователь
+            // Restore user-modified value
             out << user_values[param_name] << " -- " << param_info.description << "\n";
             user_values.erase(param_name); // Удаляем, чтобы найти DEPRECATED
         } else {
-            // Вставляем новое дефолтное значение
+            // Insert new default value
             out << default_val << " -- [NEW] " << param_info.description << "\n";
         }
     }
 
-    // То, что осталось в user_values, больше не существует в плагине (разработчик удалил или переименовал)
+    // Remainder in user_values no longer exists in the plugin (developer removed or renamed it)
     for (const auto& [dep_key, dep_val] : user_values) {
-        // Защита от дублирования маркера DEPRECATED
+        // Prevent duplicate DEPRECATED markers
         if (dep_key.find("[DEPRECATED]") == std::string::npos) {
             out << "-- [DEPRECATED] p." << dep_key << " = " << dep_val << " -- Удалено в новой версии\n";
         }
@@ -234,8 +234,8 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     out << "-- <<< END MANAGED PARAMS >>>\n";
     out << "-- ==============================================================================\n";
 
-    // --- ШАГ 3: Восстановление пользовательской свободной логики ---
-    // Убираем пустые строки в начале сохраненной логики
+    // --- STEP 3: Restore user's custom logic ---
+    // Remove empty lines at the beginning of the saved logic
     while (!user_logic.empty() && trim(user_logic.front()).empty()) {
         user_logic.erase(user_logic.begin());
     }

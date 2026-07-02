@@ -3,7 +3,7 @@
 #include <iostream>
 #include <filesystem>
 #include <map>
-#include "data-provider.hpp" // Теперь подключает SDK-обертку (IProviderABI)
+#include "data-provider.hpp" // Now includes the SDK wrapper (IProviderABI)
 
 namespace fs = std::filesystem;
 
@@ -32,17 +32,17 @@ bool LuaEngine::load() {
     fs::path plugins_dir = fs::path(dir) / "plugins";
     fs::path init_lua_path = fs::path(dir) / "init.lua";
 
-    // 1. Полностью очищаем состояние (полезно при hot-reload)
+    // 1. Completely clear the state (useful for hot-reload)
     lua = sol::state();
     
-    // 2. Открываем стандартные безопасные библиотеки Lua
+    // 2. Load standard safe Lua libraries
     lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, sol::lib::string, sol::lib::table, sol::lib::package);
 
-    // Добавляем директорию конфига в package.path
+    // Add config directory to package.path
     std::string package_path = lua["package"]["path"];
     lua["package"]["path"] = package_path + ";" + dir + "/?.lua";
 
-    // 3. Создаем глобальные таблицы, чтобы скрипты не падали
+    // 3. Create global tables to prevent script crashes on missing globals
     lua["config"] = lua.create_table();
     
     sol::table core = lua.create_table();
@@ -53,14 +53,14 @@ bool LuaEngine::load() {
     core["utils"] = utils;
     core["debug"] = debug;
 
-    // Заново привязываем C++ API к свежесозданному sol::state!
+    // Rebind the C++ API to the newly created sol::state!
     if (current_core) {
         bind_core_api(current_core);
     }
 
-    // --- РЕГИСТРАЦИЯ СИСТЕМЫ ПРЕСЕТОВ ---
+    // --- PRESET SYSTEM REGISTRATION ---
     utils["apply_preset"] = [this](sol::table target, const std::string& plugin_name, const std::string& preset_name) {
-        // Функция sanitize_plugin_name должна быть объявлена выше в этом же файле
+        // Function sanitize_plugin_name must be declared above in this file
         std::string preset_path = this->get_config_dir() + "/presets/" + sanitize_plugin_name(plugin_name) + "/" + preset_name + ".lua";
         
         if (!fs::exists(preset_path)) {
@@ -69,11 +69,11 @@ bool LuaEngine::load() {
         }
         
         try {
-            // Выполняем файл пресета (он должен вернуть Lua-таблицу)
+            // Execute the preset file (it must return a Lua table)
             sol::protected_function_result result = lua.script_file(preset_path);
             if (result.valid() && result.get_type() == sol::type::table) {
                 sol::table preset_data = result;
-                // Shallow merge: копируем ключи из пресета в целевую таблицу эффекта
+                // Shallow merge: copy keys from the preset to the target effect table
                 for (auto& kv : preset_data) {
                     target[kv.first] = kv.second;
                 }
@@ -87,7 +87,7 @@ bool LuaEngine::load() {
     };
 
     try {
-        // 4. Сначала исполняем все автосгенерированные конфиги плагинов (conf.d)
+        // 4. First, execute all auto-generated plugin configs (conf.d style)
         if (fs::exists(plugins_dir) && fs::is_directory(plugins_dir)) {
             for (const auto& entry : fs::directory_iterator(plugins_dir)) {
                 if (entry.path().extension() == ".lua") {
@@ -96,7 +96,7 @@ bool LuaEngine::load() {
             }
         }
 
-        // 5. Затем исполняем главный init.lua (Логика пользователя)
+        // 5. Then execute the main init.lua (User logic overrides)
         if (fs::exists(init_lua_path)) {
             lua.script_file(init_lua_path.string());
         } else {
@@ -114,14 +114,14 @@ bool LuaEngine::load() {
     }
 }
 
-// --- РЕАЛИЗАЦИЯ КОНФИГУРАЦИИ ПРОВАЙДЕРОВ ---
-// [ABI UPDATE]: Теперь мы принимаем безопасный IDataProviderABI*
+// --- PROVIDER CONFIGURATION IMPLEMENTATION ---
+// [ABI UPDATE]: Now accepting safe IDataProviderABI*
 bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     if (!provider) return false;
 
-    // БЕЗОПАСНОЕ чтение: проверяем, что объект существует и является таблицей
+    // SAFE read: ensure the object exists and is a table
     sol::object core_obj = lua["core"];
-    if (!core_obj.is<sol::table>()) return true; // Если нет, провайдер включен по умолчанию
+    if (!core_obj.is<sol::table>()) return true; // If not, provider is enabled by default
     sol::table core = core_obj.as<sol::table>();
 
     sol::object providers_obj = core["providers"];
@@ -132,11 +132,11 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     if (!p_conf_obj.is<sol::table>()) return true;
     sol::table p_conf = p_conf_obj.as<sol::table>();
 
-    // Проверяем флаг включения
+    // Check the 'enabled' flag
     bool enabled = p_conf.get_or("enabled", true);
     if (!enabled) return false;
 
-    // [ABI UPDATE]: Извлекаем ожидаемые типы параметров провайдера через C-API
+    // [ABI UPDATE]: Extract expected provider parameter types via C-API
     std::map<std::string, ParamType> expected_types;
     uint32_t count = provider->get_parameter_count();
     for (uint32_t i = 0; i < count; ++i) {
@@ -145,7 +145,7 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
         expected_types[info.name] = info.default_value.type;
     }
 
-    // Применяем значения из Lua
+    // Apply values from Lua
     for (const auto& kv : p_conf) {
         if (!kv.first.is<std::string>()) continue;
         std::string key = kv.first.as<std::string>();
@@ -160,8 +160,8 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
         abi_val.type = expected_type;
 
         try {
-            // [ВНИМАНИЕ]: Эта строка должна жить до конца итерации. 
-            // Это позволяет безопасно передать сырой указатель .c_str() через границу ABI.
+            // [WARNING]: This string must survive until the end of the iteration. 
+            // This allows safely passing the raw .c_str() pointer across the ABI boundary.
             std::string temp_str;
 
             if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
@@ -184,28 +184,28 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     return true;
 }
 
-// --- РЕАЛИЗАЦИЯ DEBUG API ---
-// [ABI UPDATE]: Принимаем ICoreContextABI*
+// --- DEBUG API IMPLEMENTATION ---
+// [ABI UPDATE]: Accepting ICoreContextABI*
 void LuaEngine::bind_core_api(ICoreContextABI* core) {
     if (!core) return;
-    current_core = core; // Сохраняем для использования в clear_timers()
+    current_core = core; // Save for use in clear_timers()
     
     if (lua["core"].get_type() == sol::type::none) {
         lua["core"] = lua.create_table();
     }
     sol::table core_table = lua["core"];
     
-    // 1. API записи в BlackBoard из Lua (остается как обсуждали)
+    // 1. Write to BlackBoard from Lua API
     core_table["set_string"] = [core](const std::string& key, const std::string& val) {
-        // [ABI UPDATE]: Вызываем безопасные C-методы, передавая const char*
+        // [ABI UPDATE]: Call safe C-methods, passing const char*
         core->get_blackboard()->set_string(key.c_str(), val.c_str());
     };
 
-    // 2. Создание таймера. Возвращает ID (файл-дескриптор)
+    // 2. Create timer. Returns ID (file descriptor)
     core_table["set_interval"] = [this](int ms, sol::protected_function callback) -> int {
         if (ms <= 0 || !callback.valid() || !current_core) return -1;
 
-        // Создаем неблокирующий таймер
+        // Create a non-blocking timer
         int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
         if (tfd == -1) {
             std::cerr << "[LuaEngine] Failed to create timerfd: " << strerror(errno) << std::endl;
@@ -223,11 +223,11 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             return -1;
         }
 
-        // [ABI FIX / LEAK FIX]: 
-        // Мы сохраняем C++ лямбду в std::unordered_map (active_timers) внутри самого LuaEngine.
-        // Это гарантирует, что память под лямбду не утечет, и она будет уничтожена при удалении таймера.
+        // [ABI / MEMORY LEAK FIX]: 
+        // We store the C++ lambda in a std::unordered_map (active_timers) inside the LuaEngine.
+        // This guarantees the memory for the lambda won't leak and will be destroyed when the timer is canceled.
         active_timers[tfd] = [this, tfd, callback](uint32_t events) {
-            // [ЗАЩИТА]: Если таймер был отменен (или идет hot-reload), игнорируем
+            // [SAFETY]: If the timer was canceled (or during hot-reload), ignore the event
             if (active_timers.find(tfd) == active_timers.end()) return;
 
             uint64_t expirations;
@@ -244,9 +244,9 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             }
         };
 
-        // Регистрируем в epoll Ядра через ABI-совместимый интерфейс.
-        // Мы передаем указатель на сохраненную в мапе лямбду (&active_timers[tfd]) как user_data.
-        // Стандарт C++ гарантирует, что указатели на элементы std::unordered_map не инвалидируются при вставке других элементов!
+        // Register in the Core's epoll via the ABI-compatible interface.
+        // We pass the pointer to the stored lambda (&active_timers[tfd]) as user_data.
+        // The C++ standard guarantees that pointers to std::unordered_map elements are not invalidated upon insertion!
         current_core->register_epoll_fd(tfd, [](uint32_t events, void* user_data) {
             auto* cb = static_cast<std::function<void(uint32_t)>*>(user_data);
             if (cb && *cb) {
@@ -254,26 +254,26 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             }
         }, &active_timers[tfd]);
 
-        return tfd; // Отдаем Lua дескриптор в качестве ID таймера
+        return tfd; // Return the descriptor to Lua as the timer ID
     };
 
-    // 3. Отмена таймера (по ID)
+    // 3. Cancel timer (by ID)
     core_table["clear_interval"] = [this](int tfd) {
         if (tfd < 0) return;
         
-        // [ABI FIX]: Метод erase() автоматически вызывает деструктор std::function, 
-        // полностью очищая память.
+        // [ABI FIX]: The erase() method automatically calls the std::function destructor, 
+        // completely freeing the memory.
         if (active_timers.erase(tfd)) {
             if (current_core) {
-                current_core->unregister_epoll_fd(tfd); // Убираем из epoll
+                current_core->unregister_epoll_fd(tfd); // Unregister from epoll
             }
-            close(tfd); // Закрываем дескриптор ядра Linux
+            close(tfd); // Close Linux file descriptor
         }
     };
 }
 
 void LuaEngine::clear_timers() {
-    // [ABI UPDATE]: active_timers теперь map, поэтому итерируемся по парам (key, value)
+    // [ABI UPDATE]: active_timers is now a map, iterate by key-value pairs
     for (auto& pair : active_timers) {
         int tfd = pair.first;
         if (current_core) {
@@ -286,7 +286,7 @@ void LuaEngine::clear_timers() {
 
 bool LuaEngine::reload() {
     std::cout << "[LuaEngine] Clearing active timers before reload..." << std::endl;
-    clear_timers(); // Обязательно вычищаем системные таймеры и epoll перед убийством sol::state
+    clear_timers(); // Mandatory: clear system timers and epoll before destroying sol::state
     return load();
 }
 
@@ -306,7 +306,7 @@ bool LuaEngine::is_interactive() const {
     return true;
 }
 
-// [ABI UPDATE]: Теперь мы принимаем безопасный IWallpaperEffectABI*
+// [ABI UPDATE]: Now accepting safe IWallpaperEffectABI*
 void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::string& effect_name) {
     if (!effect) return;
 
@@ -316,8 +316,8 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::st
     sol::table effect_settings = config[effect_name];
     if (!effect_settings.valid()) return;
 
-    // [ABI UPDATE]: Получаем типы параметров, которые ОЖИДАЕТ плагин через C-интерфейс.
-    // Это защита от падения, так как в Lua числа не типизированы жестко.
+    // [ABI UPDATE]: Get expected parameter types from the plugin via C-interface.
+    // This protects against crashes, as Lua numbers are dynamically typed.
     std::map<std::string, ParamType> expected_types;
     uint32_t count = effect->get_parameter_count();
     for (uint32_t i = 0; i < count; ++i) {
@@ -326,7 +326,7 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::st
         expected_types[info.name] = info.default_value.type; 
     }
 
-    // Итерируемся по Lua-таблице плагина
+    // Iterate through the plugin's Lua table
     for (const auto& key_value_pair : effect_settings) {
         if (!key_value_pair.first.is<std::string>()) continue;
         
@@ -335,7 +335,7 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::st
 
         auto it = expected_types.find(key);
         if (it == expected_types.end()) {
-            // Плагин не знает такой параметр (возможно, устарел)
+            // Plugin does not recognize this parameter (possibly deprecated)
             continue;
         }
 
@@ -344,16 +344,16 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::st
         abi_val.type = expected_type;
 
         try {
-            // [ВНИМАНИЕ]: Временная строка для сохранения контекста памяти во время вызова C-функции.
-            // Она будет уничтожена только после выхода из блока try, что гарантирует
-            // валидность указателя abi_val.s_val внутри плагина во время вызова set_parameter.
+            // [WARNING]: Temporary string to preserve memory context during C-function call.
+            // It will only be destroyed after exiting the try block, ensuring
+            // pointer validity for abi_val.s_val inside the plugin during set_parameter.
             std::string temp_str;
 
             if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
                 abi_val.b_val = val.as<bool>();
                 effect->set_parameter(key.c_str(), &abi_val);
             } 
-            else if (expected_type == ParamType::TYPE_INT && val.is<double>()) { // В Lua все числа double
+            else if (expected_type == ParamType::TYPE_INT && val.is<double>()) { // In Lua, all numbers are double
                 abi_val.i_val = val.as<int>();
                 effect->set_parameter(key.c_str(), &abi_val);
             } 
@@ -363,7 +363,7 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::st
             } 
             else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
                 sol::table t = val.as<sol::table>();
-                // Проверяем, что это массив из 3 элементов
+                // Verify it's an array of 3 elements
                 if (t.size() >= 3) {
                     abi_val.vec3_val[0] = t.get_or(1, 0.0f);
                     abi_val.vec3_val[1] = t.get_or(2, 0.0f);
@@ -373,7 +373,7 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, const std::st
             }
             else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
                 temp_str = val.as<std::string>();
-                abi_val.s_val = temp_str.c_str(); // Безопасное присвоение
+                abi_val.s_val = temp_str.c_str(); // Safe assignment
                 effect->set_parameter(key.c_str(), &abi_val);
             }
         } catch (const sol::error& e) {

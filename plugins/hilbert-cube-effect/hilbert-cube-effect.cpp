@@ -18,15 +18,15 @@ HilbertCubeEffect::~HilbertCubeEffect() {
     cleanup();
 }
 
-// --- Алгоритм генерации 3D-кривой Гильберта (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
+// --- 3D Hilbert Curve Generation Algorithm (CORRECTED VERSION) ---
 
 void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
                                  int order, std::vector<glm::vec3>& vertices)
 {
-    // Условие выхода из рекурсии: генерируем базовый сегмент кривой.
+    // Base case for recursion: generate the base curve segment.
     if (order <= 1) {
-        // Добавляем 8 вершин в порядке, формирующем базовый элемент кривой.
-        // Путь проходит по ребрам куба.
+        // Add 8 vertices in order, forming the base curve element.
+        // The path follows the edges of the cube.
         vertices.push_back(start);
         vertices.push_back(start + a);
         vertices.push_back(start + a + b);
@@ -36,16 +36,16 @@ void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, co
         vertices.push_back(start + a + c);
         vertices.push_back(start + c);
     } else {
-        // Рекурсивный шаг: делим куб на 8 меньших под-кубов и вызываем hilbert3D для каждого,
-        // соответствующим образом трансформируя (смещая, поворачивая и отражая) их системы координат.
+        // Recursive step: divide cube into 8 smaller sub-cubes and call hilbert3D for each,
+        // transforming (translating, rotating, reflecting) their coordinate systems accordingly.
 
-        // Эта специфическая реализация использует нестандартный масштабный коэффициент 1/3,
-        // который был подобран для получения нужного визуального результата.
+        // This specific implementation uses a non-standard 1/3 scale factor,
+        // which was chosen to achieve the desired visual result.
         const glm::vec3 a_s = a / 3.0f;
         const glm::vec3 b_s = b / 3.0f;
         const glm::vec3 c_s = c / 3.0f;
 
-        // Предварительно вычисляем начальные точки для 8 рекурсивных вызовов.
+        // Pre-calculate starting points for the 8 recursive calls.
         const glm::vec3 p0 = start;
         const glm::vec3 p1 = start + a * (2.0f / 3.0f);
         const glm::vec3 p2 = start + (a + b) * (2.0f / 3.0f);
@@ -55,7 +55,7 @@ void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, co
         const glm::vec3 p6 = start + c + b_s + a_s * 2.0f;
         const glm::vec3 p7 = start + c + a_s;
 
-        // 8 рекурсивных вызовов с трансформированными осями
+        // 8 recursive calls with transformed axes
         hilbert3D(p0,  b_s,  c_s,  a_s, order - 1, vertices);
         hilbert3D(p1,  c_s,  a_s,  b_s, order - 1, vertices);
         hilbert3D(p2,  c_s,  a_s,  b_s, order - 1, vertices);
@@ -122,7 +122,7 @@ void HilbertCubeEffect::generate_cube_outline() {
 bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
     if (program) return true;
 
-    // ПРИВЯЗКА ПАМЯТИ
+    // BIND MEMORY
     p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
     p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
 
@@ -155,7 +155,7 @@ void HilbertCubeEffect::update_rotation(float dt) {
 }
 
 void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
-    // === БЕЗОПАСНАЯ ЛОГИКА ЧТЕНИЯ МЫШИ (Delta-calc) ===
+    // === SAFE MOUSE READING LOGIC (Delta-calc) ===
     if (p_accum_x && p_accum_y) {
         float current_x = *p_accum_x;
         float current_y = *p_accum_y;
@@ -205,12 +205,12 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
     glUniformMatrix4fv(u_view, 1, GL_FALSE, &view[0][0]);
     glUniformMatrix4fv(u_projection, 1, GL_FALSE, &projection[0][0]);
     
-    // 1. Рисуем кривую Гильберта
+    // 1. Draw Hilbert curve
     glUniform3fv(u_line_color, 1, &curve_color[0]);
     glBindVertexArray(curve_vao);
     glDrawArrays(GL_LINE_STRIP, 0, curve_vertex_count);
 
-    // 2. Рисуем контур куба (если включено)
+    // 2. Draw cube outline (if enabled)
     if (draw_cube_outline) {
         glUniform3fv(u_line_color, 1, &cube_color[0]);
         glBindVertexArray(cube_vao);
@@ -233,7 +233,7 @@ void HilbertCubeEffect::cleanup() {
 
 
 
-// --- Интерфейс плагина ---
+// --- Plugin Interface ---
 const char* HilbertCubeEffect::get_name() const {
     return "Hilbert Cube";
 }
@@ -272,7 +272,7 @@ void HilbertCubeEffect::set_parameter(const std::string& name, const EffectParam
     }
 }
 
-// --- Экспортируемые C-функции ---
+// --- Exported C-functions ---
 extern "C" {
     IWallpaperEffectABI* create_effect() {
         return new HilbertCubeEffect(); 

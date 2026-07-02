@@ -1,9 +1,9 @@
 #pragma once
 #include <cstdint>
 
-// Структура естественно выровнена по 4 байта, pack(1) не нужен.
+// The structure is naturally 4-byte aligned, pack(1) is not needed.
 struct AudioData {
-    uint32_t magic = 0x41554431; // Магическое число "AUD1" 
+    uint32_t magic = 0x41554431; // Magic number "AUD1" 
     float volume = 0.0f;
     float bass = 0.0f;
     float mid = 0.0f;

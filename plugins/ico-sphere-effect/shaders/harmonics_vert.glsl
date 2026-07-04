@@ -6,6 +6,8 @@ precision highp float;
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in float aPhase; 
 layout (location = 2) in vec3 aNormal; 
+layout (location = 3) in vec3 aBary;
+
 
 // --- Стандартные матрицы ---
 uniform mat4 model;      
@@ -38,6 +40,7 @@ uniform float audio_treble;
 uniform float audio_bands[64];
 
 out vec3 FragPos; 
+out vec3 vBary;
 
 // ============================================================================
 // 1. БИБЛИОТЕКА СФЕРИЧЕСКОЙ ФИЗИКИ
@@ -212,6 +215,8 @@ void main()
     // Выталкиваем вершину вдоль нормали
     vec3 displacedPos = scaledPos + normPos * total_disp;
     
+    vBary = aBary;
+
     FragPos = vec3(model * vec4(displacedPos, 1.0));
     gl_Position = projection * view * vec4(FragPos, 1.0);
 }

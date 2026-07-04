@@ -21,6 +21,8 @@
 
 #include "lua-engine.hpp"
 
+#include <chrono>
+
 // Internal components (legacy input daemons are removed)
 #include "core-context.hpp"    // Core Interface & BlackBoard
 #include "wallpaper-effect.hpp" // Visual plugin interfaces
@@ -50,6 +52,8 @@ public:
         InteractiveWallpaper* parent = nullptr;
         std::string name;
         std::string identifier;
+
+        std::chrono::steady_clock::time_point last_frame_time = std::chrono::steady_clock::now();
         
         // Wayland objects
         wl_output* output_obj = nullptr;
@@ -151,7 +155,7 @@ private:
     int inotify_fd = -1;
 
     PluginManager* plugin_manager_ = nullptr;
-    std::string current_effect_name_;
+    std::string default_effect_name_;
 
     LuaEngine& lua_engine;
 

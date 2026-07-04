@@ -32,18 +32,26 @@ int main(int argc, char** argv) {
             fs::path target_presets = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/presets";
             fs::create_directories(target_presets);
             
-            // Find all "presets" folders inside the plugin installation directory
-            for (const auto& entry : fs::recursive_directory_iterator(plugin_dir)) {
-                if (entry.is_directory() && entry.path().filename() == "presets") {
-                    // Parent folder name (plugin name, e.g., ico-sphere-effect)
-                    std::string plugin_folder_name = entry.path().parent_path().filename().string();
-                    // Ensure sanitize_plugin_name (underscores) works correctly:
-                    std::replace(plugin_folder_name.begin(), plugin_folder_name.end(), '-', '_');
+            std::error_code ec;
+            auto options = std::filesystem::directory_options::skip_permission_denied;
+            
+            for (const auto& entry : fs::recursive_directory_iterator(plugin_dir, options, ec)) {
+                if (entry.is_directory(ec) && entry.path().filename() == "presets") {
                     
-                    fs::path dest = target_presets / plugin_folder_name;
-                    // Copy and update existing files
-                    fs::copy(entry.path(), dest, fs::copy_options::recursive | fs::copy_options::update_existing);
-                    std::cout << "Copied presets for: " << plugin_folder_name << std::endl;
+                    std::string raw_folder_name = entry.path().parent_path().filename().string();
+                    
+                    // Санитайзим имя папки (заменяем тире на подчеркивания),
+                    // чтобы оно совпало с тем, что ожидает Lua Engine.
+                    std::string safe_name = raw_folder_name;
+                    std::replace(safe_name.begin(), safe_name.end(), '-', '_');
+                    
+                    fs::path dest = target_presets / safe_name;
+                    
+                    fs::copy(entry.path(), dest, fs::copy_options::recursive | fs::copy_options::update_existing, ec);
+                    
+                    if (!ec) {
+                        std::cout << "Copied presets for [" << raw_folder_name << "] -> " << safe_name << std::endl;
+                    }
                 }
             }
         } catch(const std::exception& e) {

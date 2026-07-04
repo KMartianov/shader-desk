@@ -101,17 +101,40 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm) {
     std::cout << "Config generation completed successfully!" << std::endl;
 }
 
+
 void LuaConfigGenerator::generate_init_lua(const std::string& filepath, const std::string& default_effect) {
     std::ofstream out(filepath);
     out << "-- ~/.config/interactive-wallpaper/init.lua\n";
     out << "-- Это ГЛАВНЫЙ конфигурационный файл. Сюда можно писать любую Lua логику.\n\n";
     
-    out << "-- 1. Настройки Ядра\n";
+    out << "-- ==============================================================================\n";
+    out << "-- 1. НАСТРОЙКИ ЯДРА (Базовые параметры)\n";
+    out << "-- ==============================================================================\n";
     out << "core = core or {}\n";
-    out << "core.active_effect = \"" << default_effect << "\"\n";
+    out << "core.default_effect = \"" << default_effect << "\" -- Эффект по умолчанию для всех мониторов\n";
     out << "core.interactive = true\n\n";
 
-    out << "-- 2. Настройки Провайдеров Данных (Smart Providers)\n";
+    out << "-- ==============================================================================\n";
+    out << "-- 2. МУЛЬТИМОНИТОРНАЯ КОНФИГУРАЦИЯ (Per-Output Routing)\n";
+    out << "-- Раскомментируйте и настройте под имена ваших экранов (например: DP-1, HDMI-A-1)\n";
+    out << "-- ==============================================================================\n";
+    out << "-- core.outputs = {\n";
+    out << "--     [\"DP-1\"] = {\n";
+    out << "--         effect = \"" << default_effect << "\",\n";
+    out << "--         settings = {\n";
+    out << "--             wireframe_mode = true,\n";
+    out << "--             sphere_scale = 1.0\n";
+    out << "--         }\n";
+    out << "--     },\n";
+    out << "--     [\"HDMI-A-1\"] = {\n";
+    out << "--         effect = \"Simple Wave Effect\",\n";
+    out << "--         settings = { speed = 2.0 }\n";
+    out << "--     }\n";
+    out << "-- }\n\n";
+
+    out << "-- ==============================================================================\n";
+    out << "-- 3. НАСТРОЙКИ ПРОВАЙДЕРОВ ДАННЫХ (Smart Providers)\n";
+    out << "-- ==============================================================================\n";
     out << "core.providers = {\n";
     out << "    [\"Evdev Pointer Provider\"] = {\n";
     out << "        enabled = true,\n";
@@ -124,15 +147,26 @@ void LuaConfigGenerator::generate_init_lua(const std::string& filepath, const st
     out << "        enabled = true,\n";
     out << "        smoothing = 0.85,\n";
     out << "        volume_multiplier = 1.0,\n";
-    out << "        bass_multiplier = 1.0,\n";
+    out << "        bass_multiplier = 1.2,\n";
     out << "        mid_multiplier = 1.0,\n";
-    out << "        treble_multiplier = 1.0\n";
+    out << "        treble_multiplier = 1.2\n";
     out << "    }\n";
     out << "}\n\n";
 
-    out << "-- 3. Переопределение настроек плагинов (Свободная логика)\n";
-    out << "-- Файлы плагинов из папки `plugins/` загружаются автоматически ДО этого файла.\n";
-    out << "-- Поэтому вы можете безопасно переопределять их значения здесь.\n";
+    out << "-- ==============================================================================\n";
+    out << "-- 4. ПОКАДРОВАЯ АНИМАЦИЯ И АУДИО-РЕАКТИВНОСТЬ (60/144 Гц)\n";
+    out << "-- ==============================================================================\n";
+    out << "-- core.on_frame(function(dt, output_name)\n";
+    out << "--     -- Читаем бас из шины данных без задержек:\n";
+    out << "--     local bass = core.get_float(\"audio.bass\", 0.0)\n";
+    out << "--     \n";
+    out << "--     -- Динамически меняем масштаб сферы под музыку:\n";
+    out << "--     local p = config[\"" << default_effect << "\"]\n";
+    out << "--     if p then\n";
+    out << "--         p.sphere_scale = 1.0 + (bass * 0.5)\n";
+    out << "--     end\n";
+    out << "-- end)\n";
+    
     out.close();
 }
 

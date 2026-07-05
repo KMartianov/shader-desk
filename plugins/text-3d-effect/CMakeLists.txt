@@ -1,51 +1,45 @@
-# plugins/text-3d-effect/CMakeLists.txt
 cmake_minimum_required(VERSION 3.13)
-project(text-3d-effect-plugin LANGUAGES CXX)
 
-# --- Находим зависимости плагина ---
+set(PLUGIN_NAME "text-3d-effect")
+
+project(${PLUGIN_NAME}-plugin LANGUAGES CXX)
+
+# --- Системные зависимости ---
 find_package(glm REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
 
-# --- Исходные файлы плагина ---
-# Включаем только .cpp, так как stb_truetype.h — это header-only библиотека
-set(PLUGIN_SOURCES
-    "text-3d-effect.cpp"
-)
+# --- ПОДКЛЮЧЕНИЕ СИСТЕМНОГО SDK ЯДРА ---
+find_package(ShaderDesk REQUIRED)
 
-# --- Создаем плагин как разделяемую библиотеку (.so) ---
-add_library(text-3d-effect SHARED ${PLUGIN_SOURCES})
+# --- Сборка библиотеки ---
+add_library(${PLUGIN_NAME} SHARED "${PLUGIN_NAME}.cpp")
+set_target_properties(${PLUGIN_NAME} PROPERTIES 
+    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+) # Убирает "lib" из имени (libname.so -> name.so)
 
-# --- Настройка путей и имени (убираем префикс lib) ---
-set_target_properties(text-3d-effect PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${PLUGIN_OUTPUT_DIR}"
-    PREFIX "" 
-)
+# Позволяет плагину инклудить локальные файлы (например, stb_truetype.h в text-3d-effect)
+target_include_directories(${PLUGIN_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
-# --- Подключаем заголовочные файлы ---
-# ${CMAKE_SOURCE_DIR} гарантирует доступ к заголовочным файлам Ядра (src/)
-target_include_directories(text-3d-effect PRIVATE
-    "${CMAKE_SOURCE_DIR}/src"
-    ${GLESv2_INCLUDE_DIRS}
-    "${CMAKE_CURRENT_SOURCE_DIR}" # Чтобы компилятор нашел stb_truetype.h
-)
-
-# --- Линкуем библиотеки ---
-target_link_libraries(text-3d-effect PRIVATE
+# --- Линковка (Критически важный шаг) ---
+target_link_libraries(${PLUGIN_NAME} PRIVATE
+    ShaderDesk::shader_desk_sdk    # Дает доступ к <shader-desk/wallpaper-effect.hpp>
+    ShaderDesk::shader_utils       # Дает доступ к утилитам загрузки шейдеров
     glm::glm
     ${GLESv2_LIBRARIES}
-    shader_utils
 )
 
-# --- Автоматическое копирование шейдеров при сборке ---
+# --- Автоматическое копирование шейдеров в папку сборки ---
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+    set(SHADER_DEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders/${PLUGIN_NAME}")
+    
     add_custom_command(
-        TARGET text-3d-effect POST_BUILD
+        TARGET ${PLUGIN_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_DEST_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-                "${PLUGIN_OUTPUT_DIR}/shaders/text-3d-effect"
-        COMMENT "Copying text-3d-effect shaders"
+                "${SHADER_DEST_DIR}"
+        COMMENT "Copying shaders to ${SHADER_DEST_DIR}"
     )
 endif()
-
-message(STATUS "Configured plugin: text-3d-effect")

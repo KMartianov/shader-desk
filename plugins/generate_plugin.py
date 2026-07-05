@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import re
-import os
 import argparse
 import json
 from pathlib import Path
@@ -23,7 +22,7 @@ TYPE_MAP = {
     'bool': {
         'cpp_type': 'bool',
         'variant_type': 'bool',
-        'gl_uniform_func': 'glUniform1i',  # Bools are sent as integers
+        'gl_uniform_func': 'glUniform1i',  # Bools are sent as integers to GLSL
         'default_value_parser': lambda v: v.lower() in ['true', '1'],
     },
     'vec3': {
@@ -77,7 +76,7 @@ def find_shaders(shader_dir: Path) -> Tuple[Path | None, Path | None]:
             print(f.name)
     
     if not vert_shader:
-        print("Info: No vertex shader (.vert, .glsl) found. Will use a default.")
+        print("Info: No vertex shader (.vert, .glsl) found. Will use a default fullscreen quad vertex shader.")
     if not frag_shader:
         print("Error: Fragment shader (.frag) is required but not found.")
         return None, None
@@ -126,7 +125,7 @@ def fill_template(template_content: str, placeholders: Dict[str, str]) -> str:
     return template_content
 
 def main():
-    parser = argparse.ArgumentParser(description="Generates C++ plugin files inside a plugin directory from annotated GLSL shaders.")
+    parser = argparse.ArgumentParser(description="Generates C++ standalone plugin files from annotated GLSL shaders.")
     parser.add_argument("plugin_dir", type=Path, help="Path to the plugin directory. Should contain a 'shaders/' subdirectory.")
     parser.add_argument("--list-params", action="store_true", help="List shader parameters as JSON and exit.")
     args = parser.parse_args()
@@ -174,12 +173,21 @@ def main():
         "FRAG_SHADER_FILENAME": frag_shader_path.name,
     }
     
+    # --- Resolve Template Directory (Local vs System-wide installation) ---
+    local_templates = Path(__file__).parent / "templates"
+    system_templates = Path("/usr/share/shader-desk/templates")
+    
+    if local_templates.is_dir():
+        templates_dir = local_templates
+    elif system_templates.is_dir():
+        templates_dir = system_templates
+    else:
+        print("Error: Templates directory not found! Expected at local ./templates or /usr/share/shader-desk/templates")
+        return
+
     # --- Generate Code and Fill Templates ---
     code_snippets = generate_code_snippets(params)
     placeholders.update(code_snippets)
-    
-    script_dir = Path(__file__).parent
-    templates_dir = script_dir / "templates"
     
     files_to_generate = {
         "plugin.hpp.template": args.plugin_dir / placeholders["HEADER_FILENAME"],
@@ -187,7 +195,7 @@ def main():
         "CMakeLists.txt.template": args.plugin_dir / "CMakeLists.txt",
     }
     
-    print(f"Generating plugin '{effect_name}' in directory '{args.plugin_dir}'...")
+    print(f"Generating standalone plugin '{effect_name}' in directory '{args.plugin_dir}'...")
 
     for template_name, output_path in files_to_generate.items():
         try:
@@ -213,16 +221,16 @@ def main():
                     if p['type'] == 'bool':
                         val = 'true' if val else 'false'
                     elif p['type'] == 'vec3':
-                        # Преобразуем glm::vec3(...) в Lua таблицу {...}
+                        # Convert glm::vec3(...) to Lua table format {...}
                         val = str(val).replace('glm::vec3(', '{').replace(')', '}').replace('f', '')
                     f.write(f"    {p['name']} = {val}, -- {p['description']}\n")
                 f.write("}\n")
-            print(f"  ✓ Created preset: {default_preset_file}")
+            print(f"  ✓ Created default preset: {default_preset_file}")
         except Exception as e:
             print(f"  ✗ Error generating default preset: {e}")
 
     print("\nGeneration complete!")
-    print(f"Next step: Add 'add_subdirectory({args.plugin_dir.name})' to your main plugins/CMakeLists.txt")
+    print(f"Next step: Run 'cd {args.plugin_dir} && mkdir build && cd build && cmake .. && make' to compile your plugin.")
 
 if __name__ == "__main__":
     main()

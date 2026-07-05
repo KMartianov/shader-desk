@@ -88,25 +88,29 @@ bool LuaEngine::load() {
 
     // --- PRESET SYSTEM REGISTRATION ---
     utils["apply_preset"] = [this](sol::table target, const std::string& plugin_name, const std::string& preset_name) {
-        std::string preset_path = this->get_config_dir() + "/presets/" + sanitize_plugin_name(plugin_name) + "/" + preset_name + ".lua";
+        if (!current_core) return;
+
+        // Запрашиваем путь к бандлу у Ядра через C-ABI
+        std::string bundle_dir = current_core->get_bundle_path(plugin_name.c_str());
+        if (bundle_dir.empty()) {
+            std::cerr << "\033[33m[Warning] Bundle not found for: " << plugin_name << "\033[0m\n";
+            return;
+        }
+
+        // Путь к пресету: .../effects/<bundle>/presets/<preset>.lua
+        std::string preset_path = bundle_dir + "/presets/" + preset_name + ".lua";
         
         if (!fs::exists(preset_path)) {
-            std::cout << "\033[33m[Warning] Preset not found: " << preset_path << "\033[0m\n";
+            std::cout << "\033[33m[Warning] Preset not found in bundle: " << preset_path << "\033[0m\n";
             return;
         }
         
         try {
-            // Execute the preset file (it must return a Lua table)
             sol::protected_function_result result = lua.script_file(preset_path);
             if (result.valid() && result.get_type() == sol::type::table) {
                 sol::table preset_data = result;
-                
-                // ИСПОЛЬЗУЕМ НАДЕЖНЫЙ C++ DEEP MERGE
                 this->merge_preset_into_target(target, preset_data);
-                
-                std::cout << "  -> Applied preset '" << preset_name << "' to '" << plugin_name << "'\n";
-            } else {
-                std::cerr << "[Warning] Preset file '" << preset_name << "' did not return a valid table.\n";
+                std::cout << "  -> Applied preset '" << preset_name << "' from bundle of '" << plugin_name << "'\n";
             }
         } catch (const std::exception& e) {
             std::cerr << "[Error] Failed to load preset: " << e.what() << "\n";

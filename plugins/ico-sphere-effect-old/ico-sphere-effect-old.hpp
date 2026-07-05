@@ -50,7 +50,7 @@ public:
     float get_sphere_scale() const { return sphere_scale; }
 
 protected:
-
+    ICoreContext* m_core = nullptr;
     // --- Shader Management ---
     std::string active_shader = "default"; // Default shader name
     bool needs_shader_reload = true;       // Recompilation flag

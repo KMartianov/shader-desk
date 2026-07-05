@@ -48,8 +48,8 @@ bool PulseColorEffectEffect::initialize(ICoreContext* core, uint32_t width, uint
     if (program != 0) return true;
 
     // Note: shader_utils expects shader names relative to a common shader directory
-    std::string vert_src = shader_utils::load_shader_source("pulse-color-effect/pulse_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source("pulse-color-effect/pulse_frag.glsl");
+    std::string vert_src = shader_utils::load_shader_source(core, get_name(), "pulse_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(core, get_name(), "pulse_frag.glsl");
     if (vert_src.empty() || frag_src.empty()) return false;
 
     program = shader_utils::create_shader_program(vert_src, frag_src);

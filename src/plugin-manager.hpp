@@ -15,6 +15,8 @@ public:
 
     // Scans directory for .so files and loads them
     void discover_plugins();
+    std::string get_bundle_path(const std::string& effect_name) const;
+
     
     /**
      * @brief Инициализирует найденные Data Providers.
@@ -46,4 +48,5 @@ private:
     std::vector<void*> provider_handles;
 
     std::string plugin_directory;
+    std::unordered_map<std::string, std::string> bundle_paths_;
 };

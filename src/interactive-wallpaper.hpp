@@ -96,6 +96,8 @@ public:
     void run();   // Main event loop (zero-latency epoll based)
     void stop();
 
+    const char* get_bundle_path(const char* plugin_name) override;
+
     static void frame_handle_done(void* data, wl_callback* callback, uint32_t time);
     void render_output(Output* output);
 

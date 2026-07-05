@@ -109,6 +109,7 @@ public:
     void trigger_shockwave(const glm::vec3& hit_point);
 
 protected:
+    ICoreContext* m_core = nullptr;
     void update_effect_scaling();
 
     // --- Управление шейдерами ---

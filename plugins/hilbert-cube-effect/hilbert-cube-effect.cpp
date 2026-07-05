@@ -126,8 +126,9 @@ bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t 
     p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
     p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
 
-    std::string vert_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source("hilbert-cube-effect/cube_frag.glsl");
+    std::string vert_src = shader_utils::load_shader_source(core, get_name(), "cube_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(core, get_name(), "cube_frag.glsl");
+    
     if (vert_src.empty() || frag_src.empty()) return false;
 
     program = shader_utils::create_shader_program(vert_src, frag_src);

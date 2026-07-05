@@ -169,6 +169,7 @@ void IcoSphereEffect::update_effect_scaling() {
 }
 
 bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
+    m_core = core;
     if (program != 0) return true;
 
     // --- 1. ПРИВЯЗКА ПАМЯТИ ИЗ BLACKBOARD ---
@@ -266,8 +267,8 @@ bool IcoSphereEffect::reload_shader_program() {
     
     std::cout << "[IcoSphere] Attempting to load shader theme: '" << active_shader << "'" << std::endl;
     
-    std::string vert_src = shader_utils::load_shader_source(base_path + "_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source(base_path + "_frag.glsl");
+    std::string vert_src = shader_utils::load_shader_source(m_core, get_name(), base_path + "_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(m_core, get_name(), base_path + "_frag.glsl");
     
     if (vert_src.empty() || frag_src.empty()) {
         std::cerr << "[IcoSphere] Failed to load shader files for theme: " << active_shader << std::endl;

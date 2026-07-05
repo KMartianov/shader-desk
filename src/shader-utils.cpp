@@ -1,35 +1,47 @@
 // src/shader-utils.cpp
 #include "shader-utils.hpp"
+#include "plugin-abi.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
+#include <filesystem> // <--- ВОТ ЭТОГО НЕ ХВАТАЛО!
+
+namespace fs = std::filesystem;
 
 namespace shader_utils {
 
-std::string load_shader_source(const std::string& relative_path) {
-    // First, try to load from system configuration directory
-    std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/effects/shaders/";
-    std::string filepath = config_dir + relative_path;
-    
-    std::ifstream file(filepath);
+std::string load_shader_source(ICoreContextABI* core, const std::string& plugin_name, const std::string& shader_filename) {
+    std::string bundle_dir;
+    if (core) {
+        bundle_dir = core->get_bundle_path(plugin_name.c_str());
+    }
+
+    // 1. Поиск в папке бандла плагина: .../effects/<bundle>/shaders/<filename>
+    if (!bundle_dir.empty()) {
+        fs::path filepath = fs::path(bundle_dir) / "shaders" / shader_filename;
+        std::ifstream file(filepath);
+        if (file.is_open()) {
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            std::cout << "[ShaderUtils] Loaded shader from bundle: " << filepath << std::endl;
+            return buffer.str();
+        } else {
+            std::cerr << "[ShaderUtils] Warning: Shader not found in bundle path: " << filepath << std::endl;
+        }
+    }
+
+    // 2. Fallback: поиск относительно текущей рабочей директории
+    std::ifstream file(shader_filename);
     if (file.is_open()) {
         std::stringstream buffer;
         buffer << file.rdbuf();
-        std::cout << "Loaded shader from: " << filepath << std::endl;
+        std::cout << "[ShaderUtils] Loaded shader from local path: " << shader_filename << std::endl;
         return buffer.str();
     }
     
-    // Fallback: try loading from current working directory (for development)
-    file.open(relative_path);
-    if (file.is_open()) {
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::cout << "Loaded shader from: " << relative_path << std::endl;
-        return buffer.str();
-    }
-    
-    std::cerr << "Failed to open shader file: " << filepath << " or " << relative_path << std::endl;
+    std::cerr << "[ShaderUtils] CRITICAL: Failed to load shader '" << shader_filename 
+              << "' for plugin '" << plugin_name << "'" << std::endl;
     return "";
 }
 

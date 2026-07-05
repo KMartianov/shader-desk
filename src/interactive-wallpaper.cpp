@@ -148,6 +148,14 @@ void InteractiveWallpaper::apply_config_to_all_outputs() {
     }
 }
 
+const char* InteractiveWallpaper::get_bundle_path(const char* plugin_name) {
+    if (!plugin_manager_ || !plugin_name) return "";
+    // Возвращаем указатель на внутреннюю строку из map (это безопасно, пока жив PluginManager)
+    static std::string last_queried_path; 
+    last_queried_path = plugin_manager_->get_bundle_path(plugin_name);
+    return last_queried_path.c_str();
+}
+
 void InteractiveWallpaper::setup_inotify() {
     inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (inotify_fd < 0) return;
@@ -156,29 +164,22 @@ void InteractiveWallpaper::setup_inotify() {
     std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
                                         : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
 
-    // 1. Отслеживаем изменения в основной папке (init.lua)
+    // 1. Отслеживаем изменения в основной папке (init.lua) и сгенерированных конфигах
     inotify_add_watch(inotify_fd, config_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
-    
-    // 2. Отслеживаем папку конфигов плагинов
     inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
 
-    // 3. Отслеживаем шейдеры и 4. Пресеты (с защитой от исключений файловой системы)
+    // 2. Отслеживаем ВСЕ папки бандлов (и шейдеры, и пресеты) через симлинк /effects
     std::error_code ec;
-    auto options = std::filesystem::directory_options::skip_permission_denied;
+    // ВАЖНО: follow_directory_symlink заставит inotify зайти внутрь симлинка effects -> plugins
+    auto options = std::filesystem::directory_options::follow_directory_symlink | std::filesystem::directory_options::skip_permission_denied;
     
-    std::vector<std::string> dirs_to_watch = {
-        config_dir + "/effects/shaders",
-        config_dir + "/presets"
-    };
-
-    for (const auto& dir : dirs_to_watch) {
-        if (std::filesystem::exists(dir, ec)) {
-            inotify_add_watch(inotify_fd, dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
-            
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(dir, options, ec)) {
-                if (entry.is_directory(ec)) {
-                    inotify_add_watch(inotify_fd, entry.path().c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
-                }
+    std::string effects_dir = config_dir + "/effects";
+    if (std::filesystem::exists(effects_dir, ec)) {
+        inotify_add_watch(inotify_fd, effects_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+        
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(effects_dir, options, ec)) {
+            if (entry.is_directory(ec)) {
+                inotify_add_watch(inotify_fd, entry.path().c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
             }
         }
     }

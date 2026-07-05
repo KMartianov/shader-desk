@@ -1,48 +1,46 @@
 cmake_minimum_required(VERSION 3.13)
-project(ico-sphere-effect-plugin LANGUAGES CXX)
 
-# --- Находим зависимости плагина ---
+
+set(PLUGIN_NAME "ico-sphere-effect")
+
+project(${PLUGIN_NAME}-plugin LANGUAGES CXX)
+
+# --- Системные зависимости ---
 find_package(glm REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
 
-# --- Исходные файлы плагина ---
-set(PLUGIN_SOURCES
-    "ico-sphere-effect.cpp"
-)
+# --- ПОДКЛЮЧЕНИЕ СИСТЕМНОГО SDK ЯДРА ---
+find_package(ShaderDesk REQUIRED)
 
-# --- Создаем плагин как разделяемую библиотеку (.so) ---
-add_library(ico-sphere-effect SHARED ${PLUGIN_SOURCES})
+# --- Сборка библиотеки ---
+add_library(${PLUGIN_NAME} SHARED "${PLUGIN_NAME}.cpp")
+set_target_properties(${PLUGIN_NAME} PROPERTIES 
+    PREFIX ""
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+) # Убирает "lib" из имени (libname.so -> name.so)
 
-# --- Настройка путей и имени ---
-set_target_properties(ico-sphere-effect PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${PLUGIN_OUTPUT_DIR}"
-    PREFIX "" 
-)
+# Позволяет плагину инклудить локальные файлы (например, stb_truetype.h в text-3d-effect)
+target_include_directories(${PLUGIN_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
-# --- Подключаем заголовочные файлы ---
-# ${SRC_DIR} унаследован из корневого CMakeLists.txt.
-target_include_directories(ico-sphere-effect PRIVATE
-    "${SRC_DIR}"
-    ${GLESv2_INCLUDE_DIRS}
-)
-
-# --- Линкуем библиотеки ---
-target_link_libraries(ico-sphere-effect PRIVATE
+# --- Линковка (Критически важный шаг) ---
+target_link_libraries(${PLUGIN_NAME} PRIVATE
+    ShaderDesk::shader_desk_sdk    # Дает доступ к <shader-desk/wallpaper-effect.hpp>
+    ShaderDesk::shader_utils       # Дает доступ к утилитам загрузки шейдеров
     glm::glm
     ${GLESv2_LIBRARIES}
-    shader_utils
 )
 
-
+# --- Автоматическое копирование шейдеров в папку сборки ---
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+    set(SHADER_DEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders/${PLUGIN_NAME}")
+    
     add_custom_command(
-        TARGET ico-sphere-effect POST_BUILD
+        TARGET ${PLUGIN_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SHADER_DEST_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
-                "${PLUGIN_OUTPUT_DIR}/shaders/ico-sphere-effect"
-        COMMENT "Copying ico-sphere-effect shaders"
+                "${SHADER_DEST_DIR}"
+        COMMENT "Copying shaders to ${SHADER_DEST_DIR}"
     )
 endif()
-
-message(STATUS "Configured plugin: ico-sphere-effect")

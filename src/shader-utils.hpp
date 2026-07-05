@@ -4,11 +4,12 @@
 
 #include <GLES3/gl3.h>
 #include <string>
+#include "plugin-abi.hpp"
 
 namespace shader_utils {
 
 // Loads text file (shader) content into a string
-std::string load_shader_source(const std::string& relative_path);
+std::string load_shader_source(ICoreContextABI* core, const std::string& plugin_name, const std::string& shader_filename);
 
 // Compiles shader from source code
 GLuint compile_shader(GLenum type, const std::string& source);

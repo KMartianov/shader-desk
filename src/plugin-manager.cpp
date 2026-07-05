@@ -39,45 +39,48 @@ PluginManager::~PluginManager() {
 }
 
 void PluginManager::discover_plugins() {
-    std::cout << "Scanning for plugins in: " << plugin_directory << std::endl;
-    
-    // Cleanup before rescanning
+    std::cout << "Scanning for plugin bundles in: " << plugin_directory << std::endl;
     data_providers.clear();
-    for (void* handle : provider_handles) {
-        if (handle) dlclose(handle);
-    }
+    for (void* handle : provider_handles) if (handle) dlclose(handle);
     provider_handles.clear();
     loaded_plugins.clear();
+    bundle_paths_.clear(); // [NEW] Очищаем пути
 
     try {
-        if (!fs::exists(plugin_directory) || !fs::is_directory(plugin_directory)) {
-            std::cerr << "Plugin directory does not exist: " << plugin_directory << std::endl;
-            return;
-        }
+        if (!fs::exists(plugin_directory)) return;
 
-        for (const auto& entry : fs::directory_iterator(plugin_directory)) {
-            if (entry.path().extension() == ".so") {
+        // [IMPORTANT] Опция follow_directory_symlink критична для разработки через симлинки!
+        auto options = fs::directory_options::follow_directory_symlink | fs::directory_options::skip_permission_denied;
+
+        for (const auto& entry : fs::recursive_directory_iterator(plugin_directory, options)) {
+
+            std::string path_str = entry.path().string();
+            if (path_str.find("/build/") != std::string::npos || path_str.find("/.git/") != std::string::npos) {
+                continue;
+            }
+
+
+            if (entry.is_regular_file() && entry.path().extension() == ".so") {
                 const std::string path_str = entry.path().string();
+                const std::string bundle_dir = entry.path().parent_path().string();
                 
-                // Load shared library
                 void* handle = dlopen(path_str.c_str(), RTLD_LAZY);
                 if (!handle) {
-                    std::cerr << "Failed to load plugin " << path_str << ": " << dlerror() << std::endl;
+                    std::cerr << "Failed to load " << path_str << ": " << dlerror() << std::endl;
                     continue;
                 }
 
                 bool is_valid_plugin = false;
-                bool handle_stored_by_effect = false; // Flag to prevent double dlclose
+                bool handle_stored = false;
 
-                // --- 1. Attempt to load as Visual Effect ---
-                // [NEW] Expecting IWallpaperEffectABI* return instead of WallpaperEffect*
+                // 1. Visual Effect
                 auto create_effect_fn = (IWallpaperEffectABI* (*)())dlsym(handle, "create_effect");
                 auto destroy_effect_fn = (void (*)(IWallpaperEffectABI*))dlsym(handle, "destroy_effect");
                 
                 if (create_effect_fn && destroy_effect_fn) {
-                    IWallpaperEffectABI* temp_effect = create_effect_fn();
-                    std::string effect_name = temp_effect->get_name();
-                    destroy_effect_fn(temp_effect);
+                    IWallpaperEffectABI* temp = create_effect_fn();
+                    std::string effect_name = temp->get_name();
+                    destroy_effect_fn(temp);
 
                     auto plugin = std::make_unique<PluginHandle>();
                     plugin->handle = handle;
@@ -86,48 +89,39 @@ void PluginManager::discover_plugins() {
                     plugin->name = effect_name;
                     plugin->path = path_str;
                     
+                    // Запоминаем путь к бандлу для этого эффекта!
+                    bundle_paths_[effect_name] = bundle_dir;
+
                     loaded_plugins.push_back(std::move(plugin));
-                    std::cout << "  - Discovered Visual Effect: '" << effect_name << "' from " << path_str << std::endl;
-                    
+                    std::cout << "  - Discovered Bundle: '" << effect_name << "' in " << bundle_dir << std::endl;
                     is_valid_plugin = true;
-                    handle_stored_by_effect = true; 
+                    handle_stored = true;
                 }
 
-                // --- 2. Attempt to load as Data Provider ---
-                // [NEW] Expecting IDataProviderABI* return instead of IDataProvider*
+                // 2. Data Provider (аналогично)
                 auto create_provider_fn = (IDataProviderABI* (*)())dlsym(handle, "create_provider");
                 auto destroy_provider_fn = (void (*)(IDataProviderABI*))dlsym(handle, "destroy_provider");
-
                 if (create_provider_fn && destroy_provider_fn) {
-                    // Create global provider instance immediately (with custom ABI deleter)
-                    std::unique_ptr<IDataProviderABI, void(*)(IDataProviderABI*)> provider(
-                        create_provider_fn(), 
-                        destroy_provider_fn
-                    );
-                    
-                    std::cout << "  - Discovered Data Provider: '" << provider->get_name() << "' from " << path_str << std::endl;
+                    std::unique_ptr<IDataProviderABI, void(*)(IDataProviderABI*)> provider(create_provider_fn(), destroy_provider_fn);
+                    bundle_paths_[provider->get_name()] = bundle_dir;
                     data_providers.push_back(std::move(provider));
-                    
-                    // Store handle only if it wasn't already stored by the visual effect
-                    if (!handle_stored_by_effect) {
-                        provider_handles.push_back(handle);
-                    }
+                    if (!handle_stored) provider_handles.push_back(handle);
                     is_valid_plugin = true;
+                    std::cout << "  - Discovered Provider Bundle: '" << data_providers.back()->get_name() << "'" << std::endl;
                 }
 
-                // --- 3. If .so lacks required signatures ---
-                if (!is_valid_plugin) {
-                    std::cerr << "Plugin " << path_str << " is missing required symbols. Ignored." << std::endl;
-                    dlclose(handle);
-                }
+                if (!is_valid_plugin) dlclose(handle);
             }
         }
     } catch (const fs::filesystem_error& e) {
-        std::cerr << "Filesystem error while scanning for plugins: " << e.what() << std::endl;
+        std::cerr << "FS Error during plugin scanning: " << e.what() << std::endl;
     }
 }
 
-
+std::string PluginManager::get_bundle_path(const std::string& effect_name) const {
+    auto it = bundle_paths_.find(effect_name);
+    return (it != bundle_paths_.end()) ? it->second : "";
+}
 
 void PluginManager::initialize_providers(ICoreContextABI* core, const std::function<bool(IDataProviderABI*)>& configure_callback) {
     for (auto& provider : data_providers) {

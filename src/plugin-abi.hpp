@@ -64,6 +64,8 @@ public:
     // Passing void* user_data is mandatory so the plugin can pass its 'this' pointer.
     virtual void register_epoll_fd(int fd, void (*callback)(uint32_t events, void* user_data), void* user_data) = 0;
     virtual void unregister_epoll_fd(int fd) = 0;
+
+    virtual const char* get_bundle_path(const char* plugin_name) = 0;
 };
 
 class IWallpaperEffectABI {

@@ -3,7 +3,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 
 // --- REQUIRED HEADERS ---
-#include "ico-sphere-effect.hpp"
+#include "ico-sphere-effect-old.hpp"
 #include "wallpaper-effect.hpp"
 #include "shader-utils.hpp" 
 
@@ -145,6 +145,7 @@ void IcoSphereEffect::update_effect_scaling() {
 }
 
 bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
+    m_core = core;
     if (program != 0) return true;
 
     // BIND MEMORY
@@ -201,13 +202,12 @@ void IcoSphereEffect::fetch_uniform_locations() {
 }
 
 bool IcoSphereEffect::reload_shader_program() {
-    std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
-    std::string base_path = config_dir + "effects/shaders/ico-sphere-effect-old/" + active_shader;
+  
+   std::cout << "[IcoSphere] Attempting to load shader theme: '" << active_shader << "'" << std::endl;
     
-    std::cout << "[IcoSphere] Attempting to load shader theme: '" << active_shader << "'" << std::endl;
-    
-    std::string vert_src = shader_utils::load_shader_source(base_path + "_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source(base_path + "_frag.glsl");
+    std::string vert_src = shader_utils::load_shader_source(m_core, get_name(), active_shader + "_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(m_core, get_name(), active_shader + "_frag.glsl");
+
     
     if (vert_src.empty() || frag_src.empty()) {
         std::cerr << "[IcoSphere] Failed to load shader files for theme: " << active_shader << std::endl;

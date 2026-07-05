@@ -208,8 +208,8 @@ bool Text3DEffect::initialize(ICoreContext* core, uint32_t width, uint32_t heigh
     p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
     p_dynamic_text = core->get_blackboard()->bind_string("lua.custom_text");
 
-    std::string vert_src = shader_utils::load_shader_source("text-3d-effect/fullscreen_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source("text-3d-effect/raymarch_frag.glsl");
+    std::string vert_src = shader_utils::load_shader_source(core, get_name(), "fullscreen_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(core, get_name(), "raymarch_frag.glsl");
     
     program = shader_utils::create_shader_program(vert_src, frag_src);
     if (!program) return false;

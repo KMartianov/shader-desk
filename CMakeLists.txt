@@ -127,28 +127,28 @@ add_custom_target(wayland_protocols ALL
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# 1. Генерация для ctl.lua
+# 1. Генерация для ctl.lua (убраны кавычки вокруг путей в -D)
 set(EMBED_CTL_HPP "${GENERATED_DIR}/embedded_ctl.hpp")
 add_custom_command(
     OUTPUT "${EMBED_CTL_HPP}"
     COMMAND ${CMAKE_COMMAND} 
-        -DINPUT_FILE="${SRC_DIR}/defaults/ctl.lua"
-        -DOUTPUT_FILE="${EMBED_CTL_HPP}"
-        -DVAR_NAME="CTL_LUA"
+        -DINPUT_FILE=${SRC_DIR}/defaults/ctl.lua
+        -DOUTPUT_FILE=${EMBED_CTL_HPP}
+        -DVAR_NAME=CTL_LUA
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
     DEPENDS "${SRC_DIR}/defaults/ctl.lua" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
     COMMENT "Baking ctl.lua into C++ header"
     VERBATIM
 )
 
-# 2. Генерация для init.lua
+# 2. Генерация для init.lua (убраны кавычки вокруг путей в -D)
 set(EMBED_INIT_HPP "${GENERATED_DIR}/embedded_init.hpp")
 add_custom_command(
     OUTPUT "${EMBED_INIT_HPP}"
     COMMAND ${CMAKE_COMMAND} 
-        -DINPUT_FILE="${SRC_DIR}/defaults/init.lua"
-        -DOUTPUT_FILE="${EMBED_INIT_HPP}"
-        -DVAR_NAME="INIT_LUA"
+        -DINPUT_FILE=${SRC_DIR}/defaults/init.lua"
+        -DOUTPUT_FILE=${EMBED_INIT_HPP}
+        -DVAR_NAME=INIT_LUA
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
     DEPENDS "${SRC_DIR}/defaults/init.lua" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
     COMMENT "Baking init.lua into C++ header"

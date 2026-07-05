@@ -141,12 +141,12 @@ add_custom_command(
     VERBATIM
 )
 
-# 2. Генерация для init.lua (убраны кавычки вокруг путей в -D)
+# 2. Генерация для init.lua
 set(EMBED_INIT_HPP "${GENERATED_DIR}/embedded_init.hpp")
 add_custom_command(
     OUTPUT "${EMBED_INIT_HPP}"
     COMMAND ${CMAKE_COMMAND} 
-        -DINPUT_FILE=${SRC_DIR}/defaults/init.lua"
+        -DINPUT_FILE=${SRC_DIR}/defaults/init.lua
         -DOUTPUT_FILE=${EMBED_INIT_HPP}
         -DVAR_NAME=INIT_LUA
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"

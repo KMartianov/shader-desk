@@ -82,10 +82,18 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm) {
 
     std::cout << "Generating Lua configs in: " << config_dir << std::endl;
 
-    // 1. Create main init.lua (Only if it doesn't exist! Never overwrite user logic)
+    // 1. Создаем ctl.lua (если не существует) <--- НОВЫЙ БЛОК!
+    fs::path ctl_lua_path = fs::path(config_dir) / "ctl.lua";
+    if (!fs::exists(ctl_lua_path)) {
+        generate_ctl_lua(ctl_lua_path.string());
+        std::cout << "  ✓ Generated auxiliary CLI module: ctl.lua" << std::endl;
+    }
+
+    // 2. Создаем init.lua (если не существует)
     fs::path init_lua_path = fs::path(config_dir) / "init.lua";
     if (!fs::exists(init_lua_path)) {
         generate_init_lua(init_lua_path.string(), available_effects[0]);
+        std::cout << "  ✓ Generated main config: init.lua" << std::endl;
     }
 
     // 2. Iterate through plugins to update/create their individual configs

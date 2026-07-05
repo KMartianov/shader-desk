@@ -49,4 +49,5 @@ CMakeUserPresets.json
 
 build
 utilities
+!utilities/shader-desk-ctl.cpp
 .log

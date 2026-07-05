@@ -122,6 +122,44 @@ add_custom_target(wayland_protocols ALL
 )
 
 # ==============================================================================
+# EMBEDDED RESOURCES GENERATION (Lua -> C++ Headers)
+# ==============================================================================
+set(GENERATED_DIR "${BIN_DIR}/generated")
+file(MAKE_DIRECTORY "${GENERATED_DIR}")
+
+# 1. Генерация для ctl.lua
+set(EMBED_CTL_HPP "${GENERATED_DIR}/embedded_ctl.hpp")
+add_custom_command(
+    OUTPUT "${EMBED_CTL_HPP}"
+    COMMAND ${CMAKE_COMMAND} 
+        -DINPUT_FILE="${SRC_DIR}/defaults/ctl.lua"
+        -DOUTPUT_FILE="${EMBED_CTL_HPP}"
+        -DVAR_NAME="CTL_LUA"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
+    DEPENDS "${SRC_DIR}/defaults/ctl.lua" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
+    COMMENT "Baking ctl.lua into C++ header"
+    VERBATIM
+)
+
+# 2. Генерация для init.lua
+set(EMBED_INIT_HPP "${GENERATED_DIR}/embedded_init.hpp")
+add_custom_command(
+    OUTPUT "${EMBED_INIT_HPP}"
+    COMMAND ${CMAKE_COMMAND} 
+        -DINPUT_FILE="${SRC_DIR}/defaults/init.lua"
+        -DOUTPUT_FILE="${EMBED_INIT_HPP}"
+        -DVAR_NAME="INIT_LUA"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
+    DEPENDS "${SRC_DIR}/defaults/init.lua" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
+    COMMENT "Baking init.lua into C++ header"
+    VERBATIM
+)
+
+add_custom_target(embedded_resources ALL
+    DEPENDS "${EMBED_CTL_HPP}" "${EMBED_INIT_HPP}"
+)
+
+# ==============================================================================
 # CORE & SDK LIBRARIES
 # ==============================================================================
 
@@ -147,14 +185,17 @@ list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
 # --- Установка RPATH для поиска разделяемых библиотек SDK ---
 set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${CMAKE_INSTALL_PREFIX}/lib64")
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-# Указываем, чтобы RPATH сохранялся при выполнении make install
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
+# 1. Основное ядро
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
 
+# 2. CLI-контроллер (не требует линковки с Wayland/OpenGL, собирается мгновенно)
+add_executable(shader-desk-ctl utilities/shader-desk-ctl.cpp)
+
 target_include_directories(interactive-wallpaper PRIVATE
+    "${GENERATED_DIR}"      # Добавлен доступ к сгенерированным .hpp с вшитым Lua
     "${PROTOCOL_OUTPUT_DIR}"
     "${SRC_DIR}"
     ${WAYLAND_CLIENT_INCLUDE_DIRS}
@@ -178,8 +219,13 @@ target_link_libraries(interactive-wallpaper PRIVATE
     pthread
 )
 
+# Зависимости сборки (сначала генерируем протоколы Wayland и ресурсы Lua)
 if(TARGET wayland_protocols)
     add_dependencies(interactive-wallpaper wayland_protocols)
+endif()
+
+if(TARGET embedded_resources)
+    add_dependencies(interactive-wallpaper embedded_resources)
 endif()
 
 # ==============================================================================
@@ -188,8 +234,8 @@ endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-# 1. Install the main engine binary
-install(TARGETS interactive-wallpaper
+# 1. Install both engine binary and CLI controller
+install(TARGETS interactive-wallpaper shader-desk-ctl
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # 2. Install public C-ABI SDK headers for third-party plugins

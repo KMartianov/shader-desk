@@ -156,6 +156,9 @@ private:
     int epoll_fd = -1;
     int inotify_fd = -1;
 
+    int ipc_fd = -1;
+
+
     PluginManager* plugin_manager_ = nullptr;
     std::string default_effect_name_;
 
@@ -170,6 +173,7 @@ private:
     
     // --- Inotify Initialization & Event Handling ---
     void setup_inotify();
+    void setup_ipc();
     void process_inotify_events();
     
     // --- Configuration Application ---

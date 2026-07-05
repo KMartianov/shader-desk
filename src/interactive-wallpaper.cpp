@@ -12,6 +12,8 @@
 #include <sys/signalfd.h> // Для безопасной обработки сигналов через epoll
 #include <signal.h>
 #include <filesystem>
+#include <sys/socket.h> 
+#include <sys/un.h>     
 
 extern std::atomic<bool> global_running;
 
@@ -188,6 +190,54 @@ void InteractiveWallpaper::setup_inotify() {
     apply_config_to_all_outputs();
 }
 
+void InteractiveWallpaper::setup_ipc() {
+    ipc_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (ipc_fd < 0) return;
+
+    struct sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    const char* socket_path = "/run/user/1000/shader-desk.sock"; // В продакшене брать getuid() или XDG_RUNTIME_DIR
+    
+    unlink(socket_path); // Удаляем старый сокет, если остался от прошлого запуска
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+
+    if (bind(ipc_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0 || listen(ipc_fd, 5) < 0) {
+        close(ipc_fd);
+        ipc_fd = -1;
+        return;
+    }
+
+    // Регистрируем слушающий сокет в твоем epoll-цикле с нулевой задержкой!
+    register_epoll_fd_cxx(ipc_fd, [this](uint32_t) {
+        int client_fd = accept4(ipc_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (client_fd < 0) return;
+
+        // Читаем команду от клиента (напр., "core.outputs['eDP-1'].settings.bloom_intensity = 0.8")
+        char buffer[1024]{0};
+        ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+        
+        if (bytes_read > 0) {
+            std::string cmd(buffer);
+            std::string response = "OK\n";
+
+            try {
+                // Выполняем пришедшую строку прямо в твоем Lua-движке!
+                sol::protected_function_result result = lua_engine.get_state().script(cmd);
+                if (!result.valid()) {
+                    sol::error err = result;
+                    response = std::string("ERROR: ") + err.what() + "\n";
+                }
+            } catch (const std::exception& e) {
+                response = std::string("ERROR: ") + e.what() + "\n";
+            }
+
+            // Отправляем ответ клиенту
+            write(client_fd, response.c_str(), response.length());
+        }
+        close(client_fd);
+    });
+}
+
 // [UPDATED] Обработчик горячей перезагрузки (Мультимониторный)
 void InteractiveWallpaper::process_inotify_events() {
     char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
@@ -308,6 +358,7 @@ bool InteractiveWallpaper::initialize() {
     epoll_ctl(epoll_fd, EPOLL_CTL_ADD, wl_fd, &ev);
 
     setup_inotify();
+    setup_ipc();
 
     // Безопасный перехват сигналов завершения через epoll
     sigset_t mask;

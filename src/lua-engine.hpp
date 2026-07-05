@@ -23,6 +23,7 @@ struct OutputConfig {
 
 class LuaEngine {
 public:
+    sol::state& get_state() { return lua; }
     LuaEngine() = default;
     ~LuaEngine() { clear_timers(); }
 

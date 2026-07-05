@@ -2,7 +2,7 @@
 return {
     shader_theme = "default",
     wireframe_mode = true,
-    subdivisions = 4,                          -- Высокая детализация
+    subdivisions = 5,                          -- Высокая детализация
     sphere_scale = 1.1,
     background_color = { 0.05, 0.01, 0.08 },   -- Глубокий темно-фиолетовый космос
     wireframe_color = { 1.0, 0.0, 0.55 },    -- Горячий неоновый розовый/мажента

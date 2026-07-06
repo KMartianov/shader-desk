@@ -155,7 +155,7 @@ void HilbertCubeEffect::update_rotation(float dt) {
     }
 }
 
-void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
+void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
     // === SAFE MOUSE READING LOGIC (Delta-calc) ===
     if (p_accum_x && p_accum_y) {
         float current_x = *p_accum_x;
@@ -192,7 +192,8 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height) {
     glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    update_rotation(0.016f);
+    update_rotation(dt); 
+    time += dt;
     
     glEnable(GL_DEPTH_TEST);
     glLineWidth(1.0f);

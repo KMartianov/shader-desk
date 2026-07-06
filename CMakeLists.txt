@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.14)
 project(shader-desk LANGUAGES C CXX)
 
+# ==============================================================================
+# GLOBAL CONFIGURATION
+# ==============================================================================
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -8,11 +11,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # --- Directories ---
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
+set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include") # Общие заголовки (IPC протоколы)
 set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROTOCOL_OUTPUT_DIR "${BIN_DIR}/protocols")
 file(MAKE_DIRECTORY "${PROTOCOL_OUTPUT_DIR}")
 
-# --- System Dependencies ---
+# --- Build Options ---
+option(BUILD_AUDIO_DAEMON "Build PipeWire/PulseAudio FFT daemon" ON)
+option(BUILD_EVDEV_DAEMON "Build /dev/input mouse tracking daemon" ON)
+option(ENABLE_PROFILING "Enable Tracy Profiler telemetry" OFF)
+
+# ==============================================================================
+# SYSTEM DEPENDENCIES
+# ==============================================================================
 find_package(PkgConfig REQUIRED)
 find_package(glm REQUIRED)
 find_package(nlohmann_json REQUIRED)
@@ -22,17 +33,33 @@ pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
 pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
-pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+pkg_check_modules(LIBEVDEV libevdev) # Опционально, нужно только демону мыши
 pkg_check_modules(LUAJIT REQUIRED luajit)
 
-# --- Fetch Lua/C++ Binding (sol2) ---
+# ==============================================================================
+# EXTERNAL DEPENDENCIES (FetchContent)
+# ==============================================================================
 include(FetchContent)
+
+# 1. Lua/C++ Binding (sol2)
 FetchContent_Declare(
     sol2
     GIT_REPOSITORY https://github.com/ThePhD/sol2.git
     GIT_TAG main
 )
 FetchContent_MakeAvailable(sol2)
+
+# 2. Tracy Profiler
+# КРИТИЧЕСКИ ВАЖНО: Устанавливаем переменные до скачивания, чтобы Tracy собрался как .so
+set(TRACY_SHARED ON CACHE BOOL "Build Tracy as a shared library" FORCE)
+set(TRACY_ENABLE ${ENABLE_PROFILING} CACHE BOOL "Enable Tracy profiling" FORCE)
+
+FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG v0.10
+)
+FetchContent_MakeAvailable(tracy)
 
 # ==============================================================================
 # WAYLAND PROTOCOLS GENERATION
@@ -94,7 +121,7 @@ if(EXISTS "${VIEWPORTER_XML}")
     list(APPEND GENERATED_PROTOCOL_HEADERS "${VIEWPORTER_HEADER}")
 endif()
 
-# 3. xdg-shell (Required by wlr-layer-shell for popups)
+# 3. xdg-shell
 if(WAYLAND_PROTOCOLS_FOUND)
     set(XDG_XML "${WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml")
 else()
@@ -127,7 +154,7 @@ add_custom_target(wayland_protocols ALL
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# 1. Генерация для ctl.lua (убраны кавычки вокруг путей в -D)
+# 1. ctl.lua
 set(EMBED_CTL_HPP "${GENERATED_DIR}/embedded_ctl.hpp")
 add_custom_command(
     OUTPUT "${EMBED_CTL_HPP}"
@@ -141,7 +168,7 @@ add_custom_command(
     VERBATIM
 )
 
-# 2. Генерация для init.lua
+# 2. init.lua
 set(EMBED_INIT_HPP "${GENERATED_DIR}/embedded_init.hpp")
 add_custom_command(
     OUTPUT "${EMBED_INIT_HPP}"
@@ -162,18 +189,43 @@ add_custom_target(embedded_resources ALL
 # ==============================================================================
 # CORE & SDK LIBRARIES
 # ==============================================================================
+include(GNUInstallDirs)
 
-# --- Shader Utilities (Exported as part of the SDK) ---
+# --- Установка RPATH ---
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${CMAKE_INSTALL_PREFIX}/lib64")
+set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+# 1. Вспомогательная библиотека SDK (Shader Utils)
 add_library(shader_utils SHARED "${SRC_DIR}/shader-utils.cpp")
+add_library(ShaderDesk::shader_utils ALIAS shader_utils)
 set_property(TARGET shader_utils PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(shader_utils PUBLIC
     $<BUILD_INTERFACE:${SRC_DIR}>
+    $<BUILD_INTERFACE:${INCLUDE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
 )
 target_link_libraries(shader_utils PRIVATE ${GLESv2_LIBRARIES})
 
-# --- Main Executable (Microkernel) ---
+# 2. Виртуальный интерфейс SDK для плагинов
+add_library(shader_desk_sdk INTERFACE)
+add_library(ShaderDesk::shader_desk_sdk ALIAS shader_desk_sdk)
+target_include_directories(shader_desk_sdk INTERFACE
+    $<BUILD_INTERFACE:${SRC_DIR}>
+    $<BUILD_INTERFACE:${INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
+)
+
+# Инжектим Tracy в SDK, если включено профилирование
+if(ENABLE_PROFILING)
+    target_link_libraries(shader_desk_sdk INTERFACE TracyClient)
+    target_compile_definitions(shader_desk_sdk INTERFACE TRACY_ENABLE=1)
+endif()
+
+# ==============================================================================
+# EXECUTABLES: CORE & UTILITIES
+# ==============================================================================
 set(APP_SRC_FILES
     "${SRC_DIR}/main.cpp"
     "${SRC_DIR}/interactive-wallpaper.cpp"
@@ -183,21 +235,11 @@ set(APP_SRC_FILES
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-# --- Установка RPATH для поиска разделяемых библиотек SDK ---
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${CMAKE_INSTALL_PREFIX}/lib64")
-set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-
-# 1. Основное ядро
+# 1. Основное ядро (Microkernel)
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
-
-# 2. CLI-контроллер (не требует линковки с Wayland/OpenGL, собирается мгновенно)
-add_executable(shader-desk-ctl utilities/shader-desk-ctl.cpp)
-
 target_include_directories(interactive-wallpaper PRIVATE
-    "${GENERATED_DIR}"      # Добавлен доступ к сгенерированным .hpp с вшитым Lua
+    "${GENERATED_DIR}"
     "${PROTOCOL_OUTPUT_DIR}"
-    "${SRC_DIR}"
     ${WAYLAND_CLIENT_INCLUDE_DIRS}
     ${WAYLAND_EGL_INCLUDE_DIRS}
     ${EGL_INCLUDE_DIRS}
@@ -206,6 +248,7 @@ target_include_directories(interactive-wallpaper PRIVATE
 )
 
 target_link_libraries(interactive-wallpaper PRIVATE
+    shader_desk_sdk
     ${WAYLAND_CLIENT_LIBRARIES}
     ${WAYLAND_EGL_LIBRARIES}
     ${EGL_LIBRARIES}
@@ -219,43 +262,68 @@ target_link_libraries(interactive-wallpaper PRIVATE
     pthread
 )
 
-# Зависимости сборки (сначала генерируем протоколы Wayland и ресурсы Lua)
 if(TARGET wayland_protocols)
     add_dependencies(interactive-wallpaper wayland_protocols)
 endif()
-
 if(TARGET embedded_resources)
     add_dependencies(interactive-wallpaper embedded_resources)
 endif()
 
+# 2. CLI-контроллер
+add_executable(shader-desk-ctl utilities/shader-desk-ctl.cpp)
+
 # ==============================================================================
-# INSTALLATION & SDK EXPORT RULES
+# SUBDIRECTORIES (Daemons & Plugins)
 # ==============================================================================
-include(GNUInstallDirs)
+# Макрос безопасного подключения сабмодулей
+macro(add_submodule_if_exists SUBDIR)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/CMakeLists.txt")
+        message(STATUS "Including subsystem: ${SUBDIR}")
+        add_subdirectory(${SUBDIR})
+    else()
+        message(WARNING "Subsystem ${SUBDIR} not found or empty.")
+    endif()
+endmacro()
+
+# Внешние демоны (Opt-in)
+if(BUILD_AUDIO_DAEMON)
+    add_submodule_if_exists(daemons/audio-daemon)
+endif()
+
+if(BUILD_EVDEV_DAEMON)
+    add_submodule_if_exists(daemons/evdev-daemon)
+endif()
+
+# Внутренние плагины (.so)
+add_submodule_if_exists(plugins)
+
+# ==============================================================================
+# INSTALLATION EXPORT RULES
+# ==============================================================================
 include(CMakePackageConfigHelpers)
 
-# 1. Install both engine binary and CLI controller
+# Бинарники
 install(TARGETS interactive-wallpaper shader-desk-ctl
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-# 2. Install public C-ABI SDK headers for third-party plugins
+# Systemd User Services
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/systemd/"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user"
+        FILES_MATCHING PATTERN "*.service")
+
+# Заголовки SDK (включая ipc-protocol.hpp)
 set(SDK_HEADERS
     "${SRC_DIR}/plugin-abi.hpp"
     "${SRC_DIR}/core-context.hpp"
     "${SRC_DIR}/wallpaper-effect.hpp"
     "${SRC_DIR}/data-provider.hpp"
     "${SRC_DIR}/shader-utils.hpp"
+    "${INCLUDE_DIR}/ipc-protocol.hpp"
 )
 install(FILES ${SDK_HEADERS} 
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/shader-desk)
 
-# 3. Create a virtual INTERFACE target for modern CMake find_package linking
-add_library(shader_desk_sdk INTERFACE)
-target_include_directories(shader_desk_sdk INTERFACE
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
-)
-
-# 4. Export the SDK targets (shader_utils and shader_desk_sdk)
+# Экспорт интерфейсов SDK для компиляции out-of-tree плагинов
 install(TARGETS shader_utils shader_desk_sdk
         EXPORT ShaderDeskTargets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -266,14 +334,13 @@ install(EXPORT ShaderDeskTargets
         NAMESPACE ShaderDesk::
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ShaderDesk)
 
-# Create config file so `find_package(ShaderDesk REQUIRED)` works for plugins
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ShaderDeskConfig.cmake" 
 "include(\"\${CMAKE_CURRENT_LIST_DIR}/ShaderDeskTargets.cmake\")\n"
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ShaderDeskConfig.cmake"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ShaderDesk)
 
-# 5. Install the plugin generator python script and its templates
+# Генератор плагинов на Python
 install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/generate_plugin.py"
         DESTINATION ${CMAKE_INSTALL_BINDIR} 
         RENAME shader-desk-generate)

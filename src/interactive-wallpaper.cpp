@@ -1,6 +1,7 @@
 // src/interactive-wallpaper.cpp
 #include "interactive-wallpaper.hpp"
 #include <glm/glm.hpp>
+#include <cmath>
 
 #include <iostream>
 #include <cstring>
@@ -14,6 +15,8 @@
 #include <filesystem>
 #include <sys/socket.h> 
 #include <sys/un.h>     
+
+#include <tracy/Tracy.hpp>
 
 extern std::atomic<bool> global_running;
 
@@ -389,6 +392,7 @@ bool InteractiveWallpaper::initialize() {
 // ==============================================================================
 
 void InteractiveWallpaper::run() {
+    tracy::SetThreadName("Wayland Event Loop"); // Имя потока в профайлере
     if (!display) return;
     std::cout << "Starting main loop (epoll based)..." << std::endl;
     wl_display_roundtrip(display);
@@ -431,6 +435,7 @@ void InteractiveWallpaper::run() {
             wl_display_cancel_read(display);
         }
         wl_display_dispatch_pending(display);
+        FrameMark;
     }
 }
 
@@ -491,6 +496,7 @@ static const wl_callback_listener frame_listener = {
     .done = InteractiveWallpaper::frame_handle_done,
 };
 
+
 void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, uint32_t) {
     if (callback) wl_callback_destroy(callback);
     Output* output = static_cast<Output*>(data);
@@ -503,36 +509,66 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
 void InteractiveWallpaper::render_output(Output* output) {
     if (!output->configured || !output->effect || output->egl_surface == EGL_NO_SURFACE) return;
 
-    // 1. Расчет точного Delta Time для текущего монитора
+    ZoneScoped; // <--- Замеряет время работы функции
+    ZoneText(output->name.c_str(), output->name.length()); // <--- Подписывает экран (eDP-1, DP-1)
+
+
+    // 1. Считаем дельту времени
     auto now = std::chrono::steady_clock::now();
     std::chrono::duration<float> delta_duration = now - output->last_frame_time;
-    float dt = delta_duration.count();
+    float real_dt = delta_duration.count();
     output->last_frame_time = now;
 
-    // [FIX]: Защита от Lag-Spike и первого кадра.
-    // Если dt > 0.1 сек (падение ниже 10 FPS или инициализация Wayland), 
-    // нормализуем до 60 Гц (16.6 мс), чтобы анимации в Lua не совершали скачков.
-    if (dt > 0.1f || dt < 0.0f) {
-        dt = 0.0166f;
+    // Защита от зависаний системы
+    if (real_dt > 0.1f || real_dt < 0.0f) real_dt = 0.0166f;
+
+    // Накапливаем время
+    output->time_since_last_render += real_dt;
+    float render_dt = output->time_since_last_render;
+
+    // 2. Обработка ограничения FPS
+    OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
+    if (out_cfg.fps_limit > 0.0f) {
+        float min_frame_time = 1.0f / out_cfg.fps_limit;
+        
+        // Если прошло недостаточно времени, ПРОПУСКАЕМ рендер
+        if (output->time_since_last_render < min_frame_time) {
+            // ВАЖНО: Регистрируем коллбэк для следующего тика Wayland. 
+            // Пустой коммит без eglSwapBuffers не нагружает GPU, но сохраняет цикл живым.
+            output->frame_callback = wl_surface_frame(output->surface);
+            wl_callback_add_listener(output->frame_callback, &frame_listener, output);
+            wl_surface_commit(output->surface); 
+            return;
+        }
+        
+        // Оставляем дробный остаток времени, чтобы анимация была гладкой
+        output->time_since_last_render = std::fmod(output->time_since_last_render, min_frame_time);
+    } else {
+        // Лимита нет - обнуляем аккумулятор
+        output->time_since_last_render = 0.0f;
     }
 
-    // 2. Активация EGL-контекста текущего экрана
+    // 3. Вызываем рендер
     if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
+        {
+            ZoneScopedN("Lua on_frame"); // <--- Замеряем, сколько миллисекунд тупит Lua
+            lua_engine.on_frame(render_dt, output->name);
+        }
         
-        // 3. Вызов покадрового хука Lua ДО рендера шейдера!
-        // Скрипт в Lua прочитает аудио/мышку из BlackBoard, произведет расчеты
-        // и запишет новые значения обратно, которые шейдер подхватит в render().
-        lua_engine.on_frame(dt, output->name);
-
-        // 4. Отрисовка визуального плагина
-        output->effect->render(output->width, output->height);
+        {
+            ZoneScopedN("Plugin Render"); // <--- Замеряем сам плагин
+            output->effect->render(output->width, output->height, render_dt);
+        }
         
-        // 5. Запрос следующего кадра у композитора Wayland
         output->frame_callback = wl_surface_frame(output->surface);
         wl_callback_add_listener(output->frame_callback, &frame_listener, output);
         
-        // 6. Отправка буфера на экран (VSync)
-        eglSwapBuffers(egl_display, output->egl_surface);
+        {
+            ZoneScopedN("EGL Swap Buffers"); // <--- Замеряем ожидание VSync
+            eglSwapBuffers(egl_display, output->egl_surface);
+        }
+        
+        FrameMarkNamed(output->name.c_str()); // <--- Создает отдельный трек кадров для КАЖДОГО монитора!
     }
 }
 
@@ -645,3 +681,12 @@ void InteractiveWallpaper::layer_surface_closed(void* data, zwlr_layer_surface_v
     Output* output = static_cast<Output*>(data);
     if (output->parent) output->parent->outputs.erase(output->output_obj);
 }
+
+void InteractiveWallpaper::log_message(LogLevel level, const char* source, const char* message) {
+    switch (level) {
+        case LogLevel::INFO:    std::cout << "[INFO][" << source << "] " << message << std::endl; break;
+        case LogLevel::WARNING: std::cerr << "\033[33m[WARN][" << source << "] " << message << "\033[0m" << std::endl; break;
+        case LogLevel::ERR:     std::cerr << "\033[31m[ERR ][" << source << "] " << message << "\033[0m" << std::endl; break;
+    }
+}
+

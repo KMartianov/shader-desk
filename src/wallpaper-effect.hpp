@@ -35,7 +35,12 @@ public:
     // --- 1. STANDARD C++ API FOR PLUGIN AUTHORS ---
     // Plugin authors override these specific methods.
     virtual bool initialize(ICoreContext* core, uint32_t width, uint32_t height) = 0;
-    virtual void render(uint32_t width, uint32_t height) = 0;
+    virtual void render(uint32_t width, uint32_t height, float dt) = 0;
+
+    virtual void resize(uint32_t width, uint32_t height) override {}
+    virtual void set_paused(bool paused) override {}
+
+
     virtual void cleanup() = 0;
     virtual const char* get_name() const = 0;
 

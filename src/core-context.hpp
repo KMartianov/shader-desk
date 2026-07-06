@@ -43,6 +43,17 @@ public:
         return it->second.data();
     }
 
+    void* bind_raw(const char* key, size_t requested_size_bytes) override {
+    std::string str_key(key);
+    auto it = raw_memory_.find(str_key);
+    if (it == raw_memory_.end()) {
+        it = raw_memory_.emplace(str_key, std::vector<uint8_t>(requested_size_bytes, 0)).first;
+    } else if (it->second.size() < requested_size_bytes) {
+        it->second.resize(requested_size_bytes, 0); // Авто-расширение буфера
+    }
+    return it->second.data();
+}
+
     void set_string(const char* key, const char* value) override {
         char* buffer = bind_string(key);
         std::strncpy(buffer, value, STRING_BUFFER_SIZE - 1);
@@ -62,4 +73,5 @@ public:
 private:
     std::unordered_map<std::string, std::vector<float>> memory_;
     std::unordered_map<std::string, std::array<char, STRING_BUFFER_SIZE>> string_memory_;
+    std::unordered_map<std::string, std::vector<uint8_t>> raw_memory_;
 };

@@ -20,13 +20,44 @@ std::string get_plugin_directory() {
 
 int main(int argc, char** argv) {
     // 1. Handle CLI commands (e.g., initial configuration generation)
-    if (argc > 1 && std::string(argv[1]) == "--init-config") {
-        std::string plugin_dir = get_plugin_directory();
-        PluginManager pm(plugin_dir);
-        pm.discover_plugins();
-        LuaConfigGenerator::generate_configs(pm);
-        return 0; // Exit cleanly without connecting to Wayland
-    }
+    if (argc > 1) {
+        std::string arg1 = argv[1]; // <-- Объявляем arg1 здесь!
+        
+        if (arg1 == "--init-config" || arg1 == "--list-plugins" || arg1 == "--list-providers" || arg1 == "--inspect") {
+            std::string plugin_dir = get_plugin_directory();
+            PluginManager pm(plugin_dir);
+            pm.discover_plugins();
+
+            if (arg1 == "--init-config") {
+                LuaConfigGenerator::generate_configs(pm);
+                return 0;
+            } 
+            else if (arg1 == "--list-plugins") {
+                nlohmann::json j = pm.get_available_effects();
+                std::cout << j.dump(2) << std::endl;
+                return 0;
+            } 
+            else if (arg1 == "--list-providers") {
+                nlohmann::json j = pm.get_available_providers();
+                std::cout << j.dump(2) << std::endl;
+                return 0;
+            } 
+            else if (arg1 == "--inspect") {
+                if (argc < 3) {
+                    std::cerr << "Usage: interactive-wallpaper --inspect \"<Plugin Name>\"" << std::endl;
+                    return 1;
+                }
+                nlohmann::json info = pm.inspect_plugin(argv[2]);
+                if (info.is_null()) {
+                    std::cerr << "Error: Plugin '" << argv[2] << "' not found." << std::endl;
+                    return 1;
+                }
+                std::cout << info.dump(2) << std::endl;
+                return 0;
+            }
+        }
+    } 
+
 
     // 2. Block POSIX signals. They will be handled safely via signalfd integrated into the epoll loop.
     sigset_t mask;

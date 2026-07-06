@@ -64,7 +64,7 @@ bool {{CLASS_NAME}}::initialize(ICoreContext* core, uint32_t width, uint32_t hei
     return true;
 }
 
-void {{CLASS_NAME}}::render(uint32_t width, uint32_t height) {
+void {{CLASS_NAME}}::render(uint32_t width, uint32_t height, float dt) {
     glUseProgram(program);
     
     // Приблизительный расчет времени (в продакшене dt можно брать из BlackBoard)
@@ -97,6 +97,11 @@ void {{CLASS_NAME}}::cleanup() {
 // ЭКСПОРТ C-ABI (Точки входа для PluginManager)
 // ==============================================================================
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+    
     // Создание экземпляра эффекта
     IWallpaperEffectABI* create_effect() {
         return new {{CLASS_NAME}}();

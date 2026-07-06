@@ -49,9 +49,14 @@ public:
     
     virtual float* bind_float(const char* key) = 0;
     virtual float* bind_float_array(const char* key, size_t requested_size) = 0;
+    virtual void* bind_raw(const char* key, size_t requested_size_bytes) = 0;
+
     virtual char* bind_string(const char* key) = 0;
     virtual void set_string(const char* key, const char* value) = 0;
 };
+
+enum class LogLevel : uint32_t { INFO = 0, WARNING, ERR };
+
 
 class ICoreContextABI {
 public:
@@ -64,6 +69,8 @@ public:
     // Passing void* user_data is mandatory so the plugin can pass its 'this' pointer.
     virtual void register_epoll_fd(int fd, void (*callback)(uint32_t events, void* user_data), void* user_data) = 0;
     virtual void unregister_epoll_fd(int fd) = 0;
+    virtual void log_message(LogLevel level, const char* source, const char* message) = 0;
+    virtual void* get_native_display() = 0;
 
     virtual const char* get_bundle_path(const char* plugin_name) = 0;
 };
@@ -73,7 +80,12 @@ public:
     virtual ~IWallpaperEffectABI() = default;
 
     virtual bool initialize(ICoreContextABI* core, uint32_t width, uint32_t height) = 0;
-    virtual void render(uint32_t width, uint32_t height) = 0;
+    virtual void render(uint32_t width, uint32_t height, float dt) = 0;
+
+    virtual void resize(uint32_t width, uint32_t height) = 0;
+    virtual void set_paused(bool paused) = 0;
+
+
     virtual void cleanup() = 0;
     
     virtual const char* get_name() const = 0;

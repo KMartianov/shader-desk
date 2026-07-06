@@ -15,10 +15,11 @@
 class IDataProviderABI;
 class ICoreContextABI;
 
-// [NEW] Структура, описывающая конфигурацию для конкретного монитора
+// Структура, описывающая конфигурацию для конкретного монитора
 struct OutputConfig {
     std::string effect_name;
     sol::table custom_settings; // Локальные переопределения параметров (если есть)
+    float fps_limit = 0.0f;
 };
 
 class LuaEngine {

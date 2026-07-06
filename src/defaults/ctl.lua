@@ -212,4 +212,34 @@ function ctl.status()
     io.write(result)
 end
 
+-- Вывод списка всех подключенных в данный момент к мониторам эффектов
+function ctl.list_active()
+    local res = {}
+    for output_name, out in pairs(core.outputs) do
+        table.insert(res, {
+            output = output_name,
+            effect = out.effect or core.default_effect,
+            preset = out.preset or "none"
+        })
+    end
+    -- Выводим как JSON для удобного парсинга скриптами
+    print(require("json").encode(res)) 
+end
+
+-- Получить текущие (живые) значения параметров на мониторе
+function ctl.get_settings(output_name)
+    local target = output_name or "eDP-1"
+    local out = core.outputs[target]
+    if out and out.settings then
+        -- Выплевываем текущий стейт таблицы настроек
+        for k, v in pairs(out.settings) do
+            if type(v) ~= "function" then
+                print(string.format("%s = %s", k, tostring(v)))
+            end
+        end
+    else
+        print("ERROR: Output or settings not found")
+    end
+end
+
 return ctl

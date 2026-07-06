@@ -19,7 +19,7 @@ public:
     void set_parameter(const std::string& name, const EffectParameterValue& value) override;
 
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
-    void render(uint32_t width, uint32_t height) override;
+    void render(uint32_t width, uint32_t height, float dt) override;
     void cleanup() override;
 
 private:

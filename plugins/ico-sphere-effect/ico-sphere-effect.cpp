@@ -516,7 +516,7 @@ void IcoSphereEffect::update_rotation(float dt) {
 }
 
 
-void IcoSphereEffect::render(uint32_t width, uint32_t height) {
+void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     if (needs_shader_reload) { reload_shader_program(); needs_shader_reload = false; }
     if (needs_regeneration) { generate_icosphere(subdivisions); update_buffers(); needs_regeneration = false; }
 
@@ -528,9 +528,10 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
         angular_velocity += glm::vec3(dy, dx, 0.0f);
     }
 
-    update_rotation(0.016f);
+    update_rotation(dt); 
+    
     update_shockwaves(0.016f);
-    time += 0.016f;
+    time += dt;
 
     // --- 1. НАЧАЛО РЕНДЕРА (В FBO если включен Bloom, иначе на экран Wayland) ---
     if (bloom_intensity > 0.0f) {
@@ -699,6 +700,11 @@ public:
 
 // --- Exported C-functions ---
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+
     IWallpaperEffectABI* create_effect() {
         return new IcoSphereEffectPlugin(); 
     }

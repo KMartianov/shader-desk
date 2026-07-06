@@ -70,6 +70,20 @@ void PluginManager::discover_plugins() {
                     continue;
                 }
 
+                auto get_version_fn = (uint32_t (*)())dlsym(handle, "get_abi_version");
+                if (get_version_fn) {
+                    uint32_t plugin_version = get_version_fn();
+                    if (plugin_version != SHADER_DESK_ABI_VERSION) {
+                        std::cerr << "\033[31m[PluginManager] Rejected '" << path_str 
+                                  << "': ABI mismatch (Plugin v" << plugin_version 
+                                  << " vs Core v" << SHADER_DESK_ABI_VERSION << ").\033[0m" << std::endl;
+                        dlclose(handle);
+                        continue;
+                    }
+                } else {
+                    std::cerr << "[PluginManager] Warning: '" << path_str << "' has no get_abi_version(). Assuming v1." << std::endl;
+                }
+
                 bool is_valid_plugin = false;
                 bool handle_stored = false;
 
@@ -121,6 +135,71 @@ void PluginManager::discover_plugins() {
 std::string PluginManager::get_bundle_path(const std::string& effect_name) const {
     auto it = bundle_paths_.find(effect_name);
     return (it != bundle_paths_.end()) ? it->second : "";
+}
+
+std::vector<std::string> PluginManager::get_available_providers() const {
+    std::vector<std::string> names;
+    for (const auto& provider : data_providers) {
+        names.push_back(provider->get_name());
+    }
+    return names;
+}
+
+nlohmann::json PluginManager::inspect_plugin(const std::string& plugin_name) {
+    nlohmann::json root = nlohmann::json::object();
+    
+    // Вспомогательная лямбда для сериализации параметров ABI в JSON
+    auto serialize_params = [](uint32_t count, auto* plugin_ptr) -> nlohmann::json {
+        nlohmann::json j_params = nlohmann::json::array();
+        for (uint32_t i = 0; i < count; ++i) {
+            ParamInfoABI info;
+            plugin_ptr->get_parameter_info(i, &info);
+            
+            nlohmann::json p;
+            p["name"] = info.name;
+            p["description"] = info.description;
+            
+            switch (info.default_value.type) {
+                case ParamType::TYPE_BOOL:   p["type"] = "bool"; p["default"] = info.default_value.b_val; break;
+                case ParamType::TYPE_INT:    p["type"] = "int"; p["default"] = info.default_value.i_val; break;
+                case ParamType::TYPE_FLOAT:  p["type"] = "float"; p["default"] = info.default_value.f_val; break;
+                case ParamType::TYPE_STRING: p["type"] = "string"; p["default"] = info.default_value.s_val; break;
+                case ParamType::TYPE_VEC3:   
+                    p["type"] = "vec3"; 
+                    p["default"] = {info.default_value.vec3_val[0], info.default_value.vec3_val[1], info.default_value.vec3_val[2]}; 
+                    break;
+            }
+            j_params.push_back(p);
+        }
+        return j_params;
+    };
+
+    // 1. Ищем среди эффектов
+    for (const auto& plugin : loaded_plugins) {
+        if (plugin->name == plugin_name) {
+            WallpaperEffectPtr effect = create_effect(plugin_name);
+            if (effect) {
+                root["name"] = effect->get_name();
+                root["type"] = "effect";
+                root["bundle_path"] = get_bundle_path(plugin_name);
+                root["parameters"] = serialize_params(effect->get_parameter_count(), effect.get());
+                return root;
+            }
+        }
+    }
+
+    // 2. Ищем среди провайдеров данных
+    for (const auto& provider : data_providers) {
+        if (provider->get_name() == plugin_name) {
+            root["name"] = provider->get_name();
+            root["type"] = "provider";
+            root["bundle_path"] = get_bundle_path(plugin_name);
+            root["parameters"] = serialize_params(provider->get_parameter_count(), provider.get());
+            return root;
+        }
+    }
+
+    return nullptr; // Не найден
 }
 
 void PluginManager::initialize_providers(ICoreContextABI* core, const std::function<bool(IDataProviderABI*)>& configure_callback) {

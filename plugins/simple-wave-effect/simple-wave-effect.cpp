@@ -71,7 +71,7 @@ bool SimpleWaveEffectEffect::initialize(ICoreContext* core, uint32_t width, uint
     return true;
 }
 
-void SimpleWaveEffectEffect::render(uint32_t width, uint32_t height) {
+void SimpleWaveEffectEffect::render(uint32_t width, uint32_t height, float dt) {
     glUseProgram(program);
     
     time += 0.016f; // Assume ~60 FPS
@@ -99,6 +99,11 @@ void SimpleWaveEffectEffect::cleanup() {
 
 // --- Exported C-functions ---
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+    
     IWallpaperEffectABI* create_effect() {
         return new SimpleWaveEffectEffect(); // (например, new HilbertCubeEffect())
     }

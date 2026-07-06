@@ -113,6 +113,11 @@ public:
 
 
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+    
     IDataProviderABI* create_provider() { 
         return new PointerProvider(); // (e.g., new AudioProvider())
     }

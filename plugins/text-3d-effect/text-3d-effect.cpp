@@ -264,7 +264,7 @@ void Text3DEffect::update_rotation(float dt) {
     final_orientation = base_quat * mouse_quat;
 }
 
-void Text3DEffect::render(uint32_t width, uint32_t height) {
+void Text3DEffect::render(uint32_t width, uint32_t height, float dt) {
     upload_texture_if_ready();
 
     std::string target_text = (p_dynamic_text && p_dynamic_text[0] != '\0') 
@@ -277,8 +277,9 @@ void Text3DEffect::render(uint32_t width, uint32_t height) {
         start_async_sdf_generation(active_text);
     }
 
-    update_rotation(0.016f);
-    time += 0.016f;
+    update_rotation(dt); 
+    time += dt;
+    
 
     glViewport(0, 0, width, height);
     glUseProgram(program);
@@ -325,6 +326,11 @@ void Text3DEffect::cleanup() {
 
 // --- Exported C-functions ---
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+    
     IWallpaperEffectABI* create_effect() {
         return new Text3DEffect(); // (например, new HilbertCubeEffect())
     }

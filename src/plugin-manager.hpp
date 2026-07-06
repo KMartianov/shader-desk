@@ -4,9 +4,17 @@
 #include <vector>
 #include <memory>
 #include <functional> // Added for std::function
+
+#include <unordered_map>
+#include <nlohmann/json.hpp>
+
+// Увеличивай на 1 при каждом ИЗМЕНЕНИИ сигнатур функций в этом файле
+#define SHADER_DESK_ABI_VERSION 1 
+
 #include "plugin-abi.hpp"       // [NEW] Include ABI interfaces
 #include "wallpaper-effect.hpp" // Include for WallpaperEffectPtr
 #include "data-provider.hpp"    
+
 
 class PluginManager {
 public:
@@ -17,6 +25,8 @@ public:
     void discover_plugins();
     std::string get_bundle_path(const std::string& effect_name) const;
 
+    std::vector<std::string> get_available_providers() const;
+    nlohmann::json inspect_plugin(const std::string& plugin_name);
     
     /**
      * @brief Инициализирует найденные Data Providers.

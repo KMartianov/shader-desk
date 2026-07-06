@@ -54,7 +54,7 @@ public:
         std::string identifier;
 
         std::chrono::steady_clock::time_point last_frame_time = std::chrono::steady_clock::now();
-        
+        float time_since_last_render = 0.0f;
         // Wayland objects
         wl_output* output_obj = nullptr;
         wl_surface* surface = nullptr;
@@ -114,6 +114,9 @@ public:
 
     // --- Internal Core Method (For LuaEngine, Inotify, etc.) ---
     void register_epoll_fd_cxx(int fd, std::function<void(uint32_t)> callback);
+
+    void log_message(LogLevel level, const char* source, const char* message) override;
+    void* get_native_display() override { return display; }
 
     // --- Wayland Listeners (Static callbacks) ---
     static void registry_global(void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version);

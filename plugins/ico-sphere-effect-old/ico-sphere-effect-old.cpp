@@ -310,7 +310,7 @@ void IcoSphereEffect::update_rotation(float dt) {
 }
 
 
-void IcoSphereEffect::render(uint32_t width, uint32_t height) {
+void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     // CHECK FOR SHADER HOT-RELOAD
     if (needs_shader_reload) {
         reload_shader_program();
@@ -344,7 +344,8 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
         needs_regeneration = false;
     }
 
-    update_rotation(0.016f);
+    update_rotation(dt); 
+    
     
     glEnable(GL_DEPTH_TEST);
     glViewport(0, 0, width, height);
@@ -364,7 +365,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height) {
     glUniform3f(u_lightPos, 5.0f, 5.0f, 5.0f);   
     glUniform3f(u_viewPos, 0.0f, 0.0f, 3.0f);    
     
-    time += 0.016f;
+    time += dt;
     glUniform1f(u_time, time);
     
     glUniform1f(u_oscill_amp, scaled_oscill_amp);
@@ -500,6 +501,11 @@ public:
 
 // --- Exported C-functions ---
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+    
     IWallpaperEffectABI* create_effect() {
         return new IcoSphereEffectPlugin(); 
     }

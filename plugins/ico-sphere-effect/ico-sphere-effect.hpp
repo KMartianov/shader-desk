@@ -58,7 +58,7 @@ public:
 
     // --- Реализация интерфейса WallpaperEffect ---
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
-    void render(uint32_t width, uint32_t height) override;
+    void render(uint32_t width, uint32_t height, float dt) override;
     void cleanup() override;
     
     // ========================================================================

@@ -160,6 +160,11 @@ private:
 
 // --- ABI EXPORT FOR PLUGIN MANAGER ---
 extern "C" {
+
+    uint32_t get_abi_version() {
+        return SHADER_DESK_ABI_VERSION;
+    }
+    
     IDataProviderABI* create_provider() { 
         return new AudioProvider(); 
     }

@@ -399,6 +399,8 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
     if (!core.valid()) return res;
 
     res.effect_name = core.get_or("default_effect", core.get_or("active_effect", std::string("")));
+    // Читаем глобальный лимит кадров (по умолчанию 0.0)
+    res.fps_limit = core.get_or("fps_limit", 0.0f);
 
     sol::object outputs_obj = core["outputs"];
     if (!outputs_obj.is<sol::table>()) return res;
@@ -412,17 +414,18 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
     if (out_conf_obj.is<sol::table>()) {
         sol::table out_conf = out_conf_obj.as<sol::table>();
         res.effect_name = out_conf.get_or("effect", res.effect_name);
+        res.fps_limit = out_conf.get_or("fps_limit", res.fps_limit); // Локальный лимит
         
-        // 1. Создаем или получаем таблицу settings
         sol::table settings;
         if (out_conf["settings"].is<sol::table>()) {
             settings = out_conf["settings"];
+            // Проверяем лимит еще и внутри таблицы settings
+            res.fps_limit = settings.get_or("fps_limit", res.fps_limit);
         } else {
             settings = lua.create_table();
             out_conf["settings"] = settings;
         }
         
-        // 2. Накладываем пресет внутрь settings (он заполнит только недостающие поля)
         std::string preset = out_conf.get_or("preset", std::string(""));
         if (!preset.empty()) {
             sol::function apply_preset = core["utils"]["apply_preset"];
@@ -430,10 +433,8 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 apply_preset(settings, res.effect_name, preset);
             }
         }
-
         res.custom_settings = settings;
     }
-
     return res;
 }
 

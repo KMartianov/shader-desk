@@ -16,7 +16,7 @@
 
 class PluginManager {
 public:
-    PluginManager(const std::string& plugin_dir);
+    PluginManager(const std::vector<std::string>& plugin_dirs);
     ~PluginManager();
 
     // Scans directory for .so files and loads them
@@ -55,6 +55,6 @@ private:
     // Storage for dlopen handles of Data Providers.
     std::vector<void*> provider_handles;
 
-    std::string plugin_directory;
+    std::vector<std::string> search_directories;
     std::unordered_map<std::string, std::string> bundle_paths_;
 };

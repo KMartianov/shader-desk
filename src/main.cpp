@@ -1,31 +1,104 @@
-// src/main.cpp
+#include <iostream>
+#include <string>
+#include <vector>
+#include <filesystem>
+#include <atomic>
+#include <signal.h>
+#include <sys/signalfd.h>
+#include <algorithm>
+
+#include <nlohmann/json.hpp>
 #include "interactive-wallpaper.hpp"
 #include "plugin-manager.hpp"
 #include "lua-engine.hpp"
 #include "lua-config-generator.hpp"
-#include <iostream>
-#include <string>
-#include <atomic>
-#include <signal.h>
-#include <sys/signalfd.h>
-#include <filesystem>
-#include <algorithm>
+
+namespace fs = std::filesystem;
+
+// Если мы собираем без установки (в IDE), используем локальные папки как фоллбэк
+#ifndef SYSTEM_SOURCE_DIR
+#define SYSTEM_SOURCE_DIR "./plugins"
+#endif
+#ifndef SYSTEM_PLUGIN_DIR
+#define SYSTEM_PLUGIN_DIR "./build-release/plugins"
+#endif
 
 std::atomic<bool> global_running{true};
 
-std::string get_plugin_directory() {
+// 1. Получение путей для загрузки плагинов
+std::vector<std::string> get_plugin_directories() {
+    std::vector<std::string> dirs;
     const char* home = getenv("HOME");
-    return home ? std::string(home) + "/.config/interactive-wallpaper/effects" : "./effects";
+    
+    // ПРИОРИТЕТ 1: Пользовательские модификации (из ~/.config)
+    if (home) {
+        dirs.push_back(std::string(home) + "/.config/interactive-wallpaper/effects");
+    }
+    
+    // ПРИОРИТЕТ 2: Локальная папка для разработки (БЕЗ УСТАНОВКИ В СИСТЕМУ)
+    // Если запускаем из корня проекта: ./build-release/interactive-wallpaper
+    dirs.push_back("./plugins");
+    // Если запускаем находясь внутри папки build: ./interactive-wallpaper
+    dirs.push_back("../plugins");
+    
+    // ПРИОРИТЕТ 3: Системные скомпилированные плагины (/usr/local/lib/...)
+    dirs.push_back(SYSTEM_PLUGIN_DIR);
+    
+    return dirs;
+}
+
+// 2. Функция копирования исходников
+void init_user_workspace() {
+    const char* home = getenv("HOME");
+    if (!home) return;
+
+    fs::path user_effects_dir = fs::path(home) / ".config/interactive-wallpaper/effects";
+    
+    // Ищем папку с исходниками: локальную или системную
+    fs::path source_to_use;
+    if (fs::exists("./plugins")) {
+        source_to_use = "./plugins";
+    } else if (fs::exists("../plugins")) {
+        source_to_use = "../plugins";
+    } else if (fs::exists(SYSTEM_SOURCE_DIR)) {
+        source_to_use = SYSTEM_SOURCE_DIR;
+    } else {
+        std::cerr << "Error: Source directory not found. Run from project root or install." << std::endl;
+        return;
+    }
+
+    std::cout << "Initializing modding workspace at: " << user_effects_dir << std::endl;
+    std::cout << "Copying templates from: " << source_to_use << std::endl;
+    fs::create_directories(user_effects_dir);
+
+    // Копируем исходники, не перезаписывая уже измененные пользователем файлы
+    auto copy_opts = fs::copy_options::recursive | fs::copy_options::skip_existing;
+    std::error_code ec;
+    
+    fs::copy(source_to_use, user_effects_dir, copy_opts, ec);
+    
+    if (ec) {
+        std::cerr << "Failed to copy workspace: " << ec.message() << std::endl;
+    } else {
+        std::cout << "Workspace initialized successfully!\n";
+        std::cout << "You can now edit .cpp and .glsl files in " << user_effects_dir << " and compile them." << std::endl;
+    }
 }
 
 int main(int argc, char** argv) {
     // 1. Handle CLI commands (e.g., initial configuration generation)
     if (argc > 1) {
-        std::string arg1 = argv[1]; // <-- Объявляем arg1 здесь!
+        std::string arg1 = argv[1];
         
+        if (arg1 == "--init-workspace") {
+            init_user_workspace();
+            return 0;
+        }
+
         if (arg1 == "--init-config" || arg1 == "--list-plugins" || arg1 == "--list-providers" || arg1 == "--inspect") {
-            std::string plugin_dir = get_plugin_directory();
-            PluginManager pm(plugin_dir);
+            // ИСПРАВЛЕНИЕ: Вызываем правильную функцию и передаем вектор в PluginManager
+            std::vector<std::string> p_dirs = get_plugin_directories();
+            PluginManager pm(p_dirs);
             pm.discover_plugins();
 
             if (arg1 == "--init-config") {
@@ -58,7 +131,6 @@ int main(int argc, char** argv) {
         }
     } 
 
-
     // 2. Block POSIX signals. They will be handled safely via signalfd integrated into the epoll loop.
     sigset_t mask;
     sigemptyset(&mask);
@@ -76,13 +148,14 @@ int main(int argc, char** argv) {
     // When main() exits, C++ destroys local variables in reverse order of declaration.
     // By declaring PluginManager before InteractiveWallpaper, we guarantee that dlclose() 
     // is called only AFTER the microkernel has safely destroyed all active plugin instances.
-    std::string plugin_dir = get_plugin_directory();
-    PluginManager plugin_manager(plugin_dir);
+    std::vector<std::string> plugin_dirs = get_plugin_directories();
+    PluginManager plugin_manager(plugin_dirs);
     plugin_manager.discover_plugins();
 
     auto available_effects = plugin_manager.get_available_effects();
     if (available_effects.empty()) {
-        std::cerr << "No visual plugins discovered in: " << plugin_dir << ". Exiting." << std::endl;
+        // ИСПРАВЛЕНИЕ: Безопасный вывод в лог (plugin_dir ранее не существовала в этой области видимости)
+        std::cerr << "No visual plugins discovered in searched directories. Exiting." << std::endl;
         return 1;
     }
 

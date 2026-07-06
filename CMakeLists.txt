@@ -1,20 +1,33 @@
+# ==============================================================================
+# SHADER DESK - INTERACTIVE WAYLAND WALLPAPER ENGINE
+# Production-ready CMake configuration for Linux package managers (AUR, APT, etc.)
+# ==============================================================================
 cmake_minimum_required(VERSION 3.14)
-project(shader-desk LANGUAGES C CXX)
+
+# Define project version for package managers
+project(shader-desk VERSION 1.0.0 LANGUAGES C CXX)
 
 # ==============================================================================
-# GLOBAL CONFIGURATION
+# 1. GLOBAL CONFIGURATION & GNU INSTALL DIRS (FHS COMPLIANCE)
 # ==============================================================================
+# Automatically sets CMAKE_INSTALL_BINDIR, CMAKE_INSTALL_LIBDIR, etc.
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# --- Directories ---
+# --- Define standard paths ---
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include") # Shared headers (IPC protocols)
+set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROTOCOL_OUTPUT_DIR "${BIN_DIR}/protocols")
 file(MAKE_DIRECTORY "${PROTOCOL_OUTPUT_DIR}")
+
+# Define where compiled plugins should be installed globally
+set(PLUGIN_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/shader-desk/plugins" 
+    CACHE PATH "System directory for compiled .so plugins")
 
 # --- Build Options ---
 option(BUILD_AUDIO_DAEMON "Build PipeWire/PulseAudio FFT daemon" ON)
@@ -22,26 +35,27 @@ option(BUILD_EVDEV_DAEMON "Build /dev/input mouse tracking daemon" ON)
 option(ENABLE_PROFILING "Enable Tracy Profiler telemetry" OFF)
 
 # ==============================================================================
-# SYSTEM DEPENDENCIES
+# 2. SYSTEM DEPENDENCIES
 # ==============================================================================
 find_package(PkgConfig REQUIRED)
-find_package(glm REQUIRED)
+
+# Try to find system-wide nlohmann_json and glm
 find_package(nlohmann_json REQUIRED)
+find_package(glm REQUIRED)
 
 pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
 pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
-pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols)
+pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
-pkg_check_modules(LIBEVDEV libevdev) # Optional: only required for the evdev mouse daemon
 pkg_check_modules(LUAJIT REQUIRED luajit)
 
 # ==============================================================================
-# EXTERNAL DEPENDENCIES (FetchContent)
+# 3. EXTERNAL DEPENDENCIES (FetchContent)
 # ==============================================================================
 include(FetchContent)
 
-# 1. Lua/C++ Binding (sol2)
+# Lua/C++ Binding (sol2)
 FetchContent_Declare(
     sol2
     GIT_REPOSITORY https://github.com/ThePhD/sol2.git
@@ -49,9 +63,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
-# 2. Tracy Profiler
-# Strictly isolated: only fetched and built if telemetry is explicitly enabled.
-# This guarantees 100% offline-friendly builds when ENABLE_PROFILING=OFF.
+# Tracy Profiler (Isolated: guarantees offline builds when ENABLE_PROFILING=OFF)
 if(ENABLE_PROFILING)
     set(TRACY_SHARED ON CACHE BOOL "Build Tracy as a shared library" FORCE)
     set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy profiling" FORCE)
@@ -65,7 +77,7 @@ if(ENABLE_PROFILING)
 endif()
 
 # ==============================================================================
-# WAYLAND PROTOCOLS GENERATION
+# 4. WAYLAND PROTOCOLS GENERATION
 # ==============================================================================
 find_program(WAYLAND_SCANNER NAMES wayland-scanner REQUIRED)
 find_program(SED NAMES sed REQUIRED)
@@ -74,137 +86,107 @@ set(PROTOCOL_SOURCES "")
 set(GENERATED_PROTOCOL_HEADERS "")
 set(THIRD_PARTY_PROTO_DIR "${SRC_DIR}/third_party/wlr-protocols")
 
-# 1. wlr-layer-shell (unstable)
+# Helper macro for generating protocols from existing system files
+macro(generate_wayland_protocol XML_PATH HEADER_FILE SOURCE_FILE)
+    if(EXISTS "${XML_PATH}")
+        add_custom_command(
+            OUTPUT "${HEADER_FILE}" "${SOURCE_FILE}"
+            COMMAND ${WAYLAND_SCANNER} client-header "${XML_PATH}" "${HEADER_FILE}"
+            COMMAND ${WAYLAND_SCANNER} private-code  "${XML_PATH}" "${SOURCE_FILE}"
+            DEPENDS "${XML_PATH}"
+            COMMENT "Generating Wayland protocol: ${XML_PATH}"
+            VERBATIM
+        )
+        list(APPEND PROTOCOL_SOURCES "${SOURCE_FILE}")
+        list(APPEND GENERATED_PROTOCOL_HEADERS "${HEADER_FILE}")
+    endif()
+endmacro()
+
+# 1. wlr-layer-shell (Patching C++ keyword collision)
+# ИСПРАВЛЕНИЕ: Мы не используем макрос с if(EXISTS) для сгенерированного файла,
+# так как на этапе конфигурации CMake его еще не существует.
 set(LAYER_SHELL_XML "${THIRD_PARTY_PROTO_DIR}/unstable/wlr-layer-shell-unstable-v1.xml")
 set(LAYER_SHELL_XML_FIXED "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-fixed.xml")
-set(LAYER_SHELL_HEADER "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-client-protocol.h")
-set(LAYER_SHELL_SOURCE "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-client-protocol.c")
-
 if(EXISTS "${LAYER_SHELL_XML}")
-    # We patch the XML to replace 'namespace' with 'namespace_' to prevent C++ keyword collisions
     add_custom_command(
         OUTPUT "${LAYER_SHELL_XML_FIXED}"
         COMMAND ${CMAKE_COMMAND} -E copy "${LAYER_SHELL_XML}" "${LAYER_SHELL_XML_FIXED}"
         COMMAND ${SED} -i "s/name=\\\"namespace\\\"/name=\\\"namespace_\\\"/g" "${LAYER_SHELL_XML_FIXED}"
         DEPENDS "${LAYER_SHELL_XML}"
-        COMMENT "Patching namespace keyword in wlr-layer-shell protocol"
-        VERBATIM
     )
+    
+    set(LS_HEADER "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-client-protocol.h")
+    set(LS_SOURCE "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-client-protocol.c")
+    
     add_custom_command(
-        OUTPUT "${LAYER_SHELL_HEADER}" "${LAYER_SHELL_SOURCE}"
-        COMMAND ${WAYLAND_SCANNER} client-header "${LAYER_SHELL_XML_FIXED}" "${LAYER_SHELL_HEADER}"
-        COMMAND ${WAYLAND_SCANNER} private-code  "${LAYER_SHELL_XML_FIXED}" "${LAYER_SHELL_SOURCE}"
+        OUTPUT "${LS_HEADER}" "${LS_SOURCE}"
+        COMMAND ${WAYLAND_SCANNER} client-header "${LAYER_SHELL_XML_FIXED}" "${LS_HEADER}"
+        COMMAND ${WAYLAND_SCANNER} private-code  "${LAYER_SHELL_XML_FIXED}" "${LS_SOURCE}"
         DEPENDS "${LAYER_SHELL_XML_FIXED}"
-        COMMENT "Generating wlr-layer-shell protocol"
+        COMMENT "Generating Wayland protocol: ${LAYER_SHELL_XML_FIXED}"
         VERBATIM
     )
-    list(APPEND PROTOCOL_SOURCES "${LAYER_SHELL_SOURCE}")
-    list(APPEND GENERATED_PROTOCOL_HEADERS "${LAYER_SHELL_HEADER}")
+    list(APPEND PROTOCOL_SOURCES "${LS_SOURCE}")
+    list(APPEND GENERATED_PROTOCOL_HEADERS "${LS_HEADER}")
 endif()
 
-# 2. viewporter
+# 2. Viewporter & XDG-Shell
 if(WAYLAND_PROTOCOLS_FOUND)
-    set(VIEWPORTER_XML "${WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/viewporter/viewporter.xml")
+    set(WP_STABLE_DIR "${WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable")
 else()
-    set(VIEWPORTER_XML "/usr/share/wayland-protocols/stable/viewporter/viewporter.xml")
+    set(WP_STABLE_DIR "/usr/share/wayland-protocols/stable")
 endif()
 
-set(VIEWPORTER_HEADER "${PROTOCOL_OUTPUT_DIR}/viewporter-client-protocol.h")
-set(VIEWPORTER_SOURCE "${PROTOCOL_OUTPUT_DIR}/viewporter-client-protocol.c")
+generate_wayland_protocol("${WP_STABLE_DIR}/viewporter/viewporter.xml"
+    "${PROTOCOL_OUTPUT_DIR}/viewporter-client-protocol.h"
+    "${PROTOCOL_OUTPUT_DIR}/viewporter-client-protocol.c")
 
-if(EXISTS "${VIEWPORTER_XML}")
-    add_custom_command(
-        OUTPUT "${VIEWPORTER_HEADER}" "${VIEWPORTER_SOURCE}"
-        COMMAND ${WAYLAND_SCANNER} client-header "${VIEWPORTER_XML}" "${VIEWPORTER_HEADER}"
-        COMMAND ${WAYLAND_SCANNER} private-code  "${VIEWPORTER_XML}" "${VIEWPORTER_SOURCE}"
-        DEPENDS "${VIEWPORTER_XML}"
-        COMMENT "Generating viewporter protocol"
-        VERBATIM
-    )
-    list(APPEND PROTOCOL_SOURCES "${VIEWPORTER_SOURCE}")
-    list(APPEND GENERATED_PROTOCOL_HEADERS "${VIEWPORTER_HEADER}")
-endif()
+generate_wayland_protocol("${WP_STABLE_DIR}/xdg-shell/xdg-shell.xml"
+    "${PROTOCOL_OUTPUT_DIR}/xdg-shell-client-protocol.h"
+    "${PROTOCOL_OUTPUT_DIR}/xdg-shell-client-protocol.c")
 
-# 3. xdg-shell
-if(WAYLAND_PROTOCOLS_FOUND)
-    set(XDG_XML "${WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml")
-else()
-    set(XDG_XML "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml")
-endif()
-
-set(XDG_HEADER "${PROTOCOL_OUTPUT_DIR}/xdg-shell-client-protocol.h")
-set(XDG_SOURCE "${PROTOCOL_OUTPUT_DIR}/xdg-shell-client-protocol.c")
-
-if(EXISTS "${XDG_XML}")
-    add_custom_command(
-        OUTPUT "${XDG_HEADER}" "${XDG_SOURCE}"
-        COMMAND ${WAYLAND_SCANNER} client-header "${XDG_XML}" "${XDG_HEADER}"
-        COMMAND ${WAYLAND_SCANNER} private-code  "${XDG_XML}" "${XDG_SOURCE}"
-        DEPENDS "${XDG_XML}"
-        COMMENT "Generating xdg-shell protocol"
-        VERBATIM
-    )
-    list(APPEND PROTOCOL_SOURCES "${XDG_SOURCE}")
-    list(APPEND GENERATED_PROTOCOL_HEADERS "${XDG_HEADER}")
-endif()
-
-add_custom_target(wayland_protocols ALL
-    DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_PROTOCOL_HEADERS}
-)
+add_custom_target(wayland_protocols ALL DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_PROTOCOL_HEADERS})
 
 # ==============================================================================
-# EMBEDDED RESOURCES GENERATION (Lua -> C++ Headers)
+# 5. EMBEDDED RESOURCES GENERATION (Lua -> C++ Headers)
 # ==============================================================================
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# 1. ctl.lua
-set(EMBED_CTL_HPP "${GENERATED_DIR}/embedded_ctl.hpp")
-add_custom_command(
-    OUTPUT "${EMBED_CTL_HPP}"
-    COMMAND ${CMAKE_COMMAND} 
-        -DINPUT_FILE=${SRC_DIR}/defaults/ctl.lua
-        -DOUTPUT_FILE=${EMBED_CTL_HPP}
-        -DVAR_NAME=CTL_LUA
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
-    DEPENDS "${SRC_DIR}/defaults/ctl.lua" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
-    COMMENT "Baking ctl.lua into C++ header"
-    VERBATIM
-)
+# ИСПРАВЛЕНИЕ: Добавлен отдельный аргумент HEADER_NAME, чтобы явно указывать имя файла в нижнем регистре
+macro(embed_lua_script FILE_NAME HEADER_NAME VAR_NAME)
+    set(HEADER_OUT "${GENERATED_DIR}/embedded_${HEADER_NAME}.hpp")
+    add_custom_command(
+        OUTPUT "${HEADER_OUT}"
+        COMMAND ${CMAKE_COMMAND} 
+            -DINPUT_FILE=${SRC_DIR}/defaults/${FILE_NAME}
+            -DOUTPUT_FILE=${HEADER_OUT}
+            -DVAR_NAME=${VAR_NAME}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
+        DEPENDS "${SRC_DIR}/defaults/${FILE_NAME}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
+        COMMENT "Baking ${FILE_NAME} into C++ header"
+        VERBATIM
+    )
+    list(APPEND EMBEDDED_HEADERS "${HEADER_OUT}")
+endmacro()
 
-# 2. init.lua
-set(EMBED_INIT_HPP "${GENERATED_DIR}/embedded_init.hpp")
-add_custom_command(
-    OUTPUT "${EMBED_INIT_HPP}"
-    COMMAND ${CMAKE_COMMAND} 
-        -DINPUT_FILE=${SRC_DIR}/defaults/init.lua
-        -DOUTPUT_FILE=${EMBED_INIT_HPP}
-        -DVAR_NAME=INIT_LUA
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
-    DEPENDS "${SRC_DIR}/defaults/init.lua" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
-    COMMENT "Baking init.lua into C++ header"
-    VERBATIM
-)
-
-add_custom_target(embedded_resources ALL
-    DEPENDS "${EMBED_CTL_HPP}" "${EMBED_INIT_HPP}"
-)
+embed_lua_script("ctl.lua" "ctl" "CTL_LUA")
+embed_lua_script("init.lua" "init" "INIT_LUA")
+add_custom_target(embedded_resources ALL DEPENDS ${EMBEDDED_HEADERS})
 
 # ==============================================================================
-# CORE & SDK LIBRARIES
+# 6. CORE & SDK LIBRARIES
 # ==============================================================================
-include(GNUInstallDirs)
 
-# --- RPATH Configuration ---
-# Ensures plugins and core can dynamically load shared libraries from the install tree
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${CMAKE_INSTALL_PREFIX}/lib64")
+# RPATH configuration for system-wide installation
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_FULL_LIBDIR}")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # 1. SDK Helper Library (Shader Utils)
 add_library(shader_utils SHARED "${SRC_DIR}/shader-utils.cpp")
 add_library(ShaderDesk::shader_utils ALIAS shader_utils)
-set_property(TARGET shader_utils PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_target_properties(shader_utils PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(shader_utils PUBLIC
     $<BUILD_INTERFACE:${SRC_DIR}>
@@ -222,15 +204,13 @@ target_include_directories(shader_desk_sdk INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
 )
 
-# Conditionally link Tracy and enable profiling macros ONLY if requested.
-# If OFF, no symbols are linked and C++ macros safely compile to no-ops.
 if(ENABLE_PROFILING)
     target_link_libraries(shader_desk_sdk INTERFACE TracyClient)
     target_compile_definitions(shader_desk_sdk INTERFACE TRACY_ENABLE=1)
 endif()
 
 # ==============================================================================
-# EXECUTABLES: CORE & UTILITIES
+# 7. EXECUTABLES: CORE & UTILITIES
 # ==============================================================================
 set(APP_SRC_FILES
     "${SRC_DIR}/main.cpp"
@@ -241,7 +221,7 @@ set(APP_SRC_FILES
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-# 1. Main Core Executable (Wayland Microkernel)
+# Main Core Executable (Wayland Microkernel)
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
 target_include_directories(interactive-wallpaper PRIVATE
     "${GENERATED_DIR}"
@@ -251,6 +231,12 @@ target_include_directories(interactive-wallpaper PRIVATE
     ${EGL_INCLUDE_DIRS}
     ${GLESv2_INCLUDE_DIRS}
     ${LUAJIT_INCLUDE_DIRS} 
+)
+
+# Pass system paths to C++ via macros to avoid hardcoding!
+target_compile_definitions(interactive-wallpaper PRIVATE
+    SYSTEM_PLUGIN_DIR="${PLUGIN_INSTALL_DIR}"
+    SYSTEM_SOURCE_DIR="${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/plugins-source"
 )
 
 target_link_libraries(interactive-wallpaper PRIVATE
@@ -268,30 +254,20 @@ target_link_libraries(interactive-wallpaper PRIVATE
     pthread
 )
 
-if(TARGET wayland_protocols)
-    add_dependencies(interactive-wallpaper wayland_protocols)
-endif()
-if(TARGET embedded_resources)
-    add_dependencies(interactive-wallpaper embedded_resources)
-endif()
+add_dependencies(interactive-wallpaper wayland_protocols embedded_resources)
 
-# 2. CLI Controller Utility
+# CLI Controller Utility
 add_executable(shader-desk-ctl utilities/shader-desk-ctl.cpp)
 
 # ==============================================================================
-# SUBDIRECTORIES (Daemons & Plugins)
+# 8. SUBDIRECTORIES (Daemons & Plugins)
 # ==============================================================================
-# Safe submodule inclusion macro
 macro(add_submodule_if_exists SUBDIR)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/CMakeLists.txt")
-        message(STATUS "Including subsystem: ${SUBDIR}")
         add_subdirectory(${SUBDIR})
-    else()
-        message(WARNING "Subsystem ${SUBDIR} not found or empty.")
     endif()
 endmacro()
 
-# External Daemons (Opt-in)
 if(BUILD_AUDIO_DAEMON)
     add_submodule_if_exists(daemons/audio-daemon)
 endif()
@@ -300,24 +276,24 @@ if(BUILD_EVDEV_DAEMON)
     add_submodule_if_exists(daemons/evdev-daemon)
 endif()
 
-# Internal Plugins (.so bundles)
+# The plugins directory handles compiling and installing native .so plugins
 add_submodule_if_exists(plugins)
 
 # ==============================================================================
-# INSTALLATION EXPORT RULES
+# 9. SYSTEM INSTALLATION EXPORT RULES (FHS Compliant)
 # ==============================================================================
 include(CMakePackageConfigHelpers)
 
-# Binaries
+# 1. Binaries (Core & CLI)
 install(TARGETS interactive-wallpaper shader-desk-ctl
-        DESTINATION ${CMAKE_INSTALL_BINDIR})
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-# Systemd User Services
+# 2. Systemd User Services
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/systemd/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user"
         FILES_MATCHING PATTERN "*.service")
 
-# SDK Headers (Required for out-of-tree plugin compilation)
+# 3. SDK Headers (Required for out-of-tree plugin compilation)
 set(SDK_HEADERS
     "${SRC_DIR}/plugin-abi.hpp"
     "${SRC_DIR}/core-context.hpp"
@@ -329,7 +305,7 @@ set(SDK_HEADERS
 install(FILES ${SDK_HEADERS} 
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/shader-desk)
 
-# Export SDK CMake targets for 3rd-party plugin developers
+# 4. Export SDK CMake targets for 3rd-party plugin developers
 install(TARGETS shader_utils shader_desk_sdk
         EXPORT ShaderDeskTargets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -346,7 +322,16 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ShaderDeskConfig.cmake"
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ShaderDeskConfig.cmake"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ShaderDesk)
 
-# Python Plugin Generator & Templates
+# 5. User Workspace Setup: Copy Plugin Sources
+# This allows users to run `--init-workspace` and modify raw .cpp/.glsl files
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/plugins/"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/shader-desk/plugins-source"
+        PATTERN "build*" EXCLUDE
+        PATTERN ".git*" EXCLUDE
+        PATTERN "*.so" EXCLUDE
+        PATTERN "*.o" EXCLUDE)
+
+# 6. Python Plugin Generator & Templates
 install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/generate_plugin.py"
         DESTINATION ${CMAKE_INSTALL_BINDIR} 
         RENAME shader-desk-generate)
@@ -354,4 +339,10 @@ install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/generate_plugin.py"
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/plugins/templates/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/shader-desk/templates")
 
-message(STATUS "Shader Desk build configured. Run 'make install' to export the SDK.")
+message(STATUS "-------------------------------------------------------------")
+message(STATUS "Shader Desk v1.0.0 build configured.")
+message(STATUS "System Plugin Dir: ${PLUGIN_INSTALL_DIR}")
+message(STATUS "System Source Dir: ${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/plugins-source")
+message(STATUS "Run 'cmake --build build -j$(nproc)' to compile.")
+message(STATUS "Run 'sudo cmake --install build' to deploy to the system.")
+message(STATUS "-------------------------------------------------------------")

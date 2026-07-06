@@ -48,6 +48,9 @@ _deps
 CMakeUserPresets.json
 
 build
+build-release/
+build-tracy/
+
 utilities
 !utilities/shader-desk-ctl.cpp
 .log

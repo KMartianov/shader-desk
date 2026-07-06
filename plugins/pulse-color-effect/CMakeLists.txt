@@ -10,7 +10,9 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
 
 # --- ПОДКЛЮЧЕНИЕ СИСТЕМНОГО SDK ЯДРА ---
-find_package(ShaderDesk REQUIRED)
+if(NOT TARGET ShaderDesk::shader_desk_sdk)
+    find_package(ShaderDesk REQUIRED)
+endif()
 
 # --- Сборка библиотеки ---
 add_library(${PLUGIN_NAME} SHARED "${PLUGIN_NAME}.cpp")

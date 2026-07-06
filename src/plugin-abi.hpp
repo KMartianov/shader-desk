@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#define SHADER_DESK_ABI_VERSION 1
 
 // ==============================================================================
 // 1. SAFE DATA TYPES (POD)

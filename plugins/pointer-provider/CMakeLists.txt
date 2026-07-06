@@ -8,7 +8,9 @@ set(PLUGIN_NAME "pointer-provider")
 project(${PLUGIN_NAME}-plugin LANGUAGES CXX)
 
 # --- ПОДКЛЮЧЕНИЕ СИСТЕМНОГО SDK ЯДРА ---
-find_package(ShaderDesk REQUIRED)
+if(NOT TARGET ShaderDesk::shader_desk_sdk)
+    find_package(ShaderDesk REQUIRED)
+endif()
 
 # --- Сборка библиотеки ---
 add_library(${PLUGIN_NAME} SHARED "${PLUGIN_NAME}.cpp")

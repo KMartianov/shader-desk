@@ -8,8 +8,6 @@
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 
-// Увеличивай на 1 при каждом ИЗМЕНЕНИИ сигнатур функций в этом файле
-#define SHADER_DESK_ABI_VERSION 1 
 
 #include "plugin-abi.hpp"       // [NEW] Include ABI interfaces
 #include "wallpaper-effect.hpp" // Include for WallpaperEffectPtr

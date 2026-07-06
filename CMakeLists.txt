@@ -11,7 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # --- Directories ---
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
-set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include") # Общие заголовки (IPC протоколы)
+set(INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include") # Shared headers (IPC protocols)
 set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROTOCOL_OUTPUT_DIR "${BIN_DIR}/protocols")
 file(MAKE_DIRECTORY "${PROTOCOL_OUTPUT_DIR}")
@@ -33,7 +33,7 @@ pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
 pkg_check_modules(WAYLAND_PROTOCOLS wayland-protocols)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GLESv2 REQUIRED glesv2)
-pkg_check_modules(LIBEVDEV libevdev) # Опционально, нужно только демону мыши
+pkg_check_modules(LIBEVDEV libevdev) # Optional: only required for the evdev mouse daemon
 pkg_check_modules(LUAJIT REQUIRED luajit)
 
 # ==============================================================================
@@ -50,16 +50,19 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(sol2)
 
 # 2. Tracy Profiler
-# КРИТИЧЕСКИ ВАЖНО: Устанавливаем переменные до скачивания, чтобы Tracy собрался как .so
-set(TRACY_SHARED ON CACHE BOOL "Build Tracy as a shared library" FORCE)
-set(TRACY_ENABLE ${ENABLE_PROFILING} CACHE BOOL "Enable Tracy profiling" FORCE)
+# Strictly isolated: only fetched and built if telemetry is explicitly enabled.
+# This guarantees 100% offline-friendly builds when ENABLE_PROFILING=OFF.
+if(ENABLE_PROFILING)
+    set(TRACY_SHARED ON CACHE BOOL "Build Tracy as a shared library" FORCE)
+    set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy profiling" FORCE)
 
-FetchContent_Declare(
-    tracy
-    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-    GIT_TAG v0.10
-)
-FetchContent_MakeAvailable(tracy)
+    FetchContent_Declare(
+        tracy
+        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+        GIT_TAG 5c75032c
+    )
+    FetchContent_MakeAvailable(tracy)
+endif()
 
 # ==============================================================================
 # WAYLAND PROTOCOLS GENERATION
@@ -78,6 +81,7 @@ set(LAYER_SHELL_HEADER "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-clien
 set(LAYER_SHELL_SOURCE "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-client-protocol.c")
 
 if(EXISTS "${LAYER_SHELL_XML}")
+    # We patch the XML to replace 'namespace' with 'namespace_' to prevent C++ keyword collisions
     add_custom_command(
         OUTPUT "${LAYER_SHELL_XML_FIXED}"
         COMMAND ${CMAKE_COMMAND} -E copy "${LAYER_SHELL_XML}" "${LAYER_SHELL_XML_FIXED}"
@@ -191,12 +195,13 @@ add_custom_target(embedded_resources ALL
 # ==============================================================================
 include(GNUInstallDirs)
 
-# --- Установка RPATH ---
+# --- RPATH Configuration ---
+# Ensures plugins and core can dynamically load shared libraries from the install tree
 set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${CMAKE_INSTALL_PREFIX}/lib64")
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-# 1. Вспомогательная библиотека SDK (Shader Utils)
+# 1. SDK Helper Library (Shader Utils)
 add_library(shader_utils SHARED "${SRC_DIR}/shader-utils.cpp")
 add_library(ShaderDesk::shader_utils ALIAS shader_utils)
 set_property(TARGET shader_utils PROPERTY POSITION_INDEPENDENT_CODE ON)
@@ -208,7 +213,7 @@ target_include_directories(shader_utils PUBLIC
 )
 target_link_libraries(shader_utils PRIVATE ${GLESv2_LIBRARIES})
 
-# 2. Виртуальный интерфейс SDK для плагинов
+# 2. Virtual SDK Interface for Plugins (Header-only ABI layer)
 add_library(shader_desk_sdk INTERFACE)
 add_library(ShaderDesk::shader_desk_sdk ALIAS shader_desk_sdk)
 target_include_directories(shader_desk_sdk INTERFACE
@@ -217,7 +222,8 @@ target_include_directories(shader_desk_sdk INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
 )
 
-# Инжектим Tracy в SDK, если включено профилирование
+# Conditionally link Tracy and enable profiling macros ONLY if requested.
+# If OFF, no symbols are linked and C++ macros safely compile to no-ops.
 if(ENABLE_PROFILING)
     target_link_libraries(shader_desk_sdk INTERFACE TracyClient)
     target_compile_definitions(shader_desk_sdk INTERFACE TRACY_ENABLE=1)
@@ -235,7 +241,7 @@ set(APP_SRC_FILES
 )
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
-# 1. Основное ядро (Microkernel)
+# 1. Main Core Executable (Wayland Microkernel)
 add_executable(interactive-wallpaper ${APP_SRC_FILES})
 target_include_directories(interactive-wallpaper PRIVATE
     "${GENERATED_DIR}"
@@ -269,13 +275,13 @@ if(TARGET embedded_resources)
     add_dependencies(interactive-wallpaper embedded_resources)
 endif()
 
-# 2. CLI-контроллер
+# 2. CLI Controller Utility
 add_executable(shader-desk-ctl utilities/shader-desk-ctl.cpp)
 
 # ==============================================================================
 # SUBDIRECTORIES (Daemons & Plugins)
 # ==============================================================================
-# Макрос безопасного подключения сабмодулей
+# Safe submodule inclusion macro
 macro(add_submodule_if_exists SUBDIR)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${SUBDIR}/CMakeLists.txt")
         message(STATUS "Including subsystem: ${SUBDIR}")
@@ -285,7 +291,7 @@ macro(add_submodule_if_exists SUBDIR)
     endif()
 endmacro()
 
-# Внешние демоны (Opt-in)
+# External Daemons (Opt-in)
 if(BUILD_AUDIO_DAEMON)
     add_submodule_if_exists(daemons/audio-daemon)
 endif()
@@ -294,7 +300,7 @@ if(BUILD_EVDEV_DAEMON)
     add_submodule_if_exists(daemons/evdev-daemon)
 endif()
 
-# Внутренние плагины (.so)
+# Internal Plugins (.so bundles)
 add_submodule_if_exists(plugins)
 
 # ==============================================================================
@@ -302,7 +308,7 @@ add_submodule_if_exists(plugins)
 # ==============================================================================
 include(CMakePackageConfigHelpers)
 
-# Бинарники
+# Binaries
 install(TARGETS interactive-wallpaper shader-desk-ctl
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 
@@ -311,7 +317,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/systemd/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user"
         FILES_MATCHING PATTERN "*.service")
 
-# Заголовки SDK (включая ipc-protocol.hpp)
+# SDK Headers (Required for out-of-tree plugin compilation)
 set(SDK_HEADERS
     "${SRC_DIR}/plugin-abi.hpp"
     "${SRC_DIR}/core-context.hpp"
@@ -323,7 +329,7 @@ set(SDK_HEADERS
 install(FILES ${SDK_HEADERS} 
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/shader-desk)
 
-# Экспорт интерфейсов SDK для компиляции out-of-tree плагинов
+# Export SDK CMake targets for 3rd-party plugin developers
 install(TARGETS shader_utils shader_desk_sdk
         EXPORT ShaderDeskTargets
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -340,12 +346,12 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ShaderDeskConfig.cmake"
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ShaderDeskConfig.cmake"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ShaderDesk)
 
-# Генератор плагинов на Python
+# Python Plugin Generator & Templates
 install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/generate_plugin.py"
         DESTINATION ${CMAKE_INSTALL_BINDIR} 
         RENAME shader-desk-generate)
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/plugins/templates/"
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/shader-desk/templates)
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/shader-desk/templates")
 
 message(STATUS "Shader Desk build configured. Run 'make install' to export the SDK.")

@@ -427,10 +427,13 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
         }
         
         std::string preset = out_conf.get_or("preset", std::string(""));
-        if (!preset.empty()) {
+        std::string applied_preset = out_conf.get_or("_applied_preset", std::string(""));
+
+        if (!preset.empty() && preset != applied_preset) {
             sol::function apply_preset = core["utils"]["apply_preset"];
             if (apply_preset.valid()) {
                 apply_preset(settings, res.effect_name, preset);
+                out_conf["_applied_preset"] = preset; // Ставим метку, что пресет уже применен!
             }
         }
         res.custom_settings = settings;

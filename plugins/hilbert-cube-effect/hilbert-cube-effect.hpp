@@ -32,6 +32,8 @@ private:
     // Pointers to global accumulated coordinates in BlackBoard
     float* p_accum_x = nullptr;
     float* p_accum_y = nullptr;
+
+    float time = 0.0f;
     
     // Local state for this specific monitor
     float last_mouse_x = 0.0f;

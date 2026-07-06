@@ -16,7 +16,18 @@
 #include <sys/socket.h> 
 #include <sys/un.h>     
 
-#include <tracy/Tracy.hpp>
+// Безопасное подключение Tracy: если профилирование выключено в CMake,
+#ifdef TRACY_ENABLE
+    #include <tracy/Tracy.hpp>
+#else
+    // Все макросы превращаются в пустышки с 0% накладных расходов процессора
+    #define ZoneScoped
+    #define ZoneScopedN(name)
+    #define ZoneText(txt, size)
+    #define FrameMark
+    #define FrameMarkNamed(name)
+    namespace tracy { inline void SetThreadName(const char*) {} }
+#endif
 
 extern std::atomic<bool> global_running;
 

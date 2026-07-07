@@ -14,7 +14,8 @@
 #include <signal.h>
 #include <filesystem>
 #include <sys/socket.h> 
-#include <sys/un.h>     
+#include <sys/un.h>   
+#include "ipc-utils.hpp"  
 
 // Безопасное подключение Tracy: если профилирование выключено в CMake,
 #ifdef TRACY_ENABLE
@@ -208,14 +209,18 @@ void InteractiveWallpaper::setup_ipc() {
     ipc_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (ipc_fd < 0) return;
 
+    // Получаем безопасный путь
+    std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk");
+
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    const char* socket_path = "/run/user/1000/shader-desk.sock"; // В продакшене брать getuid() или XDG_RUNTIME_DIR
-    
-    unlink(socket_path); // Удаляем старый сокет, если остался от прошлого запуска
-    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+
+    // ВАЖНО: Удаляем старый (мертвый) сокет перед биндом
+    unlink(socket_path.c_str()); 
 
     if (bind(ipc_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0 || listen(ipc_fd, 5) < 0) {
+        std::cerr << "Failed to bind IPC socket at " << socket_path << ": " << strerror(errno) << std::endl;
         close(ipc_fd);
         ipc_fd = -1;
         return;
@@ -301,7 +306,10 @@ void InteractiveWallpaper::process_inotify_events() {
             if (out->effect && out->egl_surface != EGL_NO_SURFACE) {
                 if (eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
                     out->effect->cleanup();
-                    out->effect->initialize(this, out->width, out->height);
+                    // Используем физические размеры!
+                    uint32_t buffer_width = out->width * out->scale;
+                    uint32_t buffer_height = out->height * out->scale;
+                    out->effect->initialize(this, buffer_width, buffer_height);
                     apply_config_to_effect(out);
                 }
             }
@@ -346,7 +354,11 @@ bool InteractiveWallpaper::init_egl() {
 void InteractiveWallpaper::create_egl_surface(Output* output) {
     if (!output || !output->surface || output->width == 0 || output->height == 0) return;
 
-    output->egl_window = wl_egl_window_create(output->surface, output->width, output->height);
+    // Вычисляем физический размер в пикселях
+    uint32_t buffer_width = output->width * output->scale;
+    uint32_t buffer_height = output->height * output->scale;
+
+    output->egl_window = wl_egl_window_create(output->surface, buffer_width, buffer_height);
     output->egl_surface = eglCreateWindowSurface(egl_display, egl_config, (EGLNativeWindowType)output->egl_window, nullptr);
     
     if (output->egl_surface == EGL_NO_SURFACE) {
@@ -465,7 +477,6 @@ void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::stri
 void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     if (!plugin_manager_) return;
     
-    // 1. Узнаем, какой эффект должен работать именно на этом физическом мониторе
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
     std::string target_effect = out_cfg.effect_name.empty() ? default_effect_name_ : out_cfg.effect_name;
 
@@ -474,11 +485,9 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
         return;
     }
 
-    // 2. Если на экране еще нет эффекта ИЛИ в Lua изменили имя эффекта для этого монитора
     if (!output->effect || std::string(output->effect->get_name()) != target_effect) {
-        
-        // Безопасно уничтожаем старый эффект (активировав его EGL-контекст)
         if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
+            // ВАЖНО: Активируем контекст ПЕРЕД удалением OpenGL объектов
             eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context);
             output->effect->cleanup();
             output->effect.reset();
@@ -487,17 +496,18 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
         std::cout << "[Core] Assigning effect '" << target_effect 
                   << "' to Wayland output '" << output->name << "'" << std::endl;
                   
-        // Создаем независимый экземпляр C++ плагина специально для этого монитора!
         output->effect = plugin_manager_->create_effect(target_effect);
     }
 
-    // 3. Применяем настройки (общие + переопределения экрана) и инициализируем OpenGL-конвейер
     if (output->effect) {
         apply_config_to_effect(output);
         
         if (output->configured && output->egl_surface != EGL_NO_SURFACE) {
             if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
-                output->effect->initialize(this, output->width, output->height);
+                // Инициализируем физическими размерами
+                uint32_t buffer_width = output->width * output->scale;
+                uint32_t buffer_height = output->height * output->scale;
+                output->effect->initialize(this, buffer_width, buffer_height);
             }
         }
     }
@@ -520,66 +530,58 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
 void InteractiveWallpaper::render_output(Output* output) {
     if (!output->configured || !output->effect || output->egl_surface == EGL_NO_SURFACE) return;
 
-    ZoneScoped; // <--- Замеряет время работы функции
-    ZoneText(output->name.c_str(), output->name.length()); // <--- Подписывает экран (eDP-1, DP-1)
+    ZoneScoped; 
+    ZoneText(output->name.c_str(), output->name.length()); 
 
-
-    // 1. Считаем дельту времени
     auto now = std::chrono::steady_clock::now();
     std::chrono::duration<float> delta_duration = now - output->last_frame_time;
     float real_dt = delta_duration.count();
     output->last_frame_time = now;
 
-    // Защита от зависаний системы
     if (real_dt > 0.1f || real_dt < 0.0f) real_dt = 0.0166f;
 
-    // Накапливаем время
     output->time_since_last_render += real_dt;
     float render_dt = output->time_since_last_render;
 
-    // 2. Обработка ограничения FPS
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
     if (out_cfg.fps_limit > 0.0f) {
         float min_frame_time = 1.0f / out_cfg.fps_limit;
         
-        // Если прошло недостаточно времени, ПРОПУСКАЕМ рендер
         if (output->time_since_last_render < min_frame_time) {
-            // ВАЖНО: Регистрируем коллбэк для следующего тика Wayland. 
-            // Пустой коммит без eglSwapBuffers не нагружает GPU, но сохраняет цикл живым.
             output->frame_callback = wl_surface_frame(output->surface);
             wl_callback_add_listener(output->frame_callback, &frame_listener, output);
             wl_surface_commit(output->surface); 
             return;
         }
         
-        // Оставляем дробный остаток времени, чтобы анимация была гладкой
         output->time_since_last_render = std::fmod(output->time_since_last_render, min_frame_time);
     } else {
-        // Лимита нет - обнуляем аккумулятор
         output->time_since_last_render = 0.0f;
     }
 
-    // 3. Вызываем рендер
     if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
         {
-            ZoneScopedN("Lua on_frame"); // <--- Замеряем, сколько миллисекунд тупит Lua
+            ZoneScopedN("Lua on_frame"); 
             lua_engine.on_frame(render_dt, output->name);
         }
         
         {
-            ZoneScopedN("Plugin Render"); // <--- Замеряем сам плагин
-            output->effect->render(output->width, output->height, render_dt);
+            ZoneScopedN("Plugin Render"); 
+            // ПЕРЕДАЕМ ФИЗИЧЕСКИЕ РАЗМЕРЫ в render()
+            uint32_t buffer_width = output->width * output->scale;
+            uint32_t buffer_height = output->height * output->scale;
+            output->effect->render(buffer_width, buffer_height, render_dt);
         }
         
         output->frame_callback = wl_surface_frame(output->surface);
         wl_callback_add_listener(output->frame_callback, &frame_listener, output);
         
         {
-            ZoneScopedN("EGL Swap Buffers"); // <--- Замеряем ожидание VSync
+            ZoneScopedN("EGL Swap Buffers"); 
             eglSwapBuffers(egl_display, output->egl_surface);
         }
         
-        FrameMarkNamed(output->name.c_str()); // <--- Создает отдельный трек кадров для КАЖДОГО монитора!
+        FrameMarkNamed(output->name.c_str()); 
     }
 }
 
@@ -659,6 +661,7 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
     Output* output = static_cast<Output*>(data);
     if (width == 0 || height == 0) return;
 
+    // 1. Сохраняем логические размеры (нужны для протокола Wayland)
     output->width = width;
     output->height = height;
     output->configure_serial = serial;
@@ -666,20 +669,38 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
 
     zwlr_layer_surface_v1_ack_configure(surface, serial);
 
+    // 2. КРИТИЧЕСКИЙ ШАГ ДЛЯ HIDPI: Говорим композитору не размывать буфер
+    wl_surface_set_buffer_scale(output->surface, output->scale);
+
+    // 3. Вычисляем физический размер для OpenGL (пиксели)
+    uint32_t buffer_width = width * output->scale;
+    uint32_t buffer_height = height * output->scale;
+
     if (output->egl_surface == EGL_NO_SURFACE) {
         output->parent->create_egl_surface(output);
 
         if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
             if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
-                if (!output->effect->initialize(output->parent, width, height)) {
+                // Инициализируем плагин ФИЗИЧЕСКИМИ пикселями
+                if (!output->effect->initialize(output->parent, buffer_width, buffer_height)) {
                     output->effect.reset();
                 }
             }
         }
         if (!output->frame_callback) output->parent->render_output(output);
     } else {
-        if (output->egl_window) wl_egl_window_resize(output->egl_window, width, height, 0, 0);
+        // Ресайзим буфер EGL до физических размеров
+        if (output->egl_window) {
+            wl_egl_window_resize(output->egl_window, buffer_width, buffer_height, 0, 0);
+        }
         
+        // Передаем новые физические размеры плагину
+        if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
+            if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
+                output->effect->resize(buffer_width, buffer_height);
+            }
+        }
+
         if (output->frame_callback) {
             wl_callback_destroy(output->frame_callback);
             output->frame_callback = nullptr;

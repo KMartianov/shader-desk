@@ -20,7 +20,7 @@
 #include <pulse/simple.h>
 #include <pulse/error.h>
 #include <fftw3.h>
-
+#include <shader-desk/ipc-utils.hpp>
 #include "audio-data.hpp"
 
 // --- Configuration ---
@@ -141,10 +141,10 @@ int main() {
     int sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    const char* socket_name = "shader-desk-audio";
-    addr.sun_path[0] = '\0'; // Abstract socket namespace
-    strncpy(&addr.sun_path[1], socket_name, sizeof(addr.sun_path) - 2);
-    socklen_t addr_len = sizeof(sa_family_t) + 1 + strlen(socket_name);
+    
+    std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-audio");
+    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    socklen_t addr_len = sizeof(sa_family_t) + socket_path.length() + 1; // +1 для нуль-терминатора
 
     // --- НАСТРОЙКА FFTW ---
     std::vector<double> audio_history(FFT_SIZE, 0.0);
@@ -217,7 +217,7 @@ int main() {
         };
 
         // 7. СЕКРЕТ №3: Формируем пакет RAW-данных БЕЗ СГЛАЖИВАНИЯ!
-        AudioData data;
+        AudioDatagram data;
         
         // Мгновенные значения:
         data.volume = static_cast<float>(std::min(1.0, rms * 5.0)); // *5.0 для чувствительности
@@ -230,7 +230,7 @@ int main() {
         }
 
         // 8. Отправляем в Wayland-обои не блокируясь
-        sendto(sockfd, &data, sizeof(AudioData), MSG_DONTWAIT, (struct sockaddr*)&addr, addr_len);
+        sendto(sockfd, &data, sizeof(AudioDatagram), MSG_DONTWAIT, (struct sockaddr*)&addr, addr_len);
     }
 
     // --- Очистка ---

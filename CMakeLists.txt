@@ -25,6 +25,12 @@ set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROTOCOL_OUTPUT_DIR "${BIN_DIR}/protocols")
 file(MAKE_DIRECTORY "${PROTOCOL_OUTPUT_DIR}")
 
+# [FIX] Create a virtual directory namespace for proper <shader-desk/...> includes
+file(MAKE_DIRECTORY "${BIN_DIR}/include")
+if(NOT EXISTS "${BIN_DIR}/include/shader-desk")
+    execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "${SRC_DIR}" "${BIN_DIR}/include/shader-desk")
+endif()
+
 # Define where compiled plugins should be installed globally
 set(PLUGIN_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/shader-desk/plugins" 
     CACHE PATH "System directory for compiled .so plugins")
@@ -39,9 +45,10 @@ option(ENABLE_PROFILING "Enable Tracy Profiler telemetry" OFF)
 # ==============================================================================
 find_package(PkgConfig REQUIRED)
 
-# Try to find system-wide nlohmann_json and glm
+# Try to find system-wide dependencies (Highly preferred for package managers)
 find_package(nlohmann_json REQUIRED)
 find_package(glm REQUIRED)
+find_package(sol2 QUIET) # Try to find system sol2 (e.g., lua-sol2 in AUR/APT)
 
 pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
 pkg_check_modules(WAYLAND_EGL REQUIRED wayland-egl)
@@ -51,29 +58,44 @@ pkg_check_modules(GLESv2 REQUIRED glesv2)
 pkg_check_modules(LUAJIT REQUIRED luajit)
 
 # ==============================================================================
-# 3. EXTERNAL DEPENDENCIES (FetchContent)
+# 3. EXTERNAL DEPENDENCIES (FetchContent Fallback)
 # ==============================================================================
 include(FetchContent)
 
 # Lua/C++ Binding (sol2)
-FetchContent_Declare(
-    sol2
-    GIT_REPOSITORY https://github.com/ThePhD/sol2.git
-    GIT_TAG main
-)
-FetchContent_MakeAvailable(sol2)
+# If the package manager already provided sol2, target sol2::sol2 already exists.
+# Download from the network only if it is missing.
+if(NOT TARGET sol2::sol2)
+    message(STATUS "sol2 not found in system. Fetching from GitHub...")
+    FetchContent_Declare(
+        sol2
+        GIT_REPOSITORY https://github.com/ThePhD/sol2.git
+        GIT_TAG main
+    )
+    FetchContent_MakeAvailable(sol2)
+else()
+    message(STATUS "Using system-provided sol2.")
+endif()
 
 # Tracy Profiler (Isolated: guarantees offline builds when ENABLE_PROFILING=OFF)
 if(ENABLE_PROFILING)
-    set(TRACY_SHARED ON CACHE BOOL "Build Tracy as a shared library" FORCE)
-    set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy profiling" FORCE)
+    # Package managers might also provide Tracy globally
+    find_package(Tracy QUIET)
 
-    FetchContent_Declare(
-        tracy
-        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-        GIT_TAG 5c75032c
-    )
-    FetchContent_MakeAvailable(tracy)
+    if(NOT TARGET TracyClient)
+        message(STATUS "Tracy not found in system. Fetching from GitHub...")
+        set(TRACY_SHARED ON CACHE BOOL "Build Tracy as a shared library" FORCE)
+        set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy profiling" FORCE)
+
+        FetchContent_Declare(
+            tracy
+            GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+            GIT_TAG 5c75032c
+        )
+        FetchContent_MakeAvailable(tracy)
+    else()
+        message(STATUS "Using system-provided Tracy.")
+    endif()
 endif()
 
 # ==============================================================================
@@ -103,8 +125,8 @@ macro(generate_wayland_protocol XML_PATH HEADER_FILE SOURCE_FILE)
 endmacro()
 
 # 1. wlr-layer-shell (Patching C++ keyword collision)
-# ИСПРАВЛЕНИЕ: Мы не используем макрос с if(EXISTS) для сгенерированного файла,
-# так как на этапе конфигурации CMake его еще не существует.
+# FIX: We avoid using the macro with if(EXISTS) for the generated file,
+# because it doesn't exist yet during the CMake configuration phase.
 set(LAYER_SHELL_XML "${THIRD_PARTY_PROTO_DIR}/unstable/wlr-layer-shell-unstable-v1.xml")
 set(LAYER_SHELL_XML_FIXED "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-fixed.xml")
 if(EXISTS "${LAYER_SHELL_XML}")
@@ -153,7 +175,7 @@ add_custom_target(wayland_protocols ALL DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# ИСПРАВЛЕНИЕ: Добавлен отдельный аргумент HEADER_NAME, чтобы явно указывать имя файла в нижнем регистре
+# FIX: Added a separate HEADER_NAME argument to explicitly specify the lowercase filename
 macro(embed_lua_script FILE_NAME HEADER_NAME VAR_NAME)
     set(HEADER_OUT "${GENERATED_DIR}/embedded_${HEADER_NAME}.hpp")
     add_custom_command(
@@ -190,8 +212,8 @@ set_target_properties(shader_utils PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_include_directories(shader_utils PUBLIC
     $<BUILD_INTERFACE:${SRC_DIR}>
-    $<BUILD_INTERFACE:${INCLUDE_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
+    $<BUILD_INTERFACE:${BIN_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(shader_utils PRIVATE ${GLESv2_LIBRARIES})
 
@@ -200,8 +222,8 @@ add_library(shader_desk_sdk INTERFACE)
 add_library(ShaderDesk::shader_desk_sdk ALIAS shader_desk_sdk)
 target_include_directories(shader_desk_sdk INTERFACE
     $<BUILD_INTERFACE:${SRC_DIR}>
-    $<BUILD_INTERFACE:${INCLUDE_DIR}>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/shader-desk>
+    $<BUILD_INTERFACE:${BIN_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 if(ENABLE_PROFILING)
@@ -219,6 +241,11 @@ set(APP_SRC_FILES
     "${SRC_DIR}/lua-config-generator.cpp"   
     "${SRC_DIR}/plugin-manager.cpp"
 )
+
+if(ENABLE_PROFILING)
+    list(APPEND APP_SRC_FILES "${SRC_DIR}/tracy-memory.cpp")
+endif()
+
 list(APPEND APP_SRC_FILES ${PROTOCOL_SOURCES})
 
 # Main Core Executable (Wayland Microkernel)
@@ -235,8 +262,9 @@ target_include_directories(interactive-wallpaper PRIVATE
 
 # Pass system paths to C++ via macros to avoid hardcoding!
 target_compile_definitions(interactive-wallpaper PRIVATE
-    SYSTEM_PLUGIN_DIR="${PLUGIN_INSTALL_DIR}"
+    SYSTEM_PLUGIN_DIR="${CMAKE_INSTALL_FULL_LIBDIR}/shader-desk/plugins"
     SYSTEM_SOURCE_DIR="${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/plugins-source"
+    LOCAL_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins"
 )
 
 target_link_libraries(interactive-wallpaper PRIVATE
@@ -258,6 +286,7 @@ add_dependencies(interactive-wallpaper wayland_protocols embedded_resources)
 
 # CLI Controller Utility
 add_executable(shader-desk-ctl utilities/shader-desk-ctl.cpp)
+target_link_libraries(shader-desk-ctl PRIVATE shader_desk_sdk)
 
 # ==============================================================================
 # 8. SUBDIRECTORIES (Daemons & Plugins)
@@ -300,7 +329,7 @@ set(SDK_HEADERS
     "${SRC_DIR}/wallpaper-effect.hpp"
     "${SRC_DIR}/data-provider.hpp"
     "${SRC_DIR}/shader-utils.hpp"
-    "${INCLUDE_DIR}/ipc-protocol.hpp"
+    "${SRC_DIR}/ipc-utils.hpp"
 )
 install(FILES ${SDK_HEADERS} 
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/shader-desk)

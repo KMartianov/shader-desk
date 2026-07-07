@@ -49,7 +49,7 @@ public:
     if (it == raw_memory_.end()) {
         it = raw_memory_.emplace(str_key, std::vector<uint8_t>(requested_size_bytes, 0)).first;
     } else if (it->second.size() < requested_size_bytes) {
-        it->second.resize(requested_size_bytes, 0); // Авто-расширение буфера
+        throw std::runtime_error("BlackBoard: Cannot resize existing raw buffer '" + str_key + "' to prevent dangling pointers.");
     }
     return it->second.data();
 }

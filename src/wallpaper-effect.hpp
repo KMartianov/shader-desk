@@ -7,6 +7,7 @@
 #include <variant>
 #include <memory>
 #include <glm/glm.hpp>
+#include <cstring>
 
 // Alias for backward compatibility. 
 // Plugins can use ICoreContext as before.
@@ -52,7 +53,7 @@ public:
     // These methods are marked 'final' so plugins cannot break them.
     // ==============================================================================
     
-    uint32_t get_parameter_count() const final {
+    uint32_t get_parameter_count_abi() const final {
         if (!cache_valid) {
             param_cache = get_parameters(); // Call the C++ plugin method exactly once
             cache_valid = true;
@@ -60,7 +61,7 @@ public:
         return static_cast<uint32_t>(param_cache.size());
     }
 
-    void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const final {
+    void get_parameter_info_abi(uint32_t index, ParamInfoABI* out_info) const final {
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
@@ -86,11 +87,14 @@ public:
             out_info->default_value.vec3_val[2] = v.z;
         } else if (std::holds_alternative<std::string>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_STRING;
-            out_info->default_value.s_val = std::get<std::string>(p.value).c_str();
+            const std::string& str = std::get<std::string>(p.value);
+            // Копируем до 255 символов (чтобы оставить 1 байт для \0)
+            std::strncpy(out_info->default_value.s_val, str.c_str(), 255);
+            out_info->default_value.s_val[255] = '\0'; // Гарантированный нуль-терминатор
         }
     }
 
-    void set_parameter(const char* name, const ParamValueABI* value) final {
+    void set_parameter_abi(const char* name, const ParamValueABI* value) final {
         EffectParameterValue cpp_val;
         // Unpack C-Union to std::variant
         switch (value->type) {

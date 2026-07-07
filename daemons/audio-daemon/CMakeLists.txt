@@ -10,6 +10,10 @@ pkg_check_modules(FFTW3 REQUIRED fftw3)
 pkg_check_modules(PULSEAUDIO REQUIRED libpulse)
 pkg_check_modules(PULSEAUDIO_SIMPLE REQUIRED libpulse-simple)
 
+if(NOT TARGET ShaderDesk::shader_desk_sdk)
+    find_package(ShaderDesk REQUIRED)
+endif()
+
 # Add executable
 add_executable(audio-daemon main.cpp)
 
@@ -23,4 +27,10 @@ target_link_libraries(audio-daemon PRIVATE
     ${FFTW3_LIBRARIES}
     ${PULSEAUDIO_LIBRARIES}
     ${PULSEAUDIO_SIMPLE_LIBRARIES}
+    ShaderDesk::shader_desk_sdk
+)
+
+include(GNUInstallDirs)
+install(TARGETS audio-daemon
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

@@ -24,11 +24,13 @@ struct ParamValueABI {
         int i_val;
         float f_val;
         float vec3_val[3];
-        const char* s_val; // Guaranteed null-terminated string
+        char s_val[256]; 
 
-        // RESERVED: Fixed union size (64 bytes).
-        // Ensures forward ABI compatibility (e.g., if mat4 is added later, old plugins won't break).
-        uint8_t _padding[64]; 
+        // ЯВНЫЙ РЕЗЕРВ (Padding)
+        // Фиксирует размер union ровно в 256 байт.
+        // Защищает ABI: если кто-то уменьшит s_val, размер структуры НЕ изменится.
+        // Позволяет в будущем добавлять любые типы (например, mat4 на 64 байта), не ломая старые плагины.
+        uint8_t _reserved[256]; 
     };
 };
 
@@ -79,22 +81,17 @@ public:
 class IWallpaperEffectABI {
 public:
     virtual ~IWallpaperEffectABI() = default;
-
     virtual bool initialize(ICoreContextABI* core, uint32_t width, uint32_t height) = 0;
     virtual void render(uint32_t width, uint32_t height, float dt) = 0;
-
     virtual void resize(uint32_t width, uint32_t height) = 0;
     virtual void set_paused(bool paused) = 0;
-
-
     virtual void cleanup() = 0;
-    
     virtual const char* get_name() const = 0;
     
     // ABI replacement for std::vector<EffectParameter>
-    virtual uint32_t get_parameter_count() const = 0;
-    virtual void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const = 0;
-    virtual void set_parameter(const char* name, const ParamValueABI* value) = 0;
+    virtual uint32_t get_parameter_count_abi() const = 0;
+    virtual void get_parameter_info_abi(uint32_t index, ParamInfoABI* out_info) const = 0;
+    virtual void set_parameter_abi(const char* name, const ParamValueABI* value) = 0;
 };
 
 class IDataProviderABI {
@@ -107,7 +104,7 @@ public:
     virtual const char* get_name() const = 0;
     
     // ABI replacement for std::vector<EffectParameter>
-    virtual uint32_t get_parameter_count() const = 0;
-    virtual void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const = 0;
-    virtual void set_parameter(const char* name, const ParamValueABI* value) = 0;
+    virtual uint32_t get_parameter_count_abi() const = 0;
+    virtual void get_parameter_info_abi(uint32_t index, ParamInfoABI* out_info) const = 0;
+    virtual void set_parameter_abi(const char* name, const ParamValueABI* value) = 0;
 };

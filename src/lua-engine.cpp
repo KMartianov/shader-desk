@@ -5,6 +5,21 @@
 #include <map>
 #include "data-provider.hpp" // Now includes the SDK wrapper (IProviderABI)
 
+#ifdef TRACY_ENABLE
+#include <tracy/Tracy.hpp>
+static void* tracy_lua_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
+    (void)ud; (void)osize;
+    if (nsize == 0) {
+        if (ptr) { TracyFree(ptr); free(ptr); }
+        return nullptr;
+    }
+    void* new_ptr = realloc(ptr, nsize);
+    if (ptr) { TracyFree(ptr); }
+    if (new_ptr) { TracyAlloc(new_ptr, nsize); }
+    return new_ptr;
+}
+#endif
+
 namespace fs = std::filesystem;
 
 static std::string sanitize_plugin_name(std::string name) {
@@ -61,7 +76,11 @@ bool LuaEngine::load() {
     frame_callback = sol::nil; // [NEW] Очищаем хук прошлого скрипта
 
     // 1. Completely clear the state (useful for hot-reload)
+    #ifdef TRACY_ENABLE
+    lua = sol::state(nullptr, tracy_lua_alloc, nullptr);
+    #else
     lua = sol::state();
+    #endif
     
     // 2. Load standard safe Lua libraries
     lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, sol::lib::string, sol::lib::table, sol::lib::package);
@@ -169,10 +188,10 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
 
     // [ABI UPDATE]: Extract expected provider parameter types via C-API
     std::map<std::string, ParamType> expected_types;
-    uint32_t count = provider->get_parameter_count();
+    uint32_t count = provider->get_parameter_count_abi();
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI info;
-        provider->get_parameter_info(i, &info);
+        provider->get_parameter_info_abi(i, &info);
         expected_types[info.name] = info.default_value.type;
     }
 
@@ -191,21 +210,32 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
         abi_val.type = expected_type;
 
         try {
-            // [WARNING]: This string must survive until the end of the iteration. 
-            // This allows safely passing the raw .c_str() pointer across the ABI boundary.
-            std::string temp_str;
-
             if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
                 abi_val.b_val = val.as<bool>();
-                provider->set_parameter(key.c_str(), &abi_val);
+                provider->set_parameter_abi(key.c_str(), &abi_val);
             } 
             else if (expected_type == ParamType::TYPE_INT && val.is<double>()) {
                 abi_val.i_val = val.as<int>();
-                provider->set_parameter(key.c_str(), &abi_val);
+                provider->set_parameter_abi(key.c_str(), &abi_val);
             } 
             else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
                 abi_val.f_val = static_cast<float>(val.as<double>());
-                provider->set_parameter(key.c_str(), &abi_val);
+                provider->set_parameter_abi(key.c_str(), &abi_val);
+            }
+            else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
+                sol::table t = val.as<sol::table>();
+                if (t.size() >= 3) {
+                    abi_val.vec3_val[0] = t.get_or(1, 0.0f);
+                    abi_val.vec3_val[1] = t.get_or(2, 0.0f);
+                    abi_val.vec3_val[2] = t.get_or(3, 0.0f);
+                    provider->set_parameter_abi(key.c_str(), &abi_val);
+                }
+            }
+            else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
+                std::string lua_str = val.as<std::string>();
+                std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
+                abi_val.s_val[255] = '\0';
+                provider->set_parameter_abi(key.c_str(), &abi_val);
             }
         } catch (const sol::error& e) {
             std::cerr << "Lua Type Error for provider parameter '" << key << "': " << e.what() << std::endl;
@@ -332,11 +362,11 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
 
         ParamType expected_type;
         bool found = false;
-        uint32_t count = effect->get_parameter_count();
+        uint32_t count = effect->get_parameter_count_abi();
         
         for (uint32_t i = 0; i < count; ++i) {
             ParamInfoABI info;
-            effect->get_parameter_info(i, &info);
+            effect->get_parameter_info_abi(i, &info);
             if (param_name == info.name) { 
                 expected_type = info.default_value.type;
                 found = true;
@@ -348,7 +378,6 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
 
         ParamValueABI abi_val;
         abi_val.type = expected_type;
-        std::string temp_str;
 
         try {
             if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
@@ -363,13 +392,14 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
                 abi_val.vec3_val[1] = t.get_or(2, 0.0f);
                 abi_val.vec3_val[2] = t.get_or(3, 0.0f);
             } else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
-                temp_str = val.as<std::string>();
-                abi_val.s_val = temp_str.c_str();
+                std::string lua_str = val.as<std::string>();
+                std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
+                abi_val.s_val[255] = '\0';
             } else {
                 return; 
             }
             
-            effect->set_parameter(param_name.c_str(), &abi_val);
+            effect->set_parameter_abi(param_name.c_str(), &abi_val);
             
         } catch (const sol::error& e) {
             std::cerr << "[Lua] Type error in set_effect_param: " << e.what() << std::endl;
@@ -486,10 +516,10 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
     sol::table base_settings = lua["config"][effect_name];
     
     std::map<std::string, ParamType> expected_types;
-    uint32_t count = effect->get_parameter_count();
+    uint32_t count = effect->get_parameter_count_abi();
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI info;
-        effect->get_parameter_info(i, &info);
+        effect->get_parameter_info_abi(i, &info);
         expected_types[info.name] = info.default_value.type;
     }
 
@@ -514,15 +544,15 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
         try {
             if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
                 abi_val.b_val = val.as<bool>();
-                effect->set_parameter(key.c_str(), &abi_val);
+                effect->set_parameter_abi(key.c_str(), &abi_val);
             } 
             else if (expected_type == ParamType::TYPE_INT && val.is<double>()) {
                 abi_val.i_val = val.as<int>();
-                effect->set_parameter(key.c_str(), &abi_val);
+                effect->set_parameter_abi(key.c_str(), &abi_val);
             } 
             else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
                 abi_val.f_val = static_cast<float>(val.as<double>());
-                effect->set_parameter(key.c_str(), &abi_val);
+                effect->set_parameter_abi(key.c_str(), &abi_val);
             } 
             else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
                 sol::table t = val.as<sol::table>();
@@ -530,13 +560,14 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
                     abi_val.vec3_val[0] = t.get_or(1, 0.0f);
                     abi_val.vec3_val[1] = t.get_or(2, 0.0f);
                     abi_val.vec3_val[2] = t.get_or(3, 0.0f);
-                    effect->set_parameter(key.c_str(), &abi_val);
+                    effect->set_parameter_abi(key.c_str(), &abi_val);
                 }
             }
             else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
-                temp_str = val.as<std::string>();
-                abi_val.s_val = temp_str.c_str();
-                effect->set_parameter(key.c_str(), &abi_val);
+                std::string lua_str = val.as<std::string>();
+                std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
+                abi_val.s_val[255] = '\0';
+                effect->set_parameter_abi(key.c_str(), &abi_val);
             }
         } catch (const sol::error& e) {
             std::cerr << "Lua Type Error for parameter '" << key << "': " << e.what() << std::endl;

@@ -192,7 +192,7 @@ nlohmann::json PluginManager::inspect_plugin(const std::string& plugin_name) {
         nlohmann::json j_params = nlohmann::json::array();
         for (uint32_t i = 0; i < count; ++i) {
             ParamInfoABI info;
-            plugin_ptr->get_parameter_info(i, &info);
+            plugin_ptr->get_parameter_info_abi(i, &info);
             
             nlohmann::json p;
             p["name"] = info.name;
@@ -221,7 +221,7 @@ nlohmann::json PluginManager::inspect_plugin(const std::string& plugin_name) {
                 root["name"] = effect->get_name();
                 root["type"] = "effect";
                 root["bundle_path"] = get_bundle_path(plugin_name);
-                root["parameters"] = serialize_params(effect->get_parameter_count(), effect.get());
+                root["parameters"] = serialize_params(effect->get_parameter_count_abi(), effect.get());
                 return root;
             }
         }
@@ -233,7 +233,7 @@ nlohmann::json PluginManager::inspect_plugin(const std::string& plugin_name) {
             root["name"] = provider->get_name();
             root["type"] = "provider";
             root["bundle_path"] = get_bundle_path(plugin_name);
-            root["parameters"] = serialize_params(provider->get_parameter_count(), provider.get());
+            root["parameters"] = serialize_params(provider->get_parameter_count_abi(), provider.get());
             return root;
         }
     }

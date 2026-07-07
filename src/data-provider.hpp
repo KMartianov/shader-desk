@@ -2,6 +2,7 @@
 
 #include "plugin-abi.hpp"
 #include "wallpaper-effect.hpp" // Берем EffectParameter и EffectParameterValue оттуда
+#include <cstring>
 
 // ==============================================================================
 // DATA PROVIDER INTERFACE (SMART PROVIDER SDK)
@@ -19,7 +20,7 @@ public:
     virtual void set_parameter(const std::string& name, const EffectParameterValue& value) = 0;
 
     // --- 2. HIDDEN ABI LAYER ---
-    uint32_t get_parameter_count() const final {
+    uint32_t get_parameter_count_abi() const final {
         if (!cache_valid) {
             param_cache = get_parameters();
             cache_valid = true;
@@ -27,7 +28,7 @@ public:
         return static_cast<uint32_t>(param_cache.size());
     }
 
-    void get_parameter_info(uint32_t index, ParamInfoABI* out_info) const final {
+    void get_parameter_info_abi(uint32_t index, ParamInfoABI* out_info) const final {
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
@@ -51,11 +52,13 @@ public:
             out_info->default_value.vec3_val[2] = v.z;
         } else if (std::holds_alternative<std::string>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_STRING;
-            out_info->default_value.s_val = std::get<std::string>(p.value).c_str();
+            const std::string& str = std::get<std::string>(p.value);
+            std::strncpy(out_info->default_value.s_val, str.c_str(), 255);
+            out_info->default_value.s_val[255] = '\0';
         }
     }
 
-    void set_parameter(const char* name, const ParamValueABI* value) final {
+    void set_parameter_abi(const char* name, const ParamValueABI* value) final {
         EffectParameterValue cpp_val;
         switch (value->type) {
             case ParamType::TYPE_BOOL: cpp_val = value->b_val; break;

@@ -30,18 +30,24 @@ std::vector<std::string> get_plugin_directories() {
     std::vector<std::string> dirs;
     const char* home = getenv("HOME");
     
-    // ПРИОРИТЕТ 1: Пользовательские модификации (из ~/.config)
+    // ПРИОРИТЕТ 1: Пользовательские модификации из workspace (~/.config/...)
     if (home) {
         dirs.push_back(std::string(home) + "/.config/interactive-wallpaper/effects");
     }
     
-    // ПРИОРИТЕТ 2: Локальная папка для разработки (БЕЗ УСТАНОВКИ В СИСТЕМУ)
-    // Если запускаем из корня проекта: ./build-release/interactive-wallpaper
+    // ПРИОРИТЕТ 2: АВТОМАТИЧЕСКИЙ ПУТЬ СБОРКИ (Передается из CMake при компиляции)
+    #ifdef LOCAL_PLUGIN_DIR
+    dirs.push_back(LOCAL_PLUGIN_DIR);
+    #endif
+
+    // ПРИОРИТЕТ 3: Жестко заданные фоллбэки (для запуска из разных директорий терминала)
+    dirs.push_back("./build-tracy/plugins");   // <--- Твоя папка для Tracy!
+    dirs.push_back("./build-release/plugins"); // Твоя релизная папка!
+    dirs.push_back("./build/plugins");
     dirs.push_back("./plugins");
-    // Если запускаем находясь внутри папки build: ./interactive-wallpaper
     dirs.push_back("../plugins");
     
-    // ПРИОРИТЕТ 3: Системные скомпилированные плагины (/usr/local/lib/...)
+    // ПРИОРИТЕТ 4: Системный путь FHS (/usr/lib/shader-desk/plugins)
     dirs.push_back(SYSTEM_PLUGIN_DIR);
     
     return dirs;

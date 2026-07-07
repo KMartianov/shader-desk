@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include "ipc-utils.hpp"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -27,8 +28,9 @@ int main(int argc, char* argv[]) {
 
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, "/run/user/1000/shader-desk.sock", sizeof(addr.sun_path) - 1);
-
+    std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk");
+    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    
     if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         std::cerr << "Failed to connect to shader-desk. Is the wallpaper engine running?\n";
         close(sockfd);

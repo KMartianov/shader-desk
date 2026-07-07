@@ -1,5 +1,6 @@
-#include "data-provider.hpp"
-#include "ipc-protocol.hpp"
+#include <shader-desk/data-provider.hpp>
+#include "pointer-data.hpp"
+#include <shader-desk/ipc-utils.hpp>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -58,15 +59,15 @@ public:
 
         struct sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
-        const char* socket_name = "shader-desk-pointer";
+        std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-pointer");
+        strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
         
-        addr.sun_path[0] = '\0';
-        strncpy(&addr.sun_path[1], socket_name, sizeof(addr.sun_path) - 2);
-        socklen_t addr_len = sizeof(sa_family_t) + 1 + strlen(socket_name);
+        unlink(socket_path.c_str()); // ВАЖНО: Удаляем старый файл!
         
-        if (bind(sockfd, (struct sockaddr*)&addr, addr_len) < 0) {
+        if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            std::cerr << "[PointerProvider] Failed to bind socket at " << socket_path << std::endl;
             close(sockfd);
-            sockfd = -1; // <--- IMPORTANT: reset fd on error
+            sockfd = -1;
             return false;
         }
 

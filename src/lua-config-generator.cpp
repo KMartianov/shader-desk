@@ -191,10 +191,10 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
 
     // Write actual parameters from C++
     // [NEW] Use safe C-ABI to get the plugin parameter list.
-    uint32_t count = effect->get_parameter_count();
+    uint32_t count = effect->get_parameter_count_abi();
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI param_info;
-        effect->get_parameter_info(i, &param_info);
+        effect->get_parameter_info_abi(i, &param_info);
         
         std::string default_val = value_to_lua_string(param_info.default_value);
         std::string param_name(param_info.name);

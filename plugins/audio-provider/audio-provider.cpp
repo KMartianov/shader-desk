@@ -1,5 +1,6 @@
-#include "data-provider.hpp"
+#include <shader-desk/data-provider.hpp>
 #include "audio-data.hpp" 
+#include <shader-desk/ipc-utils.hpp>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -70,18 +71,20 @@ public:
 
         struct sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
-        const char* socket_name = "shader-desk-audio";
         
-        // Linux abstract socket namespace (starts with a null byte)
-        addr.sun_path[0] = '\0'; 
-        strncpy(&addr.sun_path[1], socket_name, sizeof(addr.sun_path) - 2);
-        socklen_t addr_len = sizeof(sa_family_t) + 1 + strlen(socket_name);
+        std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-audio");
+        strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
         
-        if (bind(sockfd, (struct sockaddr*)&addr, addr_len) < 0) {
+        unlink(socket_path.c_str()); // ВАЖНО: Удаляем старый файл!
+
+        if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            std::cerr << "[AudioProvider] Failed to bind socket at " << socket_path << std::endl;
             close(sockfd);
             sockfd = -1;
             return false;
         }
+        
+    
 
         // Register socket in Wayland core's epoll loop (Zero-Latency)
         core->register_epoll_fd(sockfd, [](uint32_t events, void* user_data) {
@@ -93,8 +96,8 @@ public:
 
     // Called by the Linux kernel ONLY when new bytes are in the socket
     void on_data_ready() {
-        AudioData datagram;
-        AudioData latest_datagram;
+        AudioDatagram datagram;
+        AudioDatagram latest_datagram;
         bool has_new_data = false;
 
         // IMPORTANT: The while loop runs as long as there is data in the socket.
@@ -109,7 +112,7 @@ public:
                 break;
             }
 
-            if (bytes_read == sizeof(AudioData) && datagram.magic == 0x41554431) {
+            if (bytes_read == sizeof(AudioDatagram) && datagram.magic == 0x41554431) {
                 latest_datagram = datagram; // Overwrite old data with fresher packets
                 has_new_data = true;
             }

@@ -78,7 +78,12 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine
     lua_engine.get_effect_for_output = [this](const std::string& name) -> IWallpaperEffectABI* {
         for (auto& pair : outputs) {
             if (pair.second->name == name) {
-                return pair.second->effect.get();
+                // Ищем первый попавшийся НЕ-постпроцесс слой (обычно это 3D-сфера)
+                for (auto it = pair.second->layers.rbegin(); it != pair.second->layers.rend(); ++it) {
+                    if (!it->is_postprocess && it->effect) return it->effect.get();
+                }
+                // Если не нашли — возвращаем просто верхний слой
+                if (!pair.second->layers.empty()) return pair.second->layers.back().effect.get();
             }
         }
         return nullptr;
@@ -147,16 +152,18 @@ void InteractiveWallpaper::register_epoll_fd_cxx(int fd, std::function<void(uint
 // CONFIGURATION (Lua) & INOTIFY (Hot-Reloading)
 // ==============================================================================
 
-// [UPDATED] Применение настроек к конкретному монитору с учетом локальных переопределений
+// [UPDATED] Применение настроек ко всем слоям конкретного монитора
 void InteractiveWallpaper::apply_config_to_effect(Output* output) {
-    if (!output || !output->effect) return;
+    if (!output || output->layers.empty()) return;
     
-    // Запрашиваем конфиг именно для этого монитора (по имени wl_output или описанию)
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
-    std::string target_effect = out_cfg.effect_name.empty() ? default_effect_name_ : out_cfg.effect_name;
-
-    // Применяем параметры с каскадным слиянием (глобальные дефолты + переопределения экрана)
-    lua_engine.apply_effect_settings(output->effect.get(), target_effect, out_cfg.custom_settings);
+    
+    for (size_t i = 0; i < output->layers.size() && i < out_cfg.layers.size(); ++i) {
+        auto& layer = output->layers[i];
+        if (layer.effect) {
+            lua_engine.apply_effect_settings(layer.effect.get(), layer.name, out_cfg.layers[i].custom_settings);
+        }
+    }
 }
 
 void InteractiveWallpaper::apply_config_to_all_outputs() {
@@ -181,22 +188,22 @@ void InteractiveWallpaper::setup_inotify() {
     std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
                                         : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
 
-    // 1. Отслеживаем изменения в основной папке (init.lua) и сгенерированных конфигах
-    inotify_add_watch(inotify_fd, config_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
-    inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+    // ВАЖНО: Убрали IN_MODIFY. Реагируем только на финализацию записи или атомарную подмену (перемещение)
+    uint32_t mask = IN_CLOSE_WRITE | IN_MOVED_TO;
 
-    // 2. Отслеживаем ВСЕ папки бандлов (и шейдеры, и пресеты) через симлинк /effects
+    inotify_add_watch(inotify_fd, config_dir.c_str(), mask);
+    inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), mask);
+
     std::error_code ec;
-    // ВАЖНО: follow_directory_symlink заставит inotify зайти внутрь симлинка effects -> plugins
     auto options = std::filesystem::directory_options::follow_directory_symlink | std::filesystem::directory_options::skip_permission_denied;
     
     std::string effects_dir = config_dir + "/effects";
     if (std::filesystem::exists(effects_dir, ec)) {
-        inotify_add_watch(inotify_fd, effects_dir.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+        inotify_add_watch(inotify_fd, effects_dir.c_str(), mask);
         
         for (const auto& entry : std::filesystem::recursive_directory_iterator(effects_dir, options, ec)) {
             if (entry.is_directory(ec)) {
-                inotify_add_watch(inotify_fd, entry.path().c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO);
+                inotify_add_watch(inotify_fd, entry.path().c_str(), mask);
             }
         }
     }
@@ -303,13 +310,25 @@ void InteractiveWallpaper::process_inotify_events() {
         std::cout << "[Hot-Reload] Shader file changed. Recompiling graphics pipeline..." << std::endl;
         for (auto& pair : outputs) {
             Output* out = pair.second.get();
-            if (out->effect && out->egl_surface != EGL_NO_SURFACE) {
+            if (!out->layers.empty() && out->egl_surface != EGL_NO_SURFACE) {
                 if (eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
-                    out->effect->cleanup();
-                    // Используем физические размеры!
-                    uint32_t buffer_width = out->width * out->scale;
-                    uint32_t buffer_height = out->height * out->scale;
-                    out->effect->initialize(this, buffer_width, buffer_height);
+                    for (auto& layer : out->layers) {
+                        if (layer.effect) {
+                            layer.effect->cleanup();
+                            // ЗАЩИТА: Если после сохранения .glsl шейдер скомпилировался с ошибкой, 
+                            // уничтожаем инстанс эффекта, чтобы он не обрушил композитор.
+                            if (!layer.effect->initialize(this, out->fbo_w, out->fbo_h)) {
+                                std::cerr << "\033[31m[Core] Hot-reload failed for '" << layer.name 
+                                          << "'. Effect disabled until fixed.\033[0m" << std::endl;
+                                layer.effect.reset();
+                            }
+                        }
+                    }
+                    
+                    // Удаляем "пустые" слои (у которых layer.effect == nullptr из-за ошибки выше)
+                    out->layers.erase(std::remove_if(out->layers.begin(), out->layers.end(),
+                        [](const LayerInstance& l) { return !l.effect; }), out->layers.end());
+                    
                     apply_config_to_effect(out);
                 }
             }
@@ -473,45 +492,116 @@ void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::stri
     default_effect_name_ = default_effect;
 }
 
-// [UPDATED] Мультимониторный выбор и инициализация эффекта
+// [NEW] Управление памятью FBO
+void InteractiveWallpaper::Output::destroy_fbos() {
+    if (fbo[0]) { glDeleteFramebuffers(2, fbo); fbo[0] = fbo[1] = 0; }
+    if (tex[0]) { glDeleteTextures(2, tex); tex[0] = tex[1] = 0; }
+    if (depth_rbo[0]) { glDeleteRenderbuffers(2, depth_rbo); depth_rbo[0] = depth_rbo[1] = 0; }
+    if (fbo_feedback) { glDeleteFramebuffers(1, &fbo_feedback); fbo_feedback = 0; }
+    if (tex_feedback) { glDeleteTextures(1, &tex_feedback); tex_feedback = 0; }
+}
+
+void InteractiveWallpaper::Output::allocate_fbos(uint32_t w, uint32_t h) {
+    if (w == fbo_w && h == fbo_h && fbo[0] != 0) return; 
+    fbo_w = w; fbo_h = h;
+    
+    destroy_fbos();
+
+    glGenFramebuffers(2, fbo);
+    glGenTextures(2, tex);
+    glGenRenderbuffers(2, depth_rbo);
+    glGenFramebuffers(1, &fbo_feedback);
+    glGenTextures(1, &tex_feedback);
+
+    auto setup_fbo = [&](GLuint f, GLuint t, GLuint d) {
+        glBindFramebuffer(GL_FRAMEBUFFER, f);
+        glBindTexture(GL_TEXTURE_2D, t);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t, 0);
+
+        if (d > 0) {
+            glBindRenderbuffer(GL_RENDERBUFFER, d);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, d);
+        }
+    };
+
+    setup_fbo(fbo[0], tex[0], depth_rbo[0]);
+    setup_fbo(fbo[1], tex[1], depth_rbo[1]);
+    setup_fbo(fbo_feedback, tex_feedback, 0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_feedback);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+// [UPDATED] Инициализация массива слоев и выделение FBO
 void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     if (!plugin_manager_) return;
     
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
-    std::string target_effect = out_cfg.effect_name.empty() ? default_effect_name_ : out_cfg.effect_name;
+    if (out_cfg.layers.empty()) return;
 
-    if (target_effect.empty()) {
-        std::cerr << "[Core] No effect specified for output: " << output->name << std::endl;
-        return;
+    bool egl_ready = (output->egl_surface != EGL_NO_SURFACE) && 
+                     eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context);
+
+    if (egl_ready && output->configured) {
+        uint32_t buf_w = output->width * output->scale * out_cfg.fbo_scale;
+        uint32_t buf_h = output->height * output->scale * out_cfg.fbo_scale;
+        output->allocate_fbos(buf_w, buf_h);
     }
 
-    if (!output->effect || std::string(output->effect->get_name()) != target_effect) {
-        if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
-            // ВАЖНО: Активируем контекст ПЕРЕД удалением OpenGL объектов
-            eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context);
-            output->effect->cleanup();
-            output->effect.reset();
+    std::vector<LayerInstance> new_layers;
+    for (const auto& layer_cfg : out_cfg.layers) {
+        bool reused = false;
+        for (auto it = output->layers.begin(); it != output->layers.end(); ++it) {
+            if (it->name == layer_cfg.effect_name && it->is_postprocess == layer_cfg.is_postprocess) {
+                new_layers.push_back(std::move(*it));
+                output->layers.erase(it);
+                reused = true;
+                break;
+            }
         }
-        
-        std::cout << "[Core] Assigning effect '" << target_effect 
-                  << "' to Wayland output '" << output->name << "'" << std::endl;
-                  
-        output->effect = plugin_manager_->create_effect(target_effect);
+
+        if (!reused) {
+            std::cout << "[Core] Loading layer '" << layer_cfg.effect_name << "' onto '" << output->name << "'" << std::endl;
+            WallpaperEffectPtr eff = plugin_manager_->create_effect(layer_cfg.effect_name);
+            if (eff) {
+                bool init_ok = true;
+                if (egl_ready && output->configured) {
+                    init_ok = eff->initialize(this, output->fbo_w, output->fbo_h);
+                }
+                
+                // ЗАЩИТА: Добавляем плагин только если он успешно инициализировался
+                if (init_ok) {
+                    new_layers.emplace_back(layer_cfg.effect_name, std::move(eff), layer_cfg.is_postprocess);
+                } else {
+                    std::cerr << "\033[31m[Core] Dropping layer '" << layer_cfg.effect_name 
+                              << "' due to initialization failure.\033[0m" << std::endl;
+                }
+            }
+        }
     }
 
-    if (output->effect) {
-        apply_config_to_effect(output);
-        
-        if (output->configured && output->egl_surface != EGL_NO_SURFACE) {
-            if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
-                // Инициализируем физическими размерами
-                uint32_t buffer_width = output->width * output->scale;
-                uint32_t buffer_height = output->height * output->scale;
-                output->effect->initialize(this, buffer_width, buffer_height);
+    output->layers.clear();
+    output->layers = std::move(new_layers);
+
+    if (egl_ready && output->configured) {
+        for (size_t i = 0; i < output->layers.size(); ++i) {
+            auto& layer = output->layers[i];
+            if (layer.effect) {
+                lua_engine.apply_effect_settings(layer.effect.get(), layer.name, out_cfg.layers[i].custom_settings);
+                layer.effect->resize(output->fbo_w, output->fbo_h);
             }
         }
     }
 }
+
 
 static const wl_callback_listener frame_listener = {
     .done = InteractiveWallpaper::frame_handle_done,
@@ -527,8 +617,9 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
 }
 
 // [UPDATED] Рендеринг кадра с защитой от скачков dt и вызовом покадрового Lua-хука
+// [UPDATED] Многослойный конвейер рендеринга (Ping-Pong FBO)
 void InteractiveWallpaper::render_output(Output* output) {
-    if (!output->configured || !output->effect || output->egl_surface == EGL_NO_SURFACE) return;
+    if (!output->configured || output->layers.empty() || output->egl_surface == EGL_NO_SURFACE) return;
 
     ZoneScoped; 
     ZoneText(output->name.c_str(), output->name.length()); 
@@ -546,33 +637,85 @@ void InteractiveWallpaper::render_output(Output* output) {
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
     if (out_cfg.fps_limit > 0.0f) {
         float min_frame_time = 1.0f / out_cfg.fps_limit;
-        
         if (output->time_since_last_render < min_frame_time) {
             output->frame_callback = wl_surface_frame(output->surface);
             wl_callback_add_listener(output->frame_callback, &frame_listener, output);
             wl_surface_commit(output->surface); 
             return;
         }
-        
         output->time_since_last_render = std::fmod(output->time_since_last_render, min_frame_time);
     } else {
         output->time_since_last_render = 0.0f;
     }
 
     if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
+        
         {
             ZoneScopedN("Lua on_frame"); 
-            lua_engine.on_frame(render_dt, output->name);
+            lua_engine.on_frame(real_dt, output->name); 
         }
+
+        uint32_t fbo_w = output->fbo_w;
+        uint32_t fbo_h = output->fbo_h;
+        glViewport(0, 0, fbo_w, fbo_h);
         
+        // --- 1. Очистка стартового FBO ---
+        output->current_fbo = 0;
+        glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         {
-            ZoneScopedN("Plugin Render"); 
-            // ПЕРЕДАЕМ ФИЗИЧЕСКИЕ РАЗМЕРЫ в render()
-            uint32_t buffer_width = output->width * output->scale;
-            uint32_t buffer_height = output->height * output->scale;
-            output->effect->render(buffer_width, buffer_height, render_dt);
+            ZoneScopedN("Layers Pipeline"); 
+            // --- 2. Оркестрация слоев ---
+            for (size_t i = 0; i < output->layers.size(); ++i) {
+                auto& layer = output->layers[i];
+                if (!layer.effect) continue;
+
+                if (layer.is_postprocess && i > 0) {
+                    // PING-PONG SWAP
+                    int next_fbo = 1 - output->current_fbo;
+                    glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[next_fbo]);
+                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, output->tex[output->current_fbo]); // u_prev_layer
+                    
+                    output->current_fbo = next_fbo; 
+                } else {
+                    glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
+                    if (i > 0) glClear(GL_DEPTH_BUFFER_BIT); // Защита 3D
+                }
+
+                // Фидбек прошлого кадра
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // u_feedback_layer
+                glActiveTexture(GL_TEXTURE0);
+
+                layer.effect->render(fbo_w, fbo_h, real_dt);
+                
+                glBindVertexArray(0);
+                glUseProgram(0);
+                glEnable(GL_BLEND);
+                glDepthMask(GL_TRUE);
+            }
         }
+
+        // --- 3. Сохранение фидбека ---
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, output->fbo[output->current_fbo]);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, output->fbo_feedback);
+        glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+        // --- 4. Финальный вывод на экран (Упскейл) ---
+        uint32_t phys_w = output->width * output->scale;
+        uint32_t phys_h = output->height * output->scale;
         
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // EGL Backbuffer
+        glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, phys_w, phys_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
         output->frame_callback = wl_surface_frame(output->surface);
         wl_callback_add_listener(output->frame_callback, &frame_listener, output);
         
@@ -676,14 +819,22 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
     uint32_t buffer_width = width * output->scale;
     uint32_t buffer_height = height * output->scale;
 
+    OutputConfig out_cfg = output->parent->lua_engine.get_output_config(output->name, output->identifier);
+    uint32_t target_fbo_w = buffer_width * out_cfg.fbo_scale;
+    uint32_t target_fbo_h = buffer_height * out_cfg.fbo_scale;
+
     if (output->egl_surface == EGL_NO_SURFACE) {
         output->parent->create_egl_surface(output);
 
-        if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
+        if (output->egl_surface != EGL_NO_SURFACE) {
             if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
-                // Инициализируем плагин ФИЗИЧЕСКИМИ пикселями
-                if (!output->effect->initialize(output->parent, buffer_width, buffer_height)) {
-                    output->effect.reset();
+                output->allocate_fbos(target_fbo_w, target_fbo_h);
+                for (auto& layer : output->layers) {
+                    if (layer.effect) {
+                        if (!layer.effect->initialize(output->parent, target_fbo_w, target_fbo_h)) {
+                            layer.effect.reset();
+                        }
+                    }
                 }
             }
         }
@@ -694,10 +845,12 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
             wl_egl_window_resize(output->egl_window, buffer_width, buffer_height, 0, 0);
         }
         
-        // Передаем новые физические размеры плагину
-        if (output->effect && output->egl_surface != EGL_NO_SURFACE) {
+        if (output->egl_surface != EGL_NO_SURFACE) {
             if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
-                output->effect->resize(buffer_width, buffer_height);
+                output->allocate_fbos(target_fbo_w, target_fbo_h);
+                for (auto& layer : output->layers) {
+                    if (layer.effect) layer.effect->resize(target_fbo_w, target_fbo_h);
+                }
             }
         }
 

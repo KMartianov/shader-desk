@@ -265,6 +265,7 @@ target_compile_definitions(interactive-wallpaper PRIVATE
     SYSTEM_PLUGIN_DIR="${CMAKE_INSTALL_FULL_LIBDIR}/shader-desk/plugins"
     SYSTEM_SOURCE_DIR="${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/plugins-source"
     LOCAL_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins"
+    LOCAL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/plugins"
 )
 
 target_link_libraries(interactive-wallpaper PRIVATE

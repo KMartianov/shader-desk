@@ -65,6 +65,8 @@ void UniversalBackground::set_parameter(const std::string& name, const EffectPar
 }
 
 extern "C" {
+    uint32_t get_abi_version() { return SHADER_DESK_ABI_VERSION; }
+
     IWallpaperEffectABI* create_effect() { return new UniversalBackground(); }
     void destroy_effect(IWallpaperEffectABI* e) { delete static_cast<UniversalBackground*>(e); }
 }

@@ -15,12 +15,20 @@
 class IDataProviderABI;
 class ICoreContextABI;
 
+// Конфигурация отдельного слоя 
+struct LayerConfig {
+    std::string effect_name;
+    sol::table custom_settings;
+    bool is_postprocess = false; // Флаг пост-обработки
+};
+
 // Структура, описывающая конфигурацию для конкретного монитора
 struct OutputConfig {
-    std::string effect_name;
-    sol::table custom_settings; // Локальные переопределения параметров (если есть)
+    std::vector<LayerConfig> layers;
     float fps_limit = 0.0f;
+    float fbo_scale = 1.0f; // Оптимизация: рендер в пониженном разрешении
 };
+
 
 class LuaEngine {
 public:
@@ -29,6 +37,7 @@ public:
     ~LuaEngine() { clear_timers(); }
 
     std::function<IWallpaperEffectABI*(const std::string&)> get_effect_for_output;
+    void set_config_dir(const std::string& dir) { config_dir = dir; }
 
 
     bool load();

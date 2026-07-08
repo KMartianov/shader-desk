@@ -16,6 +16,7 @@
 #include <wayland-client.h>
 #include <wayland-egl.h>
 #include <EGL/egl.h>
+#include <GLES3/gl3.h> 
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 
@@ -33,6 +34,15 @@ enum class RendererType {
     VULKAN,
     SOFTWARE
 };
+
+struct LayerInstance {
+            std::string name;
+            WallpaperEffectPtr effect;
+            bool is_postprocess;
+            LayerInstance(std::string n, WallpaperEffectPtr eff, bool post) 
+                : name(std::move(n)), effect(std::move(eff)), is_postprocess(post) {}
+        };
+
 
 struct WallpaperConfig {
     std::string output_name = "*";
@@ -67,7 +77,23 @@ public:
         bool configured = false;
         
         // Visual effect plugin instance bound to this specific monitor
-        WallpaperEffectPtr effect;
+        std::vector<LayerInstance> layers;
+
+        GLuint fbo[2] = {0, 0};
+        GLuint tex[2] = {0, 0};
+        GLuint depth_rbo[2] = {0, 0};
+        
+        GLuint fbo_feedback = 0;
+        GLuint tex_feedback = 0;
+
+        int current_fbo = 0;
+        uint32_t fbo_w = 0, fbo_h = 0; // Внутреннее разрешение FBO
+
+        void allocate_fbos(uint32_t w, uint32_t h);
+        void destroy_fbos();
+        
+        
+
 
         // EGL resources for rendering on this monitor
         wl_egl_window* egl_window = nullptr;
@@ -75,11 +101,16 @@ public:
 
         wl_callback* frame_callback = nullptr;
         
-        Output() : effect(nullptr, nullptr) {}
+        Output() {}
 
         ~Output() {
-            if (effect) { effect->cleanup(); effect.reset(); }
-            if (egl_surface != EGL_NO_SURFACE && parent) eglDestroySurface(parent->egl_display, egl_surface);
+            layers.clear(); // Безопасное удаление плагинов
+            // Уничтожаем EGL и FBO
+            if (parent && egl_surface != EGL_NO_SURFACE) {
+                eglMakeCurrent(parent->egl_display, egl_surface, egl_surface, parent->egl_context);
+                destroy_fbos();
+                eglDestroySurface(parent->egl_display, egl_surface);
+            }
             if (egl_window) wl_egl_window_destroy(egl_window);
             if (frame_callback) wl_callback_destroy(frame_callback);
             if (layer_surface) zwlr_layer_surface_v1_destroy(layer_surface);

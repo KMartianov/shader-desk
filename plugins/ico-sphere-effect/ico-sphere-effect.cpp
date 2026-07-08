@@ -262,13 +262,11 @@ void IcoSphereEffect::fetch_uniform_locations() {
 
 
 bool IcoSphereEffect::reload_shader_program() {
-    std::string config_dir = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/";
-    std::string base_path = config_dir + "effects/shaders/ico-sphere-effect/" + active_shader;
-    
     std::cout << "[IcoSphere] Attempting to load shader theme: '" << active_shader << "'" << std::endl;
     
-    std::string vert_src = shader_utils::load_shader_source(m_core, get_name(), base_path + "_vert.glsl");
-    std::string frag_src = shader_utils::load_shader_source(m_core, get_name(), base_path + "_frag.glsl");
+    // ShaderUtils сам найдет нужную папку бандла по get_name()!
+    std::string vert_src = shader_utils::load_shader_source(m_core, get_name(), active_shader + "_vert.glsl");
+    std::string frag_src = shader_utils::load_shader_source(m_core, get_name(), active_shader + "_frag.glsl");
     
     if (vert_src.empty() || frag_src.empty()) {
         std::cerr << "[IcoSphere] Failed to load shader files for theme: " << active_shader << std::endl;
@@ -281,13 +279,10 @@ bool IcoSphereEffect::reload_shader_program() {
         return false;
     }
     
-    // If successful: delete the old program and set the new one
-    if (program != 0) {
-        glDeleteProgram(program);
-    }
+    if (program != 0) glDeleteProgram(program);
     
     program = new_program;
-    fetch_uniform_locations(); // Update Uniform addresses for the new program
+    fetch_uniform_locations(); 
     
     std::cout << "[IcoSphere] Successfully switched to shader theme: '" << active_shader << "'" << std::endl;
     return true;
@@ -518,6 +513,8 @@ void IcoSphereEffect::update_rotation(float dt) {
 
 void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     if (needs_shader_reload) { reload_shader_program(); needs_shader_reload = false; }
+    if (!program || !vao) return; 
+
     if (needs_regeneration) { generate_icosphere(subdivisions); update_buffers(); needs_regeneration = false; }
 
     // Обработка мыши из BlackBoard

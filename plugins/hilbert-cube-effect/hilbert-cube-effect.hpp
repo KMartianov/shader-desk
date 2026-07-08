@@ -44,6 +44,7 @@ private:
     bool draw_cube_outline = true;
     glm::vec3 curve_color = {1.0f, 0.5f, 0.0f};
     glm::vec3 cube_color = {0.8f, 0.8f, 0.8f};
+    glm::vec3 position_offset = {0.0f, 0.0f, 0.0f};
     bool needs_regeneration = true;
 
     // --- Rotation Logic (Similar to IcoSphere) ---

@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <map>
 #include "data-provider.hpp" // Now includes the SDK wrapper (IProviderABI)
+#include "embedded_init.hpp" 
+#include "embedded_ctl.hpp" 
 
 #ifdef TRACY_ENABLE
 #include <tracy/Tracy.hpp>
@@ -73,7 +75,7 @@ bool LuaEngine::load() {
     fs::path plugins_dir = fs::path(dir) / "plugins";
     fs::path init_lua_path = fs::path(dir) / "init.lua";
 
-    frame_callback = sol::nil; // [NEW] Очищаем хук прошлого скрипта
+    frame_callback = sol::nil; // Clear the hook from the previous script
 
     // 1. Completely clear the state (useful for hot-reload)
     #ifdef TRACY_ENABLE
@@ -85,9 +87,20 @@ bool LuaEngine::load() {
     // 2. Load standard safe Lua libraries
     lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, sol::lib::string, sol::lib::table, sol::lib::package);
 
-    // Add config directory to package.path
+    // ==============================================================================
+    // SMART MODULE RESOLUTION (package.path & package.preload)
+    // ==============================================================================
+    // Lua will search for modules (like ctl.lua) in the user config dir first, 
+    // then fallback to the local source tree (useful for development).
     std::string package_path = lua["package"]["path"];
-    lua["package"]["path"] = package_path + ";" + dir + "/?.lua";
+    lua["package"]["path"] = package_path + ";" + dir + "/?.lua;./src/defaults/?.lua";
+
+    // If 'ctl.lua' cannot be found on the filesystem at all (e.g., system-wide install 
+    // with no user config generated yet), load it directly from the embedded C++ string!
+    lua["package"]["preload"]["ctl"] = [](sol::this_state s) {
+        sol::state_view lua(s);
+        return lua.load(Embedded::CTL_LUA);
+    };
 
     // 3. Create global tables to prevent script crashes on missing globals
     lua["config"] = lua.create_table();
@@ -109,14 +122,14 @@ bool LuaEngine::load() {
     utils["apply_preset"] = [this](sol::table target, const std::string& plugin_name, const std::string& preset_name) {
         if (!current_core) return;
 
-        // Запрашиваем путь к бандлу у Ядра через C-ABI
+        // Request bundle path from the Core via C-ABI
         std::string bundle_dir = current_core->get_bundle_path(plugin_name.c_str());
         if (bundle_dir.empty()) {
             std::cerr << "\033[33m[Warning] Bundle not found for: " << plugin_name << "\033[0m\n";
             return;
         }
 
-        // Путь к пресету: .../effects/<bundle>/presets/<preset>.lua
+        // Preset path: .../effects/<bundle>/presets/<preset>.lua
         std::string preset_path = bundle_dir + "/presets/" + preset_name + ".lua";
         
         if (!fs::exists(preset_path)) {
@@ -146,20 +159,29 @@ bool LuaEngine::load() {
             }
         }
 
-        // 5. Then execute the main init.lua (User logic overrides)
+        // ==============================================================================
+        // 5. INTELLIGENT INIT.LUA LOADING (User -> Local Dev -> Embedded Fallback)
+        // ==============================================================================
         if (fs::exists(init_lua_path)) {
+            // Priority 1: User's explicit configuration (~/.config/...)
             lua.script_file(init_lua_path.string());
-        } else {
-            std::cerr << "Warning: init.lua not found. Run with --init-config to generate." << std::endl;
-            return false;
+            std::cout << "[LuaEngine] Loaded user config: " << init_lua_path << std::endl;
+        } 
+        else if (fs::exists("./src/defaults/init.lua")) {
+            // Priority 2: Local development fallback (running from IDE/Source tree)
+            lua.script_file("./src/defaults/init.lua");
+            std::cout << "[LuaEngine] Loaded local dev config: ./src/defaults/init.lua" << std::endl;
+        } 
+        else {
+            // Priority 3: Pure portable/system mode. No files needed.
+            lua.script(Embedded::INIT_LUA);
+            std::cout << "[LuaEngine] Loaded embedded fallback config." << std::endl;
         }
 
-        std::cout << "Lua configuration loaded successfully." << std::endl;
         return true;
 
     } catch (const sol::error& e) {
-        std::cerr << "CRITICAL LUA ERROR: " << e.what() << std::endl;
-        std::cerr << "Falling back to previous state or defaults." << std::endl;
+        std::cerr << "\033[31mCRITICAL LUA ERROR: " << e.what() << "\033[0m" << std::endl;
         return false;
     }
 }
@@ -428,45 +450,61 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
     sol::table core = lua["core"];
     if (!core.valid()) return res;
 
-    res.effect_name = core.get_or("default_effect", core.get_or("active_effect", std::string("")));
-    // Читаем глобальный лимит кадров (по умолчанию 0.0)
+    std::string fallback_effect = core.get_or("default_effect", core.get_or("active_effect", std::string("")));
     res.fps_limit = core.get_or("fps_limit", 0.0f);
 
     sol::object outputs_obj = core["outputs"];
-    if (!outputs_obj.is<sol::table>()) return res;
-    sol::table outputs = outputs_obj.as<sol::table>();
-
-    sol::object out_conf_obj = outputs[output_name];
-    if (!out_conf_obj.valid() && !output_desc.empty()) {
-        out_conf_obj = outputs[output_desc];
+    if (!outputs_obj.is<sol::table>()) {
+        if (!fallback_effect.empty()) res.layers.push_back({fallback_effect, sol::nil, false});
+        return res;
     }
+
+    sol::table outputs = outputs_obj.as<sol::table>();
+    sol::object out_conf_obj = outputs[output_name];
+    if (!out_conf_obj.valid() && !output_desc.empty()) out_conf_obj = outputs[output_desc];
 
     if (out_conf_obj.is<sol::table>()) {
         sol::table out_conf = out_conf_obj.as<sol::table>();
-        res.effect_name = out_conf.get_or("effect", res.effect_name);
-        res.fps_limit = out_conf.get_or("fps_limit", res.fps_limit); // Локальный лимит
-        
-        sol::table settings;
-        if (out_conf["settings"].is<sol::table>()) {
-            settings = out_conf["settings"];
-            // Проверяем лимит еще и внутри таблицы settings
-            res.fps_limit = settings.get_or("fps_limit", res.fps_limit);
-        } else {
-            settings = lua.create_table();
-            out_conf["settings"] = settings;
-        }
-        
-        std::string preset = out_conf.get_or("preset", std::string(""));
-        std::string applied_preset = out_conf.get_or("_applied_preset", std::string(""));
+        res.fps_limit = out_conf.get_or("fps_limit", res.fps_limit);
+        res.fbo_scale = out_conf.get_or("fbo_scale", 1.0f); // Читаем масштаб FBO
 
-        if (!preset.empty() && preset != applied_preset) {
-            sol::function apply_preset = core["utils"]["apply_preset"];
-            if (apply_preset.valid()) {
-                apply_preset(settings, res.effect_name, preset);
-                out_conf["_applied_preset"] = preset; // Ставим метку, что пресет уже применен!
+        if (out_conf["layers"].is<sol::table>()) {
+            sol::table layers_table = out_conf["layers"];
+            for (auto& kv : layers_table) {
+                if (!kv.second.is<sol::table>()) continue;
+                sol::table layer_tbl = kv.second.as<sol::table>();
+                
+                std::string eff_name = layer_tbl.get_or("effect", std::string(""));
+                if (eff_name.empty()) continue;
+
+                sol::table settings = layer_tbl["settings"].is<sol::table>() ? layer_tbl["settings"] : lua.create_table();
+                bool is_post = layer_tbl.get_or("postprocess", false);
+
+                std::string preset = layer_tbl.get_or("preset", std::string(""));
+                if (!preset.empty()) {
+                    // Проверяем, не применяли ли мы этот пресет ранее
+                    std::string applied = settings.get_or("_preset_applied", std::string(""));
+                    if (applied != preset) {
+                        sol::function apply_preset = core["utils"]["apply_preset"];
+                        if (apply_preset.valid()) {
+                            apply_preset(settings, eff_name, preset);
+                            settings["_preset_applied"] = preset; // Запоминаем!
+                        }
+                    }
+                }
+
+                res.layers.push_back({eff_name, settings, is_post});
+            }
+        } else {
+            // Старый формат (1 эффект)
+            std::string eff_name = out_conf.get_or("effect", fallback_effect);
+            if (!eff_name.empty()) {
+                sol::table settings = out_conf["settings"].is<sol::table>() ? out_conf["settings"] : lua.create_table();
+                res.layers.push_back({eff_name, settings, false});
             }
         }
-        res.custom_settings = settings;
+    } else if (!fallback_effect.empty()) {
+        res.layers.push_back({fallback_effect, sol::nil, false});
     }
     return res;
 }
@@ -484,8 +522,23 @@ void LuaEngine::clear_timers() {
 }
 
 bool LuaEngine::reload() {
-    std::cout << "[LuaEngine] Clearing active timers before reload..." << std::endl;
-    clear_timers(); // Mandatory: clear system timers and epoll before destroying sol::state
+    std::string dir = get_config_dir();
+    fs::path init_lua_path = fs::path(dir) / "init.lua";
+
+    // --- ПРЕД-ВАЛИДАЦИЯ (Синтаксис) ---
+    // Проверяем пользовательский конфиг перед тем как ломать текущий State
+    if (fs::exists(init_lua_path)) {
+        sol::load_result syntax_check = lua.load_file(init_lua_path.string());
+        if (!syntax_check.valid()) {
+            sol::error err = syntax_check;
+            std::cerr << "\033[31m[Lua Syntax Error] Aborting reload:\n" << err.what() << "\033[0m" << std::endl;
+            return false; // Отмена! Оставляем старый State рабочим.
+        }
+    }
+
+    // Если синтаксис верный, пересоздаем среду
+    std::cout << "[LuaEngine] Syntax OK. Clearing active timers before reload..." << std::endl;
+    clear_timers(); 
     return load();
 }
 

@@ -15,7 +15,7 @@
 
 namespace fs = std::filesystem;
 
-// Если мы собираем без установки (в IDE), используем локальные папки как фоллбэк
+// Fallbacks for local IDE builds if CMake didn't define system paths
 #ifndef SYSTEM_SOURCE_DIR
 #define SYSTEM_SOURCE_DIR "./plugins"
 #endif
@@ -25,110 +25,151 @@ namespace fs = std::filesystem;
 
 std::atomic<bool> global_running{true};
 
-// 1. Получение путей для загрузки плагинов
-std::vector<std::string> get_plugin_directories() {
+// 1. Get directories for plugin discovery
+std::vector<std::string> get_plugin_directories(const std::string& custom_config_dir) {
     std::vector<std::string> dirs;
-    const char* home = getenv("HOME");
     
-    // ПРИОРИТЕТ 1: Пользовательские модификации из workspace (~/.config/...)
-    if (home) {
-        dirs.push_back(std::string(home) + "/.config/interactive-wallpaper/effects");
+    // ПРИОРИТЕТ 1: Воркспейс (Кастомный через --config или стандартный ~/.config)
+    if (!custom_config_dir.empty()) {
+        dirs.push_back(custom_config_dir + "/effects");
+    } else {
+        const char* home = getenv("HOME");
+        if (home) {
+            dirs.push_back(std::string(home) + "/.config/interactive-wallpaper/effects");
+        }
     }
     
-    // ПРИОРИТЕТ 2: АВТОМАТИЧЕСКИЙ ПУТЬ СБОРКИ (Передается из CMake при компиляции)
+    // ПРИОРИТЕТ 2: Локальная сборка (Запуск прямо из репозитория)
     #ifdef LOCAL_PLUGIN_DIR
     dirs.push_back(LOCAL_PLUGIN_DIR);
     #endif
-
-    // ПРИОРИТЕТ 3: Жестко заданные фоллбэки (для запуска из разных директорий терминала)
-    dirs.push_back("./build-tracy/plugins");   // <--- Твоя папка для Tracy!
-    dirs.push_back("./build-release/plugins"); // Твоя релизная папка!
+    
+    // Возвращаем твои хардкод-пути для разных профилей сборки (Tracy, Release, Debug)
+    dirs.push_back("./build-tracy/plugins");
+    dirs.push_back("./build-release/plugins");
     dirs.push_back("./build/plugins");
     dirs.push_back("./plugins");
     dirs.push_back("../plugins");
     
-    // ПРИОРИТЕТ 4: Системный путь FHS (/usr/lib/shader-desk/plugins)
+    // ПРИОРИТЕТ 3: Системная установка FHS (/usr/lib)
+    #ifdef SYSTEM_PLUGIN_DIR
     dirs.push_back(SYSTEM_PLUGIN_DIR);
+    #endif
     
     return dirs;
 }
 
-// 2. Функция копирования исходников
-void init_user_workspace() {
-    const char* home = getenv("HOME");
-    if (!home) return;
-
-    fs::path user_effects_dir = fs::path(home) / ".config/interactive-wallpaper/effects";
+// 2. Initialize user modding workspace
+void init_user_workspace(const std::string& custom_config_dir) {
+    std::string config_base = custom_config_dir.empty() ? 
+        (std::string(getenv("HOME")) + "/.config/interactive-wallpaper") : custom_config_dir;
+        
+    fs::path user_effects_dir = fs::path(config_base) / "effects";
     
-    // Ищем папку с исходниками: локальную или системную
     fs::path source_to_use;
-    if (fs::exists("./plugins")) {
-        source_to_use = "./plugins";
-    } else if (fs::exists("../plugins")) {
-        source_to_use = "../plugins";
-    } else if (fs::exists(SYSTEM_SOURCE_DIR)) {
-        source_to_use = SYSTEM_SOURCE_DIR;
-    } else {
-        std::cerr << "Error: Source directory not found. Run from project root or install." << std::endl;
+    if (fs::exists("./plugins")) source_to_use = "./plugins";
+    else if (fs::exists("../plugins")) source_to_use = "../plugins";
+    else if (fs::exists(SYSTEM_SOURCE_DIR)) source_to_use = SYSTEM_SOURCE_DIR;
+    else {
+        std::cerr << "Error: Source directory not found." << std::endl;
         return;
     }
 
-    std::cout << "Initializing modding workspace at: " << user_effects_dir << std::endl;
-    std::cout << "Copying templates from: " << source_to_use << std::endl;
+    std::cout << "Initializing workspace at: " << user_effects_dir << std::endl;
     fs::create_directories(user_effects_dir);
 
-    // Копируем исходники, не перезаписывая уже измененные пользователем файлы
     auto copy_opts = fs::copy_options::recursive | fs::copy_options::skip_existing;
     std::error_code ec;
-    
     fs::copy(source_to_use, user_effects_dir, copy_opts, ec);
     
     if (ec) {
-        std::cerr << "Failed to copy workspace: " << ec.message() << std::endl;
-    } else {
-        std::cout << "Workspace initialized successfully!\n";
-        std::cout << "You can now edit .cpp and .glsl files in " << user_effects_dir << " and compile them." << std::endl;
+        std::cerr << "Failed to copy workspace sources: " << ec.message() << std::endl;
+        return;
     }
+
+    // Внедряем собранные .so файлы в новые бандлы
+    std::vector<std::string> search_dirs = get_plugin_directories(custom_config_dir);
+    for (const auto& entry : fs::directory_iterator(user_effects_dir)) {
+        if (!entry.is_directory()) continue;
+        
+        std::string plugin_name = entry.path().filename().string();
+        std::string so_filename = plugin_name + ".so";
+        
+        for (const auto& dir : search_dirs) {
+            fs::path so_nested = fs::path(dir) / plugin_name / so_filename;
+            fs::path so_flat = fs::path(dir) / so_filename;
+
+            fs::path found_so = fs::exists(so_nested) ? so_nested : (fs::exists(so_flat) ? so_flat : fs::path(""));
+
+            if (!found_so.empty()) {
+                fs::copy_file(found_so, entry.path() / so_filename, fs::copy_options::update_existing, ec);
+                if (!ec) std::cout << "  ✓ Embedded compiled binary: " << so_filename << std::endl;
+                break;
+            }
+        }
+    }
+    std::cout << "\n✓ Workspace ready! Edit .glsl files for instant hot-reload.\n";
 }
 
 int main(int argc, char** argv) {
-    // 1. Handle CLI commands (e.g., initial configuration generation)
-    if (argc > 1) {
-        std::string arg1 = argv[1];
-        
-        if (arg1 == "--init-workspace") {
-            init_user_workspace();
+    // 1. Flexible CLI Argument Parsing
+    std::string custom_config_dir = "";
+    std::string main_command = "";
+    std::string inspect_target = "";
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc) {
+            // CRITICAL: Convert to absolute path immediately.
+            // If run via Hyprland/Sway "exec-once", relative paths will point to $HOME.
+            custom_config_dir = fs::absolute(argv[i + 1]).string();
+            i++; // Skip the path argument
+        } else if (arg == "--inspect" && i + 1 < argc) {
+            main_command = arg;
+            inspect_target = argv[i + 1];
+            i++; // Skip the plugin name argument
+        } else if (arg.rfind("--", 0) == 0) {
+            main_command = arg; // Remember main action (--init-config, --list-plugins, etc.)
+        }
+    }
+
+    // 2. Handle specific CLI actions and exit
+    if (!main_command.empty()) {
+        if (main_command == "--init-workspace") {
+            init_user_workspace(custom_config_dir);
             return 0;
         }
 
-        if (arg1 == "--init-config" || arg1 == "--list-plugins" || arg1 == "--list-providers" || arg1 == "--inspect") {
-            // ИСПРАВЛЕНИЕ: Вызываем правильную функцию и передаем вектор в PluginManager
-            std::vector<std::string> p_dirs = get_plugin_directories();
+        if (main_command == "--init-config" || main_command == "--list-plugins" || 
+            main_command == "--list-providers" || main_command == "--inspect") {
+            
+            std::vector<std::string> p_dirs = get_plugin_directories(custom_config_dir);
+
             PluginManager pm(p_dirs);
             pm.discover_plugins();
 
-            if (arg1 == "--init-config") {
-                LuaConfigGenerator::generate_configs(pm);
+            if (main_command == "--init-config") {
+                LuaConfigGenerator::generate_configs(pm, custom_config_dir);
                 return 0;
             } 
-            else if (arg1 == "--list-plugins") {
+            else if (main_command == "--list-plugins") {
                 nlohmann::json j = pm.get_available_effects();
                 std::cout << j.dump(2) << std::endl;
                 return 0;
             } 
-            else if (arg1 == "--list-providers") {
+            else if (main_command == "--list-providers") {
                 nlohmann::json j = pm.get_available_providers();
                 std::cout << j.dump(2) << std::endl;
                 return 0;
             } 
-            else if (arg1 == "--inspect") {
-                if (argc < 3) {
+            else if (main_command == "--inspect") {
+                if (inspect_target.empty()) {
                     std::cerr << "Usage: interactive-wallpaper --inspect \"<Plugin Name>\"" << std::endl;
                     return 1;
                 }
-                nlohmann::json info = pm.inspect_plugin(argv[2]);
+                nlohmann::json info = pm.inspect_plugin(inspect_target);
                 if (info.is_null()) {
-                    std::cerr << "Error: Plugin '" << argv[2] << "' not found." << std::endl;
+                    std::cerr << "Error: Plugin '" << inspect_target << "' not found." << std::endl;
                     return 1;
                 }
                 std::cout << info.dump(2) << std::endl;
@@ -137,7 +178,8 @@ int main(int argc, char** argv) {
         }
     } 
 
-    // 2. Block POSIX signals. They will be handled safely via signalfd integrated into the epoll loop.
+    // 3. Block POSIX signals. 
+    // They will be handled safely via signalfd integrated into the Wayland epoll loop.
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -147,63 +189,66 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 3. Initialize the embedded Lua runtime
+    // 4. Initialize the embedded Lua runtime and configure custom directory
     LuaEngine lua_engine;
+    if (!custom_config_dir.empty()) {
+        lua_engine.set_config_dir(custom_config_dir);
+        std::cout << "[Core] Using custom config directory: " << custom_config_dir << std::endl;
+    }
 
-    // 4. CRITICAL RAII ORDER: Initialize PluginManager FIRST.
-    // When main() exits, C++ destroys local variables in reverse order of declaration.
+    // 5. CRITICAL RAII ORDER: Initialize PluginManager FIRST.
+    // When main() exits, C++ destroys local variables in reverse declaration order.
     // By declaring PluginManager before InteractiveWallpaper, we guarantee that dlclose() 
-    // is called only AFTER the microkernel has safely destroyed all active plugin instances.
-    std::vector<std::string> plugin_dirs = get_plugin_directories();
+    // is called only AFTER the Wayland microkernel has safely destroyed all visual effects.
+    std::vector<std::string> plugin_dirs = get_plugin_directories(custom_config_dir);
     PluginManager plugin_manager(plugin_dirs);
     plugin_manager.discover_plugins();
 
     auto available_effects = plugin_manager.get_available_effects();
     if (available_effects.empty()) {
-        // ИСПРАВЛЕНИЕ: Безопасный вывод в лог (plugin_dir ранее не существовала в этой области видимости)
-        std::cerr << "No visual plugins discovered in searched directories. Exiting." << std::endl;
+        std::cerr << "CRITICAL: No visual plugins discovered. Exiting." << std::endl;
         return 1;
     }
 
-    // 5. Initialize Core context (second in RAII order)
+    // 6. Initialize Core context (second in RAII order)
     WallpaperConfig wallpaper_config;
     wallpaper_config.output_name = "*";
     wallpaper_config.interactive = true;
     
     InteractiveWallpaper wallpaper(wallpaper_config, lua_engine);
 
-    // 6. Bind Core C-ABI to the Lua runtime BEFORE loading scripts, allowing timers and hooks to register
+    // 7. Bind Core C-ABI to the Lua runtime BEFORE loading scripts (allows timers to register)
     lua_engine.bind_core_api(&wallpaper);
 
-    // 7. Load user configuration from ~/.config/interactive-wallpaper/init.lua
+    // 8. Load user configuration
     if (!lua_engine.load()) {
-        std::cerr << "Failed to load Lua configuration. Proceeding with fallback defaults." << std::endl;
+        std::cerr << "Warning: Failed to evaluate Lua configuration. Proceeding with fallback defaults." << std::endl;
     }
 
-    // Select the default fallback effect if the configured one is missing
+    // 9. Select the default fallback effect if the configured one is missing
     std::string effect_name = lua_engine.get_active_effect();
     if (effect_name.empty() || std::find(available_effects.begin(), available_effects.end(), effect_name) == available_effects.end()) {
         effect_name = available_effects[0];
     }
-    std::cout << "Selected fallback visual effect: '" << effect_name << "'" << std::endl;
+    std::cout << "[Core] Selected fallback visual effect: '" << effect_name << "'" << std::endl;
 
     wallpaper.set_plugin_manager(&plugin_manager, effect_name);
     
-    // 8. Connect to the Wayland display and bind compositor interfaces (wl_compositor, layer-shell, etc.)
+    // 10. Connect to the Wayland display and bind compositor interfaces (layer-shell, EGL)
     if (!wallpaper.initialize()) {
-        std::cerr << "CRITICAL: Failed to connect to the Wayland compositor." << std::endl;
+        std::cerr << "CRITICAL: Failed to connect to the Wayland compositor or initialize EGL." << std::endl;
         return 1;
     }
 
-    // 9. Initialize and start all active Data Providers (Audio, Input, etc.) based on Lua settings
+    // 11. Initialize and start all active Data Providers based on Lua settings
     plugin_manager.initialize_providers(&wallpaper, [&lua_engine](IDataProviderABI* p) {
         return lua_engine.configure_provider(p);
     });
 
-    // 10. Enter the zero-latency epoll event loop
-    std::cout << "Entering main epoll event loop..." << std::endl;
+    // 12. Enter the zero-latency epoll event loop
+    std::cout << "[Core] Entering main epoll event loop..." << std::endl;
     wallpaper.run();
     
-    std::cout << "Microkernel shut down gracefully. Clean RAII resource deallocation in progress..." << std::endl;
+    std::cout << "[Core] Microkernel shut down gracefully. Clean RAII resource deallocation in progress..." << std::endl;
     return 0;
 }

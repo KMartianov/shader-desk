@@ -16,10 +16,7 @@ endif()
 set(PLUGIN_BUILD_DIR "${CMAKE_BINARY_DIR}/plugins/${PLUGIN_NAME}")
 
 add_library(${PLUGIN_NAME} SHARED "${PLUGIN_NAME}.cpp")
-set_target_properties(${PLUGIN_NAME} PROPERTIES 
-    PREFIX ""
-    LIBRARY_OUTPUT_DIRECTORY "${PLUGIN_BUILD_DIR}"
-)
+set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
 
 target_include_directories(${PLUGIN_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 

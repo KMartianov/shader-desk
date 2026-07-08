@@ -185,21 +185,17 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
         needs_regeneration = false;
     }
 
-    glViewport(0, 0, width, height);
-
-
-    // Clear the color and depth buffers with a dark background color.
-    glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
     update_rotation(dt); 
     time += dt;
     
     glEnable(GL_DEPTH_TEST);
     glLineWidth(1.0f);
     
+    // ВАЖНО: Удалены glViewport и glClear! Этим теперь управляет Ядро.
     glUseProgram(program);
-    glm::mat4 model = glm::toMat4(orientation);
+    
+    // Применяем смещение к модели
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), position_offset) * glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.5f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
 
@@ -243,6 +239,7 @@ const char* HilbertCubeEffect::get_name() const {
 std::vector<EffectParameter> HilbertCubeEffect::get_parameters() const {
     return {
         {"hilbert_order", "Detail of the Hilbert curve (1-5)", hilbert_order},
+        {"offset", "The position of the object (X, Y, Z)", position_offset},
         {"draw_cube_outline", "Draw the cube's wireframe", draw_cube_outline},
         {"curve_color", "Color of the Hilbert curve", curve_color},
         {"cube_color", "Color of the cube wireframe", cube_color},
@@ -258,6 +255,8 @@ void HilbertCubeEffect::set_parameter(const std::string& name, const EffectParam
                 hilbert_order = new_order;
                 needs_regeneration = true;
             }
+        } else if (name == "offset") {
+            position_offset = std::get<glm::vec3>(value);
         } else if (name == "draw_cube_outline") {
             draw_cube_outline = std::get<bool>(value);
         } else if (name == "curve_color") {
@@ -276,6 +275,9 @@ void HilbertCubeEffect::set_parameter(const std::string& name, const EffectParam
 
 // --- Exported C-functions ---
 extern "C" {
+
+    uint32_t get_abi_version() { return SHADER_DESK_ABI_VERSION; }
+
     IWallpaperEffectABI* create_effect() {
         return new HilbertCubeEffect(); 
     }

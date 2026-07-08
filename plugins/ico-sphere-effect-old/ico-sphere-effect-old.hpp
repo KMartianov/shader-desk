@@ -97,6 +97,7 @@ protected:
     float sphere_scale = 1.0f;
     glm::vec3 background_color = {0.1137f, 0.1137f, 0.1255f};
     glm::vec3 wireframe_color = {0.5f, 0.5f, 0.7f};
+    glm::vec3 position_offset = {0.0f, 0.0f, 0.0f};
 
     // --- Uniforms ---
     GLuint u_lightColor = 0, u_lightPos = 0, u_viewPos = 0;

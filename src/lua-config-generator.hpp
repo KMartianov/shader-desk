@@ -12,10 +12,11 @@ public:
      * 
      * @param pm Инициализированный менеджер плагинов с загруженными .so
      */
-    static void generate_configs(PluginManager& pm);
+    static void generate_configs(PluginManager& pm, const std::string& custom_dir = "");
+
 
 private:
-    static std::string get_config_dir();
+    static std::string get_config_dir(const std::string& custom_dir);
     static std::string sanitize_filename(std::string name);
     static std::string value_to_lua_string(const ParamValueABI& val);
     

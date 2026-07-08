@@ -348,12 +348,11 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     
     
     glEnable(GL_DEPTH_TEST);
-    glViewport(0, 0, width, height);
-    glClearColor(background_color.r, background_color.g, background_color.b, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // ВАЖНО: glViewport, glClear и glClearColor нет. Этим управляет Ядро.
     glUseProgram(program);
     
-    glm::mat4 model = glm::toMat4(orientation);
+    // Применяем смещение (offset) к матрице модели
+    glm::mat4 model = glm::translate(glm::mat4(1.0f), position_offset) * glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
     
@@ -443,6 +442,7 @@ public:
             
             // --- OLD PARAMETERS ---
             {"wireframe_mode", "Render as a wireframe", wireframe_mode},
+            {"offset", "The position of the object (X, Y, Z)", position_offset},
             {"subdivisions", "Level of sphere detail (0-6)", subdivisions},
             {"sphere_scale", "Overall size of the sphere", sphere_scale},
             {"oscill_amp", "Oscillation Amplitude", oscill_amp},
@@ -474,6 +474,7 @@ public:
             }
             // --- PROCESS OLD PARAMETERS ---
             else if (name == "wireframe_mode")   { set_wireframe_mode(std::get<bool>(value)); }
+            else if (name == "offset")           { position_offset = std::get<glm::vec3>(value); }
             else if (name == "subdivisions") { set_subdivisions(std::get<int>(value)); }
             else if (name == "sphere_scale") { set_sphere_scale(std::get<float>(value)); }
             else if (name == "oscill_amp")   { set_oscill_amp(std::get<float>(value)); }

@@ -15,7 +15,9 @@ namespace fs = std::filesystem;
 // HELPER FUNCTIONS
 // ==============================================================================
 
-std::string LuaConfigGenerator::get_config_dir() {
+std::string LuaConfigGenerator::get_config_dir(const std::string& custom_dir) {
+    if (!custom_dir.empty()) return custom_dir; // Если передали кастомный путь, используем его!
+    
     const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
     std::string base_dir;
     if (xdg_config && *xdg_config) {
@@ -67,8 +69,8 @@ static std::string trim(const std::string& str) {
 // MAIN GENERATION LOGIC
 // ==============================================================================
 
-void LuaConfigGenerator::generate_configs(PluginManager& pm) {
-    std::string config_dir = get_config_dir();
+void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& custom_dir) {
+    std::string config_dir = get_config_dir(custom_dir);
     fs::path plugins_dir = fs::path(config_dir) / "plugins";
 
     // Create directories if they do not exist

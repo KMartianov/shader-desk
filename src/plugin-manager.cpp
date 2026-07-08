@@ -120,7 +120,17 @@ void PluginManager::discover_plugins() {
                             plugin->name = effect_name;
                             plugin->path = path_str;
                             
-                            bundle_paths_[effect_name] = bundle_dir; // Store bundle path (used for shaders)
+                            std::string final_path = bundle_dir;
+                            if (!fs::exists(fs::path(bundle_dir) / "shaders")) {
+                                #ifdef LOCAL_SOURCE_DIR
+                                if (fs::exists(fs::path(LOCAL_SOURCE_DIR) / effect_name)) {
+                                    final_path = (fs::path(LOCAL_SOURCE_DIR) / effect_name).string();
+                                }
+                                #endif
+                            }
+                            bundle_paths_[effect_name] = final_path;
+
+                            
                             loaded_plugins.push_back(std::move(plugin));
                             discovered_effects.insert(effect_name);
                             handle_stored = true;
@@ -142,7 +152,17 @@ void PluginManager::discover_plugins() {
                         std::string provider_name = provider->get_name();
 
                         if (discovered_providers.find(provider_name) == discovered_providers.end()) {
-                            bundle_paths_[provider_name] = bundle_dir;
+                            
+                            std::string final_prov_path = bundle_dir;
+                            if (!fs::exists(fs::path(bundle_dir) / "shaders") && !fs::exists(fs::path(bundle_dir) / "presets")) {
+                                #ifdef LOCAL_SOURCE_DIR
+                                if (fs::exists(fs::path(LOCAL_SOURCE_DIR) / provider_name)) {
+                                    final_prov_path = (fs::path(LOCAL_SOURCE_DIR) / provider_name).string();
+                                }
+                                #endif
+                            }
+                            bundle_paths_[provider_name] = final_prov_path;
+
                             discovered_providers.insert(provider_name);
                             data_providers.push_back(std::move(provider));
                             

@@ -32,7 +32,7 @@ core.outputs = {
             {
                 effect = "Universal Background",
                 settings = {
-                    gradient_type = 2, -- Радиальный градиент
+                    gradient_type = 1, -- Радиальный градиент
                     color_top = { 0.5, 0.01, 0.08 },
                     color_bottom = { 0.01, 0.0, 0.02 },
                     pulse_speed = 0.5
@@ -41,34 +41,18 @@ core.outputs = {
             -- СЛОЙ 2: 3D Объект поверх фона
             {
                 effect = "Icosahedron Sphere Old",
-                preset = "cyberpunk", -- Автоматически загрузит настройки из пресета
+                --preset = "cyberpunk", -- Автоматически загрузит настройки из пресета
                 settings = {
-                    sphere_scale = 0.1,
+                    subdivisions = 4,
+                    sphere_scale = 1.0,
+                    wireframe_color = {1.0, 1.0, 1.0},
+                    shader_theme = "harmonics"
                     -- Поскольку фон теперь рисует Universal Background, 
                     -- wireframe_color мы будем анимировать через Lua ниже!
                 }
             },
-            {
-                effect = "Icosahedron Sphere Old",
-                preset = "cyberpunk", -- Автоматически загрузит настройки из пресета
-                
-                settings = {
-                    sphere_scale = 0.1,
-                    shader = "harmonics",
-                    offset = {0.0, 0.0, 0.0}
-                    -- Поскольку фон теперь рисует Universal Background, 
-                    -- wireframe_color мы будем анимировать через Lua ниже!
-                }
-            },
-            {
-                effect = "Hilbert Cube",
-                settings = {
-                    hilbert_order = 3,       -- Детализация фрактала
-                    draw_cube_outline = true,
-                    cube_color = {0.2, 0.2, 0.3},
-                    rotation_decay = 0.98    -- Долгое затухание вращения от мыши
-                }
-            }
+      
+      
         }
     },
 
@@ -113,7 +97,7 @@ core.providers = {
     ["Cava Audio Provider"] = {
         enabled = true,
         smoothing = 0.85,          -- Сглаживание падения столбиков эквалайзера
-        volume_multiplier = 1.0,
+        volume_multiplier = 100.0,
         bass_multiplier = 1.5,     -- Усиливаем реакцию на бас
         treble_multiplier = 2.0
     }
@@ -151,7 +135,7 @@ core.on_frame(function(dt, output_name)
         
         -- Пульсация толщины/цвета в зависимости от позиции
         local glow = 0.5 + 0.5 * math.cos(t * orbit_speed)
-        core.set_effect_param(output_name, "wireframe_color", { 1.0, glow * 0.5, 0.55 })
+        --core.set_effect_param(output_name, "wireframe_color", { 1.0, glow * 0.5, 0.55 })
     end
 
     -- ---------------------------------------------------------

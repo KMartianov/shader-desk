@@ -34,7 +34,7 @@ core.outputs = {
                 settings = {
                     gradient_type = 2, -- Радиальный градиент
                     color_top = { 0.5, 0.01, 0.08 },
-                    color_bottom = { 1.01, 0.0, 0.02 },
+                    color_bottom = { 0.01, 0.0, 0.02 },
                     pulse_speed = 0.5
                 }
             },
@@ -43,9 +43,30 @@ core.outputs = {
                 effect = "Icosahedron Sphere Old",
                 preset = "cyberpunk", -- Автоматически загрузит настройки из пресета
                 settings = {
-                    sphere_scale = 1.0,
+                    sphere_scale = 0.1,
                     -- Поскольку фон теперь рисует Universal Background, 
                     -- wireframe_color мы будем анимировать через Lua ниже!
+                }
+            },
+            {
+                effect = "Icosahedron Sphere Old",
+                preset = "cyberpunk", -- Автоматически загрузит настройки из пресета
+                
+                settings = {
+                    sphere_scale = 0.1,
+                    shader = "harmonics",
+                    offset = {0.0, 0.0, 0.0}
+                    -- Поскольку фон теперь рисует Universal Background, 
+                    -- wireframe_color мы будем анимировать через Lua ниже!
+                }
+            },
+            {
+                effect = "Hilbert Cube",
+                settings = {
+                    hilbert_order = 3,       -- Детализация фрактала
+                    draw_cube_outline = true,
+                    cube_color = {0.2, 0.2, 0.3},
+                    rotation_decay = 0.98    -- Долгое затухание вращения от мыши
                 }
             }
         }

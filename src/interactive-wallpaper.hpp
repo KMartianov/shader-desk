@@ -19,6 +19,7 @@
 #include <GLES3/gl3.h> 
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
+#include <sys/stat.h>
 
 #include "lua-engine.hpp"
 
@@ -168,6 +169,7 @@ private:
     // --- Data-Driven Architecture (BlackBoard) ---
     BlackBoard blackboard; 
     std::unordered_map<int, std::function<void(uint32_t)>> epoll_callbacks;
+    std::unordered_map<int, std::string> ipc_buffers;
 
     // --- Wayland Globals ---
     wl_display* display = nullptr;

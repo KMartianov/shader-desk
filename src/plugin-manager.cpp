@@ -77,9 +77,10 @@ void PluginManager::discover_plugins() {
                     const std::string bundle_dir = entry.path().parent_path().string();
                     
                     // Load the shared library into memory
-                    void* handle = dlopen(path_str.c_str(), RTLD_LAZY);
+                    void* handle = dlopen(path_str.c_str(), RTLD_NOW | RTLD_LOCAL);
                     if (!handle) {
-                        // Silent skip (e.g., user is currently recompiling their mod)
+                        std::cerr << "\033[31m[PluginManager] Failed to load '" << path_str 
+                                << "'. Error: " << dlerror() << "\033[0m" << std::endl;
                         continue; 
                     }
 
@@ -113,7 +114,7 @@ void PluginManager::discover_plugins() {
 
                         // Check if this plugin was already overridden by the user workspace
                         if (discovered_effects.find(effect_name) == discovered_effects.end()) {
-                            auto plugin = std::make_unique<PluginHandle>();
+                            auto plugin = std::make_shared<PluginHandle>();
                             plugin->handle = handle;
                             plugin->create_func = create_effect_fn;
                             plugin->destroy_func = destroy_effect_fn;
@@ -287,18 +288,21 @@ void PluginManager::initialize_providers(ICoreContextABI* core, const std::funct
 }
 
 WallpaperEffectPtr PluginManager::create_effect(const std::string& effect_name) {
-    for (const auto& plugin : loaded_plugins) {
-        if (plugin->name == effect_name) {
-            // Get raw ABI pointer
-            IWallpaperEffectABI* raw_ptr = plugin->create_func();
+    for (const auto& plugin_sp : loaded_plugins) { // plugin_sp это std::shared_ptr
+        if (plugin_sp->name == effect_name) {
+            IWallpaperEffectABI* raw_ptr = plugin_sp->create_func();
             if (raw_ptr) {
-                // Return smart pointer with correct custom deleter from .so
-                return WallpaperEffectPtr(raw_ptr, plugin->destroy_func);
+                // Магия: лямбда захватывает plugin_sp (увеличивая счетчик ссылок).
+                // dlclose() в деструкторе PluginHandle не вызовется, пока жив этот эффект!
+                auto custom_deleter = [plugin_sp](IWallpaperEffectABI* eff) {
+                    plugin_sp->destroy_func(eff);
+                };
+                return WallpaperEffectPtr(raw_ptr, custom_deleter);
             }
         }
     }
     std::cerr << "[PluginManager] Error: Plugin with name '" << effect_name << "' not found." << std::endl;
-    return WallpaperEffectPtr(nullptr, nullptr);
+    return WallpaperEffectPtr(nullptr, [](IWallpaperEffectABI*){});
 }
 
 std::vector<std::string> PluginManager::get_available_effects() const {

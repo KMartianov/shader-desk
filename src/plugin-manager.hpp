@@ -46,7 +46,7 @@ private:
     struct PluginHandle;
     
     // Storage for visual effect factories
-    std::vector<std::unique_ptr<PluginHandle>> loaded_plugins;
+    std::vector<std::shared_ptr<PluginHandle>> loaded_plugins;
     
     // Storage for ACTIVE data providers (with custom deleter from .so)
     // [NEW] Store pointers to ABI interfaces to guarantee binary compatibility

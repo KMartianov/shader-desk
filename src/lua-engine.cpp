@@ -87,6 +87,13 @@ bool LuaEngine::load() {
     // 2. Load standard safe Lua libraries
     lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, sol::lib::string, sol::lib::table, sol::lib::package);
 
+
+    // ХИРУРГИЧЕСКИЙ ПАТЧ: Оставляем os.getenv, но убиваем RCE и удаление файлов
+    lua["os"]["execute"] = sol::nil;
+    lua["os"]["remove"]  = sol::nil;
+    lua["os"]["rename"]  = sol::nil;
+    lua["os"]["exit"]    = sol::nil;
+    
     // ==============================================================================
     // SMART MODULE RESOLUTION (package.path & package.preload)
     // ==============================================================================
@@ -331,6 +338,13 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     core_table["set_interval"] = [this](int ms, sol::protected_function callback) -> int {
         if (ms <= 0 || !callback.valid() || !current_core) return -1;
 
+        // ЗАЩИТА: Лимит в 32 активных таймера на весь Lua-скрипт
+        if (active_timers.size() >= 32) {
+            std::cerr << "[LuaEngine] ERROR: Maximum timer limit (32) reached. "
+                    << "Are you calling set_interval inside on_frame?" << std::endl;
+            return -1;
+        }
+
         int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
         if (tfd == -1) return -1;
 
@@ -523,20 +537,30 @@ void LuaEngine::clear_timers() {
 
 bool LuaEngine::reload() {
     std::string dir = get_config_dir();
-    fs::path init_lua_path = fs::path(dir) / "init.lua";
+    std::filesystem::path user_init = std::filesystem::path(dir) / "init.lua";
+    std::filesystem::path local_init = "./src/defaults/init.lua";
+    
+    std::filesystem::path active_init;
+
+    // Определяем, какой конфиг сейчас является главным (Приоритет 1 vs Приоритет 2)
+    if (std::filesystem::exists(user_init)) {
+        active_init = user_init;
+    } else if (std::filesystem::exists(local_init)) {
+        active_init = local_init;
+    }
 
     // --- ПРЕД-ВАЛИДАЦИЯ (Синтаксис) ---
-    // Проверяем пользовательский конфиг перед тем как ломать текущий State
-    if (fs::exists(init_lua_path)) {
-        sol::load_result syntax_check = lua.load_file(init_lua_path.string());
+    if (!active_init.empty()) {
+        sol::load_result syntax_check = lua.load_file(active_init.string());
         if (!syntax_check.valid()) {
             sol::error err = syntax_check;
-            std::cerr << "\033[31m[Lua Syntax Error] Aborting reload:\n" << err.what() << "\033[0m" << std::endl;
+            std::cerr << "\033[31m[Lua Syntax Error in " << active_init.filename().string() 
+                      << "] Aborting reload:\n" << err.what() << "\033[0m" << std::endl;
             return false; // Отмена! Оставляем старый State рабочим.
         }
     }
 
-    // Если синтаксис верный, пересоздаем среду
+    // Если синтаксис верный, безопасно пересоздаем среду
     std::cout << "[LuaEngine] Syntax OK. Clearing active timers before reload..." << std::endl;
     clear_timers(); 
     return load();

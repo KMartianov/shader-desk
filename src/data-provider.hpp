@@ -32,8 +32,12 @@ public:
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
-        out_info->name = p.name.c_str();
-        out_info->description = p.description.c_str();
+        // БЕЗОПАСНОЕ КОПИРОВАНИЕ СТРОК В ABI
+        std::strncpy(out_info->name, p.name.c_str(), sizeof(out_info->name) - 1);
+        out_info->name[sizeof(out_info->name) - 1] = '\0';
+        
+        std::strncpy(out_info->description, p.description.c_str(), sizeof(out_info->description) - 1);
+        out_info->description[sizeof(out_info->description) - 1] = '\0';
         
         if (std::holds_alternative<bool>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_BOOL;

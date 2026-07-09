@@ -8,6 +8,7 @@
 #include <memory>
 #include <glm/glm.hpp>
 #include <cstring>
+#include <functional>
 
 // Alias for backward compatibility. 
 // Plugins can use ICoreContext as before.
@@ -17,7 +18,7 @@ using ICoreContext = ICoreContextABI;
 using EffectParameterValue = std::variant<bool, int, float, glm::vec3, std::string>;
 
 // Smart pointer for the loader (Core)
-using WallpaperEffectPtr = std::unique_ptr<IWallpaperEffectABI, void(*)(IWallpaperEffectABI*)>;
+using WallpaperEffectPtr = std::unique_ptr<IWallpaperEffectABI, std::function<void(IWallpaperEffectABI*)>>;
 
 // Structure describing a single configurable plugin parameter (C++ style)
 struct EffectParameter {
@@ -65,9 +66,12 @@ public:
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
-        // Return pointers to strings from cache (safe, as vector lives in class)
-        out_info->name = p.name.c_str();
-        out_info->description = p.description.c_str();
+        // БЕЗОПАСНОЕ КОПИРОВАНИЕ СТРОК В ABI (Защита от Dangling Pointers)
+        std::strncpy(out_info->name, p.name.c_str(), sizeof(out_info->name) - 1);
+        out_info->name[sizeof(out_info->name) - 1] = '\0';
+        
+        std::strncpy(out_info->description, p.description.c_str(), sizeof(out_info->description) - 1);
+        out_info->description[sizeof(out_info->description) - 1] = '\0';
         
         // Pack std::variant into C-Union
         if (std::holds_alternative<bool>(p.value)) {

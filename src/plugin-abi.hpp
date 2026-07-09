@@ -35,8 +35,8 @@ struct ParamValueABI {
 };
 
 struct ParamInfoABI {
-    const char* name;
-    const char* description;
+    char name[64];
+    char description[192];
     ParamValueABI default_value;
 };
 

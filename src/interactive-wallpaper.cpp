@@ -184,29 +184,40 @@ void InteractiveWallpaper::setup_inotify() {
     inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (inotify_fd < 0) return;
     
+    // Реагируем только на финализацию записи или атомарную подмену
+    uint32_t mask = IN_CLOSE_WRITE | IN_MOVED_TO;
+
     const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
     std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
                                         : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
 
-    // ВАЖНО: Убрали IN_MODIFY. Реагируем только на финализацию записи или атомарную подмену (перемещение)
-    uint32_t mask = IN_CLOSE_WRITE | IN_MOVED_TO;
-
+    // 1. Базовые пользовательские директории
     inotify_add_watch(inotify_fd, config_dir.c_str(), mask);
     inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), mask);
 
+    // 2. Вспомогательная лямбда для рекурсивного добавления папок
     std::error_code ec;
     auto options = std::filesystem::directory_options::follow_directory_symlink | std::filesystem::directory_options::skip_permission_denied;
     
-    std::string effects_dir = config_dir + "/effects";
-    if (std::filesystem::exists(effects_dir, ec)) {
-        inotify_add_watch(inotify_fd, effects_dir.c_str(), mask);
-        
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(effects_dir, options, ec)) {
-            if (entry.is_directory(ec)) {
-                inotify_add_watch(inotify_fd, entry.path().c_str(), mask);
+    auto watch_dir_tree = [&](const std::string& root_path) {
+        if (std::filesystem::exists(root_path, ec)) {
+            inotify_add_watch(inotify_fd, root_path.c_str(), mask);
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(root_path, options, ec)) {
+                if (entry.is_directory(ec)) {
+                    inotify_add_watch(inotify_fd, entry.path().c_str(), mask);
+                }
             }
         }
-    }
+    };
+
+    // 3. Добавляем в прослушку все возможные места обитания плагинов и конфигов
+    watch_dir_tree(config_dir + "/effects");           // Сценарий 3 (Sandbox моддера)
+    watch_dir_tree("./src/defaults");                  // Сценарий 1 (Локальный init.lua)
+    watch_dir_tree("./plugins");                       // Сценарий 1 (Исходники шейдеров In-Tree)
+    
+    // (Опционально) Если CMake копирует шейдеры прямо в build-папку
+    watch_dir_tree("./build-release/plugins");         
+    watch_dir_tree("./build-tracy/plugins");
 
     register_epoll_fd_cxx(inotify_fd, [this](uint32_t) { this->process_inotify_events(); });
     apply_config_to_all_outputs();
@@ -216,59 +227,72 @@ void InteractiveWallpaper::setup_ipc() {
     ipc_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (ipc_fd < 0) return;
 
-    // Получаем безопасный путь
     std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk");
-
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-
-    // ВАЖНО: Удаляем старый (мертвый) сокет перед биндом
     unlink(socket_path.c_str()); 
 
-    if (bind(ipc_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0 || listen(ipc_fd, 5) < 0) {
-        std::cerr << "Failed to bind IPC socket at " << socket_path << ": " << strerror(errno) << std::endl;
+    // ЗАЩИТА ПРАВ ДОСТУПА: Только наш пользователь сможет писать в сокет (0600)
+    mode_t old_mask = umask(0077); 
+    int bind_res = bind(ipc_fd, (struct sockaddr*)&addr, sizeof(addr));
+    umask(old_mask); 
+
+    if (bind_res < 0 || listen(ipc_fd, 5) < 0) {
+        std::cerr << "Failed to bind IPC socket at " << socket_path << std::endl;
         close(ipc_fd);
         ipc_fd = -1;
         return;
     }
 
-    // Регистрируем слушающий сокет в твоем epoll-цикле с нулевой задержкой!
+    // Слушаем входящие подключения
     register_epoll_fd_cxx(ipc_fd, [this](uint32_t) {
         int client_fd = accept4(ipc_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (client_fd < 0) return;
 
-        // Читаем команду от клиента (напр., "core.outputs['eDP-1'].settings.bloom_intensity = 0.8")
-        char buffer[1024]{0};
-        ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
-        
-        if (bytes_read > 0) {
-            std::string cmd(buffer);
-            std::string response = "OK\n";
+        // Регистрируем НОВЫЙ клиентский сокет в epoll для чтения данных
+        register_epoll_fd_cxx(client_fd, [this, client_fd](uint32_t) {
+            char buffer[1024];
+            ssize_t bytes = read(client_fd, buffer, sizeof(buffer));
 
-            try {
-                // Выполняем пришедшую строку прямо в твоем Lua-движке!
-                sol::protected_function_result result = lua_engine.get_state().script(cmd);
-                if (!result.valid()) {
-                    sol::error err = result;
-                    response = std::string("ERROR: ") + err.what() + "\n";
+            if (bytes > 0) {
+                ipc_buffers[client_fd].append(buffer, bytes);
+                
+                // Защита от спама/OOM (если прислали > 8кб без переноса строки)
+                if (ipc_buffers[client_fd].size() > 8192) goto close_client;
+
+                // ФРЕЙМИНГ: Выполняем все полные команды, разделенные '\n'
+                size_t pos;
+                while ((pos = ipc_buffers[client_fd].find('\n')) != std::string::npos) {
+                    std::string cmd = ipc_buffers[client_fd].substr(0, pos);
+                    ipc_buffers[client_fd].erase(0, pos + 1);
+
+                    // БЕЗОПАСНОЕ ИСПОЛНЕНИЕ (Без C++ Exception, без abort'а)
+                    auto result = lua_engine.get_state().safe_script(cmd, sol::script_pass_on_error);
+                    
+                    if (result.valid()) {
+                        write(client_fd, "OK\n", 3);
+                    } else {
+                        sol::error err = result;
+                        std::string resp = std::string("LUA_ERR: ") + err.what() + "\n";
+                        write(client_fd, resp.c_str(), resp.length());
+                    }
                 }
-            } catch (const std::exception& e) {
-                response = std::string("ERROR: ") + e.what() + "\n";
+            } else if (bytes == 0 || (bytes < 0 && errno != EAGAIN)) {
+            close_client:
+                ipc_buffers.erase(client_fd);
+                unregister_epoll_fd(client_fd);
+                close(client_fd);
             }
-
-            // Отправляем ответ клиенту
-            write(client_fd, response.c_str(), response.length());
-        }
-        close(client_fd);
+        });
     });
 }
 
-// [UPDATED] Обработчик горячей перезагрузки (Мультимониторный)
+//  Обработчик горячей перезагрузки (Мультимониторный)
 void InteractiveWallpaper::process_inotify_events() {
     char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
-    bool lua_modified = false;
-    bool shader_modified = false;
+    bool reload_lua = false;
+    bool reload_shader = false;
     
     while (true) {
         ssize_t len = read(inotify_fd, buf, sizeof(buf));
@@ -279,60 +303,66 @@ void InteractiveWallpaper::process_inotify_events() {
             event = (const struct inotify_event *) ptr;
             if (event->len > 0) {
                 std::string name(event->name);
-                if (name.find(".lua") != std::string::npos) {
-                    lua_modified = true;
-                }
-                else if (name.find(".glsl") != std::string::npos || name.find(".vert") != std::string::npos || name.find(".frag") != std::string::npos) {
-                    shader_modified = true;
-                }
+                
+                // Игнорируем скрытые файлы и временные swap-файлы редакторов (.swp, .tmp)
+                if (name.empty() || name[0] == '.' || name.back() == '~') continue;
+
+                if (name.find(".lua") != std::string::npos) reload_lua = true;
+                else if (name.find(".glsl") != std::string::npos || 
+                         name.find(".vert") != std::string::npos || 
+                         name.find(".frag") != std::string::npos) reload_shader = true;
             }
         }
     }
 
-    if (lua_modified) {
-        std::cout << "[Hot-Reload] Lua configuration changed..." << std::endl;
-        if (lua_engine.reload()) {
-            // При перезагрузке Lua просто вызываем apply_effect_to_output для каждого экрана.
-            // Метод сам определит, сменился ли эффект на этом экране, или нужно только обновить параметры.
+    // --- МГНОВЕННЫЙ БЕЗОПАСНЫЙ RELOAD ---
+
+    if (reload_lua) {
+        std::cout << "\n\033[36m[Hot-Reload] Validating Lua configuration...\033[0m" << std::endl;
+        if (lua_engine.reload()) { // Внутри будет синтаксическая предпроверка!
             for (auto& pair : outputs) {
                 apply_effect_to_output(pair.second.get());
             }
-            // Переконфигурируем провайдеры данных
             if (plugin_manager_) {
                 plugin_manager_->initialize_providers(this, [this](IDataProviderABI* p) {
                     return lua_engine.configure_provider(p);
                 });
             }
+            std::cout << "\033[32m[Hot-Reload] Lua successfully applied.\033[0m\n" << std::endl;
         }
     }
 
-    if (shader_modified) {
-        std::cout << "[Hot-Reload] Shader file changed. Recompiling graphics pipeline..." << std::endl;
+    if (reload_shader) {
+        std::cout << "\n\033[36m[Hot-Reload] Recompiling shaders (Shadow-Commit mode)...\033[0m" << std::endl;
         for (auto& pair : outputs) {
             Output* out = pair.second.get();
-            if (!out->layers.empty() && out->egl_surface != EGL_NO_SURFACE) {
-                if (eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
-                    for (auto& layer : out->layers) {
-                        if (layer.effect) {
-                            layer.effect->cleanup();
-                            // ЗАЩИТА: Если после сохранения .glsl шейдер скомпилировался с ошибкой, 
-                            // уничтожаем инстанс эффекта, чтобы он не обрушил композитор.
-                            if (!layer.effect->initialize(this, out->fbo_w, out->fbo_h)) {
-                                std::cerr << "\033[31m[Core] Hot-reload failed for '" << layer.name 
-                                          << "'. Effect disabled until fixed.\033[0m" << std::endl;
-                                layer.effect.reset();
-                            }
-                        }
+            if (out->layers.empty() || out->egl_surface == EGL_NO_SURFACE) continue;
+
+            if (eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
+                for (auto& layer : out->layers) {
+                    if (!layer.effect) continue;
+
+                    // 1. Создаем теневую (новую) копию эффекта
+                    WallpaperEffectPtr shadow_effect = plugin_manager_->create_effect(layer.name);
+                    if (!shadow_effect) continue;
+
+                    // 2. Пытаемся инициализировать (компиляция шейдеров происходит здесь)
+                    if (shadow_effect->initialize(this, out->fbo_w, out->fbo_h)) {
+                        // 3. Успех! Делаем Swap
+                        layer.effect = std::move(shadow_effect);
+                        std::cout << "  ✓ '" << layer.name << "' recompiled seamlessly." << std::endl;
+                    } else {
+                        // 4. Ошибка компиляции! 
+                        // shadow_effect будет уничтожен при выходе из области видимости,
+                        // а layer.effect (старая рабочая версия) продолжит рендериться на экране.
+                        std::cerr << "\033[31m  ✗ '" << layer.name << "' compilation failed. Keeping old version.\033[0m" << std::endl;
                     }
-                    
-                    // Удаляем "пустые" слои (у которых layer.effect == nullptr из-за ошибки выше)
-                    out->layers.erase(std::remove_if(out->layers.begin(), out->layers.end(),
-                        [](const LayerInstance& l) { return !l.effect; }), out->layers.end());
-                    
-                    apply_config_to_effect(out);
                 }
+                // Заново применяем настройки из Lua (цвета, скорость) к новым инстансам
+                apply_config_to_effect(out);
             }
         }
+        std::cout << "\033[32m[Hot-Reload] Shader pipeline update finished.\033[0m\n" << std::endl;
     }
 }
 
@@ -638,6 +668,11 @@ void InteractiveWallpaper::render_output(Output* output) {
     if (out_cfg.fps_limit > 0.0f) {
         float min_frame_time = 1.0f / out_cfg.fps_limit;
         if (output->time_since_last_render < min_frame_time) {
+            // [FIX] Устранение утечки памяти Wayland
+            if (output->frame_callback) {
+                wl_callback_destroy(output->frame_callback);
+                output->frame_callback = nullptr;
+            }
             output->frame_callback = wl_surface_frame(output->surface);
             wl_callback_add_listener(output->frame_callback, &frame_listener, output);
             wl_surface_commit(output->surface); 
@@ -716,6 +751,11 @@ void InteractiveWallpaper::render_output(Output* output) {
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // EGL Backbuffer
         glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, phys_w, phys_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
+        // [FIX] Устранение утечки памяти Wayland
+        if (output->frame_callback) {
+            wl_callback_destroy(output->frame_callback);
+            output->frame_callback = nullptr;
+        }
         output->frame_callback = wl_surface_frame(output->surface);
         wl_callback_add_listener(output->frame_callback, &frame_listener, output);
         

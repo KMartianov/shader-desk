@@ -74,16 +74,20 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine
         std::cerr << "Failed to create epoll fd: " << strerror(errno) << std::endl;
     }
 
-    // [NEW] Учим LuaEngine находить эффект для конкретного монитора
-    lua_engine.get_effect_for_output = [this](const std::string& name) -> IWallpaperEffectABI* {
+    // Bind the tag-based lookup function for the LuaEngine.
+    // This allows the Lua Fluent API (e.g., core.get_layer("DP-1", "bg_back")) 
+    // to safely resolve the C++ plugin instance dynamically per frame, 
+    // completely eliminating the risk of dangling pointers during hot-reloads.
+    lua_engine.get_layer_by_tag = [this](const std::string& output_name, const std::string& tag) -> IWallpaperEffectABI* {
         for (auto& pair : outputs) {
-            if (pair.second->name == name) {
-                // Ищем первый попавшийся НЕ-постпроцесс слой (обычно это 3D-сфера)
-                for (auto it = pair.second->layers.rbegin(); it != pair.second->layers.rend(); ++it) {
-                    if (!it->is_postprocess && it->effect) return it->effect.get();
+            // Match the specific physical monitor, or fallback to the first matching 
+            // instance if the wildcard "*" is used.
+            if (pair.second->name == output_name || output_name == "*") {
+                for (auto& layer : pair.second->layers) {
+                    if (layer.tag == tag && layer.effect) {
+                        return layer.effect.get();
+                    }
                 }
-                // Если не нашли — возвращаем просто верхний слой
-                if (!pair.second->layers.empty()) return pair.second->layers.back().effect.get();
             }
         }
         return nullptr;
@@ -218,6 +222,13 @@ void InteractiveWallpaper::setup_inotify() {
     // (Опционально) Если CMake копирует шейдеры прямо в build-папку
     watch_dir_tree("./build-release/plugins");         
     watch_dir_tree("./build-tracy/plugins");
+
+    watch_dir_tree(config_dir + "/scenes");
+
+    // Добавляем системную папку со сценами (для FHS режима)
+    #ifdef SYSTEM_SCENES_DIR
+    watch_dir_tree(SYSTEM_SCENES_DIR);
+    #endif
 
     register_epoll_fd_cxx(inotify_fd, [this](uint32_t) { this->process_inotify_events(); });
     apply_config_to_all_outputs();
@@ -570,46 +581,65 @@ void InteractiveWallpaper::Output::allocate_fbos(uint32_t w, uint32_t h) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-// [UPDATED] Инициализация массива слоев и выделение FBO
+
+// Initialize the array of visual layers and allocate required Framebuffer Objects (FBOs)
 void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     if (!plugin_manager_) return;
     
+    // 1. Fetch the multi-layer configuration for this specific physical monitor
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
     if (out_cfg.layers.empty()) return;
 
+    // Check if the EGL context is ready for this output
     bool egl_ready = (output->egl_surface != EGL_NO_SURFACE) && 
                      eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context);
 
+    // 2. Allocate Ping-Pong Framebuffers based on monitor resolution and user scaling factor
     if (egl_ready && output->configured) {
         uint32_t buf_w = output->width * output->scale * out_cfg.fbo_scale;
         uint32_t buf_h = output->height * output->scale * out_cfg.fbo_scale;
         output->allocate_fbos(buf_w, buf_h);
     }
 
+    // ==============================================================================
+    // 3. HOT-RELOAD & REUSE PIPELINE (Zero-Allocation Algorithm)
+    // ==============================================================================
     std::vector<LayerInstance> new_layers;
+    new_layers.reserve(out_cfg.layers.size());
+
     for (const auto& layer_cfg : out_cfg.layers) {
         bool reused = false;
-        for (auto it = output->layers.begin(); it != output->layers.end(); ++it) {
-            if (it->name == layer_cfg.effect_name && it->is_postprocess == layer_cfg.is_postprocess) {
-                new_layers.push_back(std::move(*it));
-                output->layers.erase(it);
-                reused = true;
-                break;
-            }
+        
+        // [UPDATED] Ищем слой не только по имени эффекта, но и по уникальному ТЕГУ.
+        // Это позволяет использовать один и тот же плагин несколько раз (например, 2 слоя фона).
+        auto it = std::find_if(output->layers.begin(), output->layers.end(), [&](const LayerInstance& l) {
+            return l.effect != nullptr && 
+                   l.name == layer_cfg.effect_name && 
+                   l.tag == layer_cfg.tag && // <--- Проверка тега
+                   l.is_postprocess == layer_cfg.is_postprocess;
+        });
+
+        if (it != output->layers.end()) {
+            new_layers.push_back(std::move(*it));
+            reused = true;
         }
 
+        // 4. Instantiation (If no reusable instance was found)
         if (!reused) {
-            std::cout << "[Core] Loading layer '" << layer_cfg.effect_name << "' onto '" << output->name << "'" << std::endl;
+            std::cout << "[Core] Loading layer '" << layer_cfg.effect_name 
+                      << "' (Tag: '" << layer_cfg.tag << "') onto '" << output->name << "'" << std::endl;
+                      
             WallpaperEffectPtr eff = plugin_manager_->create_effect(layer_cfg.effect_name);
+            
             if (eff) {
                 bool init_ok = true;
                 if (egl_ready && output->configured) {
                     init_ok = eff->initialize(this, output->fbo_w, output->fbo_h);
                 }
                 
-                // ЗАЩИТА: Добавляем плагин только если он успешно инициализировался
                 if (init_ok) {
-                    new_layers.emplace_back(layer_cfg.effect_name, std::move(eff), layer_cfg.is_postprocess);
+                    // [UPDATED] Передаем tag в конструктор LayerInstance
+                    new_layers.emplace_back(layer_cfg.effect_name, layer_cfg.tag, std::move(eff), layer_cfg.is_postprocess);
                 } else {
                     std::cerr << "\033[31m[Core] Dropping layer '" << layer_cfg.effect_name 
                               << "' due to initialization failure.\033[0m" << std::endl;
@@ -618,13 +648,18 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
         }
     }
 
-    output->layers.clear();
+    // 5. Cleanup the dead layers.
+    output->layers.clear(); 
     output->layers = std::move(new_layers);
 
+    // ==============================================================================
+    // 6. CASCADING CONFIGURATION APPLICATION
+    // ==============================================================================
     if (egl_ready && output->configured) {
         for (size_t i = 0; i < output->layers.size(); ++i) {
             auto& layer = output->layers[i];
             if (layer.effect) {
+                // Применяем настройки, прочитанные из конфигурации
                 lua_engine.apply_effect_settings(layer.effect.get(), layer.name, out_cfg.layers[i].custom_settings);
                 layer.effect->resize(output->fbo_w, output->fbo_h);
             }
@@ -871,11 +906,16 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
                 output->allocate_fbos(target_fbo_w, target_fbo_h);
                 for (auto& layer : output->layers) {
                     if (layer.effect) {
+                        // Первичная инициализация C++ плагина (компиляция шейдеров)
                         if (!layer.effect->initialize(output->parent, target_fbo_w, target_fbo_h)) {
                             layer.effect.reset();
                         }
                     }
                 }
+                // ==============================================================================
+                // [ИСПРАВЛЕНИЕ]: Применяем Lua-настройки сразу после инициализации EGL-контекста!
+                // ==============================================================================
+                output->parent->apply_config_to_effect(output);
             }
         }
         if (!output->frame_callback) output->parent->render_output(output);

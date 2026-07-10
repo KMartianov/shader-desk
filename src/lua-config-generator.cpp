@@ -98,6 +98,29 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& 
         std::cout << "  ✓ Generated main config: init.lua" << std::endl;
     }
 
+    // Инициализация пользовательских Сцен
+    fs::path user_scenes_dir = fs::path(config_dir) / "scenes";
+    fs::create_directories(user_scenes_dir);
+
+    fs::path src_scenes_dir;
+    #ifdef LOCAL_SCENES_DIR
+    if (fs::exists(LOCAL_SCENES_DIR)) src_scenes_dir = LOCAL_SCENES_DIR;
+    #endif
+    #ifdef SYSTEM_SCENES_DIR
+    if (src_scenes_dir.empty() && fs::exists(SYSTEM_SCENES_DIR)) src_scenes_dir = SYSTEM_SCENES_DIR;
+    #endif
+
+    // Резервный фоллбэк
+    if (src_scenes_dir.empty() && fs::exists("./src/defaults/scenes")) src_scenes_dir = "./src/defaults/scenes";
+
+    if (!src_scenes_dir.empty()) {
+        std::error_code ec;
+        fs::copy(src_scenes_dir, user_scenes_dir, fs::copy_options::update_existing | fs::copy_options::recursive, ec);
+        if (!ec) {
+            std::cout << "  ✓ Copied default scenes to: " << user_scenes_dir.string() << std::endl;
+        }
+    }
+
     // 2. Iterate through plugins to update/create their individual configs
     for (const auto& effect_name : available_effects) {
         auto effect = pm.create_effect(effect_name);

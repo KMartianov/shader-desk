@@ -112,6 +112,36 @@ public:
         this->set_parameter(std::string(name), cpp_val);
     }
 
+    bool get_parameter_abi(const char* name, ParamValueABI* out_value) const final {
+        // Запрашиваем свежие данные у дочернего C++ класса
+        std::vector<EffectParameter> fresh_params = get_parameters(); 
+        
+        for (const auto& p : fresh_params) {
+            if (p.name == name) {
+                if (std::holds_alternative<bool>(p.value)) {
+                    out_value->type = ParamType::TYPE_BOOL;
+                    out_value->b_val = std::get<bool>(p.value);
+                } else if (std::holds_alternative<int>(p.value)) {
+                    out_value->type = ParamType::TYPE_INT;
+                    out_value->i_val = std::get<int>(p.value);
+                } else if (std::holds_alternative<float>(p.value)) {
+                    out_value->type = ParamType::TYPE_FLOAT;
+                    out_value->f_val = std::get<float>(p.value);
+                } else if (std::holds_alternative<glm::vec3>(p.value)) {
+                    out_value->type = ParamType::TYPE_VEC3;
+                    auto v = std::get<glm::vec3>(p.value);
+                    out_value->vec3_val[0] = v.x; out_value->vec3_val[1] = v.y; out_value->vec3_val[2] = v.z;
+                } else if (std::holds_alternative<std::string>(p.value)) {
+                    out_value->type = ParamType::TYPE_STRING;
+                    std::strncpy(out_value->s_val, std::get<std::string>(p.value).c_str(), 255);
+                    out_value->s_val[255] = '\0';
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
 private:
     mutable std::vector<EffectParameter> param_cache;
     mutable bool cache_valid = false;

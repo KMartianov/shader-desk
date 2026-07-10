@@ -38,6 +38,7 @@ enum class RendererType {
 
 struct LayerInstance {
             std::string name;
+            std::string tag;
             WallpaperEffectPtr effect;
             bool is_postprocess;
             LayerInstance(std::string n, WallpaperEffectPtr eff, bool post) 

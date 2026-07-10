@@ -18,6 +18,7 @@ class ICoreContextABI;
 // Конфигурация отдельного слоя 
 struct LayerConfig {
     std::string effect_name;
+    std::string tag;
     sol::table custom_settings;
     bool is_postprocess = false; // Флаг пост-обработки
 };
@@ -36,7 +37,7 @@ public:
     LuaEngine() = default;
     ~LuaEngine() { clear_timers(); }
 
-    std::function<IWallpaperEffectABI*(const std::string&)> get_effect_for_output;
+    std::function<IWallpaperEffectABI*(const std::string&, const std::string&)> get_layer_by_tag;
     void set_config_dir(const std::string& dir) { config_dir = dir; }
 
 
@@ -48,6 +49,8 @@ public:
 
     // [NEW] Запрос конфигурации для конкретного физического монитора
     OutputConfig get_output_config(const std::string& output_name, const std::string& output_desc);
+    
+
 
     // [UPDATED] Применение настроек с учетом переопределений для монитора
     void apply_effect_settings(IWallpaperEffectABI* effect, 

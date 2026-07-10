@@ -92,6 +92,7 @@ public:
     virtual uint32_t get_parameter_count_abi() const = 0;
     virtual void get_parameter_info_abi(uint32_t index, ParamInfoABI* out_info) const = 0;
     virtual void set_parameter_abi(const char* name, const ParamValueABI* value) = 0;
+    virtual bool get_parameter_abi(const char* name, ParamValueABI* out_value) const = 0;
 };
 
 class IDataProviderABI {

@@ -70,6 +70,7 @@ void LuaEngine::merge_preset_into_target(sol::table target, const sol::table& pr
     }
 }
 
+
 bool LuaEngine::load() {
     std::string dir = get_config_dir();
     fs::path plugins_dir = fs::path(dir) / "plugins";
@@ -77,7 +78,7 @@ bool LuaEngine::load() {
 
     frame_callback = sol::nil; // Clear the hook from the previous script
 
-    // 1. Completely clear the state (useful for hot-reload)
+    // 1. Completely clear the state (useful for hot-reload to prevent memory leaks)
     #ifdef TRACY_ENABLE
     lua = sol::state(nullptr, tracy_lua_alloc, nullptr);
     #else
@@ -87,8 +88,11 @@ bool LuaEngine::load() {
     // 2. Load standard safe Lua libraries
     lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, sol::lib::string, sol::lib::table, sol::lib::package);
 
-
-    // ХИРУРГИЧЕСКИЙ ПАТЧ: Оставляем os.getenv, но убиваем RCE и удаление файлов
+    // ==============================================================================
+    // SECURITY PATCH: Sandbox the 'os' library.
+    // We allow 'os.getenv' for themes (like Pywal), but strictly disable RCE 
+    // (Remote Code Execution) and file deletion to protect the user's system.
+    // ==============================================================================
     lua["os"]["execute"] = sol::nil;
     lua["os"]["remove"]  = sol::nil;
     lua["os"]["rename"]  = sol::nil;
@@ -144,131 +148,158 @@ bool LuaEngine::load() {
             return;
         }
         
-        try {
-            sol::protected_function_result result = lua.script_file(preset_path);
-            if (result.valid() && result.get_type() == sol::type::table) {
-                sol::table preset_data = result;
-                this->merge_preset_into_target(target, preset_data);
-                std::cout << "  -> Applied preset '" << preset_name << "' from bundle of '" << plugin_name << "'\n";
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "[Error] Failed to load preset: " << e.what() << "\n";
+        // Safely load the preset without crashing the engine on syntax errors inside the preset
+        auto result = lua.safe_script_file(preset_path, sol::script_pass_on_error);
+        if (result.valid() && result.get_type() == sol::type::table) {
+            sol::table preset_data = result;
+            this->merge_preset_into_target(target, preset_data);
+            std::cout << "  -> Applied preset '" << preset_name << "' from bundle of '" << plugin_name << "'\n";
+        } else {
+            sol::error err = result;
+            std::cerr << "\033[31m[Error] Failed to load preset '" << preset_name << "': " << err.what() << "\033[0m\n";
         }
     };
 
-    try {
-        // 4. First, execute all auto-generated plugin configs (conf.d style)
-        if (fs::exists(plugins_dir) && fs::is_directory(plugins_dir)) {
-            for (const auto& entry : fs::directory_iterator(plugins_dir)) {
-                if (entry.path().extension() == ".lua") {
-                    lua.script_file(entry.path().string());
+    // ==============================================================================
+    // 4. CASCADING CONFIGURATION BOOTSTRAP
+    // First, execute all auto-generated plugin configs (conf.d style from plugins/*.lua).
+    // Using safe_script_file to ensure a single corrupted plugin file doesn't halt the boot.
+    // ==============================================================================
+    if (fs::exists(plugins_dir) && fs::is_directory(plugins_dir)) {
+        for (const auto& entry : fs::directory_iterator(plugins_dir)) {
+            if (entry.path().extension() == ".lua") {
+                auto result = lua.safe_script_file(entry.path().string(), sol::script_pass_on_error);
+                if (!result.valid()) {
+                    sol::error err = result;
+                    std::cerr << "\033[33m[Warning] Error loading plugin config " 
+                              << entry.path().filename().string() << ": " << err.what() << "\033[0m\n";
                 }
             }
         }
-
-        // ==============================================================================
-        // 5. INTELLIGENT INIT.LUA LOADING (User -> Local Dev -> Embedded Fallback)
-        // ==============================================================================
-        if (fs::exists(init_lua_path)) {
-            // Priority 1: User's explicit configuration (~/.config/...)
-            lua.script_file(init_lua_path.string());
-            std::cout << "[LuaEngine] Loaded user config: " << init_lua_path << std::endl;
-        } 
-        else if (fs::exists("./src/defaults/init.lua")) {
-            // Priority 2: Local development fallback (running from IDE/Source tree)
-            lua.script_file("./src/defaults/init.lua");
-            std::cout << "[LuaEngine] Loaded local dev config: ./src/defaults/init.lua" << std::endl;
-        } 
-        else {
-            // Priority 3: Pure portable/system mode. No files needed.
-            lua.script(Embedded::INIT_LUA);
-            std::cout << "[LuaEngine] Loaded embedded fallback config." << std::endl;
-        }
-
-        return true;
-
-    } catch (const sol::error& e) {
-        std::cerr << "\033[31mCRITICAL LUA ERROR: " << e.what() << "\033[0m" << std::endl;
-        return false;
     }
+
+    // ==============================================================================
+    // 5. INTELLIGENT INIT.LUA LOADING (User -> Local Dev -> Embedded Fallback)
+    // ==============================================================================
+    std::string target_file = "";
+    if (fs::exists(init_lua_path)) {
+        target_file = init_lua_path.string();
+    } else if (fs::exists("./src/defaults/init.lua")) {
+        target_file = "./src/defaults/init.lua";
+    }
+
+    if (!target_file.empty()) {
+        // Safe execution: If the user made a fatal logic error in init.lua, 
+        // we catch it gracefully and fallback to the embedded C++ string.
+        auto result = lua.safe_script_file(target_file, sol::script_pass_on_error);
+        
+        if (!result.valid()) {
+            sol::error err = result;
+            std::cerr << "\033[31m[LuaEngine] Runtime error in config:\n" << err.what() << "\033[0m\n";
+            std::cerr << "Falling back to embedded safe configuration." << std::endl;
+            lua.safe_script(Embedded::INIT_LUA, sol::script_pass_on_error);
+        } else {
+            std::cout << "[LuaEngine] Loaded config: " << target_file << std::endl;
+        }
+    } else {
+        // Pure portable/system mode. No files needed.
+        lua.safe_script(Embedded::INIT_LUA, sol::script_pass_on_error);
+        std::cout << "[LuaEngine] Loaded embedded fallback config." << std::endl;
+    }
+
+    return true;
 }
+
 
 // --- PROVIDER CONFIGURATION IMPLEMENTATION ---
 // [ABI UPDATE]: Now accepting safe IDataProviderABI*
 bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     if (!provider) return false;
 
-    // SAFE read: ensure the object exists and is a table
+    bool enabled = true;
+    sol::table p_conf = sol::nil; // Will hold the provider's specific config if it exists in Lua
+
+    // ==============================================================================
+    // 1. SAFE LUA EXTRACTION
+    // We navigate the Lua tables defensively. If the user removed the provider's 
+    // config entirely from init.lua, we still proceed to reset it to C++ defaults.
+    // ==============================================================================
     sol::object core_obj = lua["core"];
-    if (!core_obj.is<sol::table>()) return true; // If not, provider is enabled by default
-    sol::table core = core_obj.as<sol::table>();
+    if (core_obj.is<sol::table>()) {
+        sol::table core = core_obj.as<sol::table>();
+        sol::object providers_obj = core["providers"];
+        
+        if (providers_obj.is<sol::table>()) {
+            sol::table providers = providers_obj.as<sol::table>();
+            sol::object p_conf_obj = providers[provider->get_name()];
+            
+            if (p_conf_obj.is<sol::table>()) {
+                p_conf = p_conf_obj.as<sol::table>();
+                // Check the 'enabled' flag. Default is true if missing.
+                enabled = p_conf.get_or("enabled", true);
+            }
+        }
+    }
 
-    sol::object providers_obj = core["providers"];
-    if (!providers_obj.is<sol::table>()) return true; 
-    sol::table providers = providers_obj.as<sol::table>();
-
-    sol::object p_conf_obj = providers[provider->get_name()];
-    if (!p_conf_obj.is<sol::table>()) return true;
-    sol::table p_conf = p_conf_obj.as<sol::table>();
-
-    // Check the 'enabled' flag
-    bool enabled = p_conf.get_or("enabled", true);
+    // If explicitly disabled by the user in Lua, abort configuration. 
+    // The PluginManager will safely call cleanup() and shut it down.
     if (!enabled) return false;
 
-    // [ABI UPDATE]: Extract expected provider parameter types via C-API
-    std::map<std::string, ParamType> expected_types;
+    // ==============================================================================
+    // 2. ABI-DRIVEN PARAMETER RESOLUTION (Fixes the "Sticky Parameter" Bug)
+    // We iterate over the parameters declared by the C++ Plugin, NOT the Lua keys.
+    // This guarantees that missing Lua parameters are correctly reset to defaults.
+    // ==============================================================================
     uint32_t count = provider->get_parameter_count_abi();
+    
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI info;
         provider->get_parameter_info_abi(i, &info);
-        expected_types[info.name] = info.default_value.type;
-    }
+        
+        ParamType expected_type = info.default_value.type;
+        std::string key = info.name;
 
-    // Apply values from Lua
-    for (const auto& kv : p_conf) {
-        if (!kv.first.is<std::string>()) continue;
-        std::string key = kv.first.as<std::string>();
-        if (key == "enabled") continue;
+        // Step A: Start with the C++ default value (Fallback state)
+        ParamValueABI abi_val = info.default_value; 
 
-        sol::object val = kv.second;
-        auto it = expected_types.find(key);
-        if (it == expected_types.end()) continue;
+        // Step B: Attempt to override with the value from Lua (if present)
+        if (p_conf.valid()) {
+            sol::object lua_val = p_conf[key];
 
-        ParamType expected_type = it->second;
-        ParamValueABI abi_val;
-        abi_val.type = expected_type;
-
-        try {
-            if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
-                abi_val.b_val = val.as<bool>();
-                provider->set_parameter_abi(key.c_str(), &abi_val);
-            } 
-            else if (expected_type == ParamType::TYPE_INT && val.is<double>()) {
-                abi_val.i_val = val.as<int>();
-                provider->set_parameter_abi(key.c_str(), &abi_val);
-            } 
-            else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
-                abi_val.f_val = static_cast<float>(val.as<double>());
-                provider->set_parameter_abi(key.c_str(), &abi_val);
-            }
-            else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
-                sol::table t = val.as<sol::table>();
-                if (t.size() >= 3) {
-                    abi_val.vec3_val[0] = t.get_or(1, 0.0f);
-                    abi_val.vec3_val[1] = t.get_or(2, 0.0f);
-                    abi_val.vec3_val[2] = t.get_or(3, 0.0f);
-                    provider->set_parameter_abi(key.c_str(), &abi_val);
+            if (lua_val.valid()) {
+                try {
+                    if (expected_type == ParamType::TYPE_BOOL && lua_val.is<bool>()) {
+                        abi_val.b_val = lua_val.as<bool>();
+                    } 
+                    else if (expected_type == ParamType::TYPE_INT && lua_val.is<double>()) {
+                        abi_val.i_val = lua_val.as<int>();
+                    } 
+                    else if (expected_type == ParamType::TYPE_FLOAT && lua_val.is<double>()) {
+                        abi_val.f_val = static_cast<float>(lua_val.as<double>());
+                    }
+                    else if (expected_type == ParamType::TYPE_VEC3 && lua_val.is<sol::table>()) {
+                        sol::table t = lua_val.as<sol::table>();
+                        // Safely extract table values, defaulting to 0.0f if the table is too short
+                        abi_val.vec3_val[0] = t.get_or(1, 0.0f);
+                        abi_val.vec3_val[1] = t.get_or(2, 0.0f);
+                        abi_val.vec3_val[2] = t.get_or(3, 0.0f);
+                    }
+                    else if (expected_type == ParamType::TYPE_STRING && lua_val.is<std::string>()) {
+                        std::string lua_str = lua_val.as<std::string>();
+                        // Ensure strict null-termination and prevent buffer overflow in C-ABI
+                        std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
+                        abi_val.s_val[255] = '\0'; 
+                    }
+                } catch (const sol::error& e) {
+                    std::cerr << "[LuaEngine] Type Error for provider parameter '" 
+                              << key << "': " << e.what() << std::endl;
                 }
             }
-            else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
-                std::string lua_str = val.as<std::string>();
-                std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
-                abi_val.s_val[255] = '\0';
-                provider->set_parameter_abi(key.c_str(), &abi_val);
-            }
-        } catch (const sol::error& e) {
-            std::cerr << "Lua Type Error for provider parameter '" << key << "': " << e.what() << std::endl;
         }
+
+        // Step C: Send the resolved value back to the provider.
+        // If the user deleted the line from init.lua, this safely applies the clean default.
+        provider->set_parameter_abi(key.c_str(), &abi_val);
     }
 
     return true;
@@ -441,6 +472,47 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             std::cerr << "[Lua] Type error in set_effect_param: " << e.what() << std::endl;
         }
     };
+
+    core_table["load_scene"] = [this](const std::string& scene_name) -> sol::object {
+        std::vector<std::string> search_paths = {
+            get_config_dir() + "/scenes/" + scene_name + ".lua",
+            
+            #ifdef LOCAL_SCENES_DIR
+            std::string(LOCAL_SCENES_DIR) + "/" + scene_name + ".lua",
+            #endif
+            #ifdef SYSTEM_SCENES_DIR
+            std::string(SYSTEM_SCENES_DIR) + "/" + scene_name + ".lua",
+            #endif
+            
+            "./src/defaults/scenes/" + scene_name + ".lua",
+            "/usr/share/shader-desk/scenes/" + scene_name + ".lua"
+        };
+
+        for (const auto& path : search_paths) {
+            if (std::filesystem::exists(path)) {
+                auto result = lua.load_file(path);
+                if (result.valid()) {
+                    sol::protected_function pf = result;
+                    auto exec_res = pf();
+                    if (exec_res.valid()) {
+                        return exec_res.get<sol::object>();
+                    } else {
+                        sol::error err = exec_res;
+                        std::cerr << "\033[31m[Lua] Runtime error in scene '" << scene_name << "':\n" << err.what() << "\033[0m\n";
+                        return sol::nil;
+                    }
+                } else {
+                    sol::error err = result;
+                    std::cerr << "\033[31m[Lua] Syntax error in scene '" << scene_name << "':\n" << err.what() << "\033[0m\n";
+                    return sol::nil;
+                }
+            }
+        }
+        std::cerr << "\033[33m[Lua] Scene '" << scene_name << "' not found.\033[0m\n";
+        return sol::nil;
+    };
+
+
 }
 
 // [NEW] Реализация покадрового хука с защитой от спама ошибками
@@ -476,6 +548,8 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
     sol::table outputs = outputs_obj.as<sol::table>();
     sol::object out_conf_obj = outputs[output_name];
     if (!out_conf_obj.valid() && !output_desc.empty()) out_conf_obj = outputs[output_desc];
+    if (!out_conf_obj.valid()) out_conf_obj = outputs["*"];
+
 
     if (out_conf_obj.is<sol::table>()) {
         sol::table out_conf = out_conf_obj.as<sol::table>();
@@ -589,65 +663,62 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
 {
     if (!effect) return;
 
-    // Базовые настройки плагина из config["Effect Name"]
     sol::table base_settings = lua["config"][effect_name];
-    
-    std::map<std::string, ParamType> expected_types;
     uint32_t count = effect->get_parameter_count_abi();
+    
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI info;
         effect->get_parameter_info_abi(i, &info);
-        expected_types[info.name] = info.default_value.type;
-    }
+        ParamType expected_type = info.default_value.type;
+        std::string key = info.name;
 
-    for (const auto& [key, expected_type] : expected_types) {
-        // КАСКАДНЫЙ ПОИСК:
-        // 1. Проверяем, переопределен ли параметр для конкретного монитора
-        sol::object val = sol::nil;
+        // --- КАСКАДНЫЙ ВЫБОР ЗНАЧЕНИЯ ---
+        sol::object final_lua_val = sol::nil;
+        
+        // 1. Берем из глобального конфига плагина (plugins/*.lua)
+        if (base_settings.valid()) {
+            final_lua_val = base_settings[key];
+        }
+        // 2. Переопределяем настройками конкретного монитора (init.lua), если они есть
         if (output_specific_settings.valid()) {
-            val = output_specific_settings[key];
+            sol::object local_val = output_specific_settings[key];
+            if (local_val.valid()) {
+                final_lua_val = local_val;
+            }
         }
-        // 2. Если нет — берем из глобального конфига плагина
-        if (!val.valid() && base_settings.valid()) {
-            val = base_settings[key];
-        }
-        // 3. Если и там нет — оставляем дефолтное значение C++
-        if (!val.valid()) continue;
 
-        ParamValueABI abi_val;
-        abi_val.type = expected_type;
-        std::string temp_str;
+        // 3. Базовое значение из C++ ABI (если в Lua вообще ничего нет)
+        ParamValueABI abi_val = info.default_value;
 
-        try {
-            if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
-                abi_val.b_val = val.as<bool>();
-                effect->set_parameter_abi(key.c_str(), &abi_val);
-            } 
-            else if (expected_type == ParamType::TYPE_INT && val.is<double>()) {
-                abi_val.i_val = val.as<int>();
-                effect->set_parameter_abi(key.c_str(), &abi_val);
-            } 
-            else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
-                abi_val.f_val = static_cast<float>(val.as<double>());
-                effect->set_parameter_abi(key.c_str(), &abi_val);
-            } 
-            else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
-                sol::table t = val.as<sol::table>();
-                if (t.size() >= 3) {
+        // --- ПАРСИНГ LUA -> C-ABI (Если значение переопределено) ---
+        if (final_lua_val.valid()) {
+            try {
+                if (expected_type == ParamType::TYPE_BOOL && final_lua_val.is<bool>()) {
+                    abi_val.b_val = final_lua_val.as<bool>();
+                } 
+                else if (expected_type == ParamType::TYPE_INT && final_lua_val.is<double>()) {
+                    abi_val.i_val = final_lua_val.as<int>();
+                } 
+                else if (expected_type == ParamType::TYPE_FLOAT && final_lua_val.is<double>()) {
+                    abi_val.f_val = static_cast<float>(final_lua_val.as<double>());
+                } 
+                else if (expected_type == ParamType::TYPE_VEC3 && final_lua_val.is<sol::table>()) {
+                    sol::table t = final_lua_val.as<sol::table>();
                     abi_val.vec3_val[0] = t.get_or(1, 0.0f);
                     abi_val.vec3_val[1] = t.get_or(2, 0.0f);
                     abi_val.vec3_val[2] = t.get_or(3, 0.0f);
-                    effect->set_parameter_abi(key.c_str(), &abi_val);
                 }
+                else if (expected_type == ParamType::TYPE_STRING && final_lua_val.is<std::string>()) {
+                    std::string lua_str = final_lua_val.as<std::string>();
+                    std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
+                    abi_val.s_val[255] = '\0';
+                }
+            } catch (const sol::error& e) {
+                std::cerr << "[LuaEngine] Type Error for parameter '" << key << "': " << e.what() << std::endl;
             }
-            else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
-                std::string lua_str = val.as<std::string>();
-                std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
-                abi_val.s_val[255] = '\0';
-                effect->set_parameter_abi(key.c_str(), &abi_val);
-            }
-        } catch (const sol::error& e) {
-            std::cerr << "Lua Type Error for parameter '" << key << "': " << e.what() << std::endl;
         }
+        
+        // 4. Применяем к плагину!
+        effect->set_parameter_abi(key.c_str(), &abi_val);
     }
 }

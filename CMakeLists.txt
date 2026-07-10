@@ -266,6 +266,8 @@ target_compile_definitions(interactive-wallpaper PRIVATE
     SYSTEM_SOURCE_DIR="${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/plugins-source"
     LOCAL_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins"
     LOCAL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/plugins"
+    SYSTEM_SCENES_DIR="${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/scenes"
+    LOCAL_SCENES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/defaults/scenes"
 )
 
 target_link_libraries(interactive-wallpaper PRIVATE
@@ -322,6 +324,9 @@ install(TARGETS interactive-wallpaper shader-desk-ctl
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/systemd/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user"
         FILES_MATCHING PATTERN "*.service")
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/src/defaults/scenes/"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/shader-desk/scenes")
 
 # 3. SDK Headers (Required for out-of-tree plugin compilation)
 set(SDK_HEADERS

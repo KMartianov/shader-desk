@@ -1,0 +1,36 @@
+if(NOT EXISTS "@CMAKE_BINARY_DIR@/install_manifest.txt")
+  message(FATAL_ERROR "Cannot find install manifest: @CMAKE_BINARY_DIR@/install_manifest.txt")
+endif()
+
+file(READ "@CMAKE_BINARY_DIR@/install_manifest.txt" files)
+string(REGEX REPLACE "\n" ";" files "${files}")
+
+foreach(file ${files})
+  message(STATUS "Uninstalling $ENV{DESTDIR}${file}")
+  if(IS_SYMLINK "$ENV{DESTDIR}${file}" OR EXISTS "$ENV{DESTDIR}${file}")
+    execute_process(
+      COMMAND @CMAKE_COMMAND@ -E rm -f "$ENV{DESTDIR}${file}"
+      RESULT_VARIABLE rm_retval
+    )
+    if(NOT "${rm_retval}" STREQUAL 0)
+      message(FATAL_ERROR "Problem when removing $ENV{DESTDIR}${file}")
+    endif()
+  else()
+    message(STATUS "File $ENV{DESTDIR}${file} does not exist.")
+  endif()
+endforeach()
+
+# Удаляем системные директории проекта (если они пустые)
+set(DIRECTORIES_TO_REMOVE
+    "@CMAKE_INSTALL_FULL_LIBDIR@/shader-desk"
+    "@CMAKE_INSTALL_FULL_DATADIR@/shader-desk"
+    "@CMAKE_INSTALL_FULL_INCLUDEDIR@/shader-desk"
+    "@CMAKE_INSTALL_FULL_LIBDIR@/cmake/ShaderDesk"
+)
+
+foreach(dir ${DIRECTORIES_TO_REMOVE})
+    if(EXISTS "$ENV{DESTDIR}${dir}")
+        message(STATUS "Removing directory: $ENV{DESTDIR}${dir}")
+        execute_process(COMMAND @CMAKE_COMMAND@ -E rm -rf "$ENV{DESTDIR}${dir}")
+    endif()
+endforeach()

@@ -320,6 +320,10 @@ include(CMakePackageConfigHelpers)
 install(TARGETS interactive-wallpaper shader-desk-ctl
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/utilities/shader-desk-run.sh"
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        RENAME shader-desk-run)
+
 # 2. Systemd User Services
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/systemd/"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/systemd/user"
@@ -381,3 +385,17 @@ message(STATUS "System Source Dir: ${CMAKE_INSTALL_FULL_DATADIR}/shader-desk/plu
 message(STATUS "Run 'cmake --build build -j$(nproc)' to compile.")
 message(STATUS "Run 'sudo cmake --install build' to deploy to the system.")
 message(STATUS "-------------------------------------------------------------")
+
+# ==============================================================================
+# 10. UNINSTALL TARGET
+# ==============================================================================
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+    IMMEDIATE @ONLY
+)
+
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+    COMMENT "Uninstalling Shader Desk from the system..."
+)

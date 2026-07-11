@@ -1,0 +1,25 @@
+[Unit]
+Description=Shader Desk - Interactive Wayland Wallpaper Engine
+Documentation=https://github.com/your-username/shader-desk
+# Запускать только после старта графической сессии (Wayland)
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+# Используем наш умный враппер, который сам найдет и запустит демоны
+ExecStart=/usr/bin/shader-desk-run
+# Перезапускать при падениях (но не при нормальном выходе)
+Restart=on-failure
+RestartSec=3
+
+# Песочница Systemd (опционально, для повышения безопасности)
+NoNewPrivileges=true
+# Ограничиваем доступ, но оставляем /dev/input для мыши
+DeviceAllow=/dev/input/event* r
+DeviceAllow=/dev/dri/card* rw
+DeviceAllow=/dev/dri/renderD* rw
+
+[Install]
+WantedBy=graphical-session.target

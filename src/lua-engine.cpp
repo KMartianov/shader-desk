@@ -305,6 +305,97 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     return true;
 }
 
+// ==============================================================================
+// SAFE PROXY OBJECT FOR FLUENT API
+// This struct acts as a safe bridge between Lua and the C++ plugins.
+// It never holds direct pointers to plugins, completely preventing segfaults 
+// if a plugin is hot-reloaded or destroyed during the frame.
+// ==============================================================================
+struct LuaLayerProxy {
+    std::string output_name;
+    std::string tag;
+    LuaEngine* engine;
+
+    // Sets a parameter and returns a reference to itself to allow method chaining.
+    LuaLayerProxy& set(const std::string& param_name, sol::object val) {
+        if (!engine->get_layer_by_tag) return *this;
+        
+        // Resolve the pointer dynamically on every call.
+        IWallpaperEffectABI* effect = engine->get_layer_by_tag(output_name, tag);
+        if (!effect) return *this; // Safe fail if layer is dead
+
+        ParamType expected_type;
+        bool found = false;
+        uint32_t count = effect->get_parameter_count_abi();
+        
+        for (uint32_t i = 0; i < count; ++i) {
+            ParamInfoABI info;
+            effect->get_parameter_info_abi(i, &info);
+            if (param_name == info.name) { 
+                expected_type = info.default_value.type;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) return *this; 
+
+        ParamValueABI abi_val;
+        abi_val.type = expected_type;
+        try {
+            if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
+                abi_val.b_val = val.as<bool>();
+            } else if (expected_type == ParamType::TYPE_INT && val.is<double>()) {
+                abi_val.i_val = val.as<int>();
+            } else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
+                abi_val.f_val = static_cast<float>(val.as<double>());
+            } else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
+                sol::table t = val.as<sol::table>();
+                abi_val.vec3_val[0] = t.get_or(1, 0.0f); 
+                abi_val.vec3_val[1] = t.get_or(2, 0.0f); 
+                abi_val.vec3_val[2] = t.get_or(3, 0.0f);
+            } else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
+                std::strncpy(abi_val.s_val, val.as<std::string>().c_str(), 255);
+                abi_val.s_val[255] = '\0';
+            } else {
+                return *this;
+            }
+            
+            effect->set_parameter_abi(param_name.c_str(), &abi_val);
+        } catch (...) {
+            // Silently ignore type mismatches from Lua to prevent crashing the frame loop
+        }
+
+        return *this; 
+    }
+
+    // Reads the current parameter state directly from the C++ plugin.
+    sol::object get(const std::string& param_name, sol::this_state s) {
+        if (!engine->get_layer_by_tag) return sol::make_object(s, sol::nil);
+        
+        IWallpaperEffectABI* effect = engine->get_layer_by_tag(output_name, tag);
+        if (!effect) return sol::make_object(s, sol::nil);
+
+        ParamValueABI abi_val;
+        if (effect->get_parameter_abi(param_name.c_str(), &abi_val)) {
+            switch (abi_val.type) {
+                case ParamType::TYPE_FLOAT:  return sol::make_object(s, abi_val.f_val);
+                case ParamType::TYPE_INT:    return sol::make_object(s, abi_val.i_val);
+                case ParamType::TYPE_BOOL:   return sol::make_object(s, abi_val.b_val);
+                case ParamType::TYPE_STRING: return sol::make_object(s, std::string(abi_val.s_val));
+                case ParamType::TYPE_VEC3: {
+                    sol::table t = sol::state_view(s).create_table();
+                    t[1] = abi_val.vec3_val[0]; 
+                    t[2] = abi_val.vec3_val[1]; 
+                    t[3] = abi_val.vec3_val[2];
+                    return t;
+                }
+            }
+        }
+        return sol::make_object(s, sol::nil);
+    }
+};
+
 // --- DEBUG API IMPLEMENTATION ---
 // [ABI UPDATE]: Accepting ICoreContextABI*
 // [UPDATED] Привязка API ядра к Lua (Исправлена ошибка компиляции Sol2)
@@ -419,58 +510,17 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         }
     };
 
-    // --- 5. ДИНАМИЧЕСКОЕ УПРАВЛЕНИЕ ПАРАМЕТРАМИ ЭФФЕКТОВ (PER-FRAME) ---
-    // [ИСПРАВЛЕНО]: Вынесено на уровень модуля, а не внутрь лямбды set_interval!
-    core_table["set_effect_param"] = [this](const std::string& output_name, const std::string& param_name, sol::object val) {
-        if (!get_effect_for_output) return;
-        
-        IWallpaperEffectABI* effect = get_effect_for_output(output_name);
-        if (!effect) return;
+    // --- 5. LAYER PROXY API (FLUENT DESIGN) ---
+    // Register the proxy object structure in Sol2
+    lua.new_usertype<LuaLayerProxy>("LayerProxy",
+        "set", &LuaLayerProxy::set,
+        "get", &LuaLayerProxy::get
+    );
 
-        ParamType expected_type;
-        bool found = false;
-        uint32_t count = effect->get_parameter_count_abi();
-        
-        for (uint32_t i = 0; i < count; ++i) {
-            ParamInfoABI info;
-            effect->get_parameter_info_abi(i, &info);
-            if (param_name == info.name) { 
-                expected_type = info.default_value.type;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) return; 
-
-        ParamValueABI abi_val;
-        abi_val.type = expected_type;
-
-        try {
-            if (expected_type == ParamType::TYPE_BOOL && val.is<bool>()) {
-                abi_val.b_val = val.as<bool>();
-            } else if (expected_type == ParamType::TYPE_INT && val.is<double>()) {
-                abi_val.i_val = val.as<int>();
-            } else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
-                abi_val.f_val = static_cast<float>(val.as<double>());
-            } else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
-                sol::table t = val.as<sol::table>();
-                abi_val.vec3_val[0] = t.get_or(1, 0.0f);
-                abi_val.vec3_val[1] = t.get_or(2, 0.0f);
-                abi_val.vec3_val[2] = t.get_or(3, 0.0f);
-            } else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
-                std::string lua_str = val.as<std::string>();
-                std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
-                abi_val.s_val[255] = '\0';
-            } else {
-                return; 
-            }
-            
-            effect->set_parameter_abi(param_name.c_str(), &abi_val);
-            
-        } catch (const sol::error& e) {
-            std::cerr << "[Lua] Type error in set_effect_param: " << e.what() << std::endl;
-        }
+    // Factory function to generate and return proxy objects to Lua.
+    // Example usage in Lua: local bg = core.get_layer("DP-1", "bg_back")
+    core_table["get_layer"] = [this](const std::string& output_name, const std::string& tag) {
+        return LuaLayerProxy{output_name, tag, this};
     };
 
     core_table["load_scene"] = [this](const std::string& scene_name) -> sol::object {
@@ -541,8 +591,9 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
 
     sol::object outputs_obj = core["outputs"];
     if (!outputs_obj.is<sol::table>()) {
-        if (!fallback_effect.empty()) res.layers.push_back({fallback_effect, sol::nil, false});
+        if (!fallback_effect.empty()) res.layers.push_back({fallback_effect, fallback_effect, sol::nil, false});
         return res;
+
     }
 
     sol::table outputs = outputs_obj.as<sol::table>();
@@ -565,34 +616,40 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 std::string eff_name = layer_tbl.get_or("effect", std::string(""));
                 if (eff_name.empty()) continue;
 
+                // Extract the semantic tag. If the user didn't specify one, 
+                // default to the effect name itself for backward compatibility.
+                std::string tag = layer_tbl.get_or("tag", eff_name); 
+                
                 sol::table settings = layer_tbl["settings"].is<sol::table>() ? layer_tbl["settings"] : lua.create_table();
                 bool is_post = layer_tbl.get_or("postprocess", false);
 
                 std::string preset = layer_tbl.get_or("preset", std::string(""));
                 if (!preset.empty()) {
-                    // Проверяем, не применяли ли мы этот пресет ранее
                     std::string applied = settings.get_or("_preset_applied", std::string(""));
                     if (applied != preset) {
                         sol::function apply_preset = core["utils"]["apply_preset"];
                         if (apply_preset.valid()) {
                             apply_preset(settings, eff_name, preset);
-                            settings["_preset_applied"] = preset; // Запоминаем!
+                            settings["_preset_applied"] = preset; 
                         }
                     }
                 }
 
-                res.layers.push_back({eff_name, settings, is_post});
+                // Push the parsed configuration including the tag
+                res.layers.push_back({eff_name, tag, settings, is_post});
             }
         } else {
             // Старый формат (1 эффект)
             std::string eff_name = out_conf.get_or("effect", fallback_effect);
             if (!eff_name.empty()) {
                 sol::table settings = out_conf["settings"].is<sol::table>() ? out_conf["settings"] : lua.create_table();
-                res.layers.push_back({eff_name, settings, false});
+                res.layers.push_back({eff_name, eff_name, settings, false});
+
             }
         }
     } else if (!fallback_effect.empty()) {
-        res.layers.push_back({fallback_effect, sol::nil, false});
+        res.layers.push_back({fallback_effect, fallback_effect, sol::nil, false});
+
     }
     return res;
 }

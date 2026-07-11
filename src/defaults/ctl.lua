@@ -1,13 +1,17 @@
 -- ~/.config/interactive-wallpaper/ctl.lua
--- Модуль вспомогательных функций для управления через shader-desk-ctl
+-- Auxiliary Lua module for remote control via the 'shader-desk-ctl' CLI utility.
 
 local ctl = {}
 
--- Вспомогательная функция: применяет действие к указанному монитору или ко ВСЕМ ("*")
+-- ==============================================================================
+-- CORE HELPERS
+-- ==============================================================================
+
+-- Applies an action to a specific output, or to all outputs if "*" is provided.
 local function with_target(output_name, action)
     if not output_name or output_name == "*" or output_name == "" then
-        for name, _ in pairs(core.outputs) do
-            action(name, core.outputs[name])
+        for name, out in pairs(core.outputs) do
+            action(name, out)
         end
     else
         if core.outputs[output_name] then
@@ -16,29 +20,15 @@ local function with_target(output_name, action)
     end
 end
 
--- ==============================================================================
--- 1. УМНОЕ УПРАВЛЕНИЕ ПАРАМЕТРАМИ (Smart Control)
--- ==============================================================================
-
--- Установка параметра (по умолчанию для всех мониторов)
--- Пример: shader-desk-ctl "ctl.set('sphere_scale', 1.5)"
-function ctl.set(param, value, output)
-    with_target(output, function(name, out)
-        out.settings[param] = value
-        core.set_effect_param(name, param, value)
-    end)
+-- Safely resolves the primary semantic tag of an output if none is explicitly provided.
+local function get_primary_tag(out)
+    if out.layers and out.layers[1] then
+        return out.layers[1].tag or out.layers[1].effect
+    end
+    return nil
 end
 
--- Инвертирование булевого параметра
--- Пример: shader-desk-ctl "ctl.toggle('wireframe_mode')"
-function ctl.toggle(param, output)
-    with_target(output, function(name, out)
-        out.settings[param] = not out.settings[param]
-        core.set_effect_param(name, param, out.settings[param])
-    end)
-end
-
--- Вспомогательная функция для глубокого сравнения (понимает таблицы и цвета)
+-- Deep comparison helper (useful for comparing {R, G, B} color tables).
 local function is_equal(a, b)
     if type(a) ~= type(b) then return false end
     if type(a) == "table" then
@@ -51,44 +41,82 @@ local function is_equal(a, b)
     return a == b
 end
 
--- Циклическое переключение (с поддержкой цветов {R,G,B} и строк!)
-function ctl.cycle(param, values_list, output)
+-- ==============================================================================
+-- 1. SMART PARAMETER CONTROL (Fluent API Based)
+-- ==============================================================================
+
+-- Set a specific parameter.
+-- Example: shader-desk-ctl "ctl.set('sphere_scale', 1.5, '*', 'Hilbert Cube')"
+function ctl.set(param, value, output, tag)
     with_target(output, function(name, out)
-        local current = out.settings[param]
-        local next_idx = 1
-        for i, val in ipairs(values_list) do
-            -- Используем is_equal вместо обычного ==
-            if is_equal(val, current) then
-                next_idx = (i % #values_list) + 1
-                break
-            end
+        local target_tag = tag or get_primary_tag(out)
+        if target_tag then
+            core.get_layer(name, target_tag):set(param, value)
         end
-        local new_val = values_list[next_idx]
-        out.settings[param] = new_val
-        core.set_effect_param(name, param, new_val)
     end)
 end
 
--- Смена пресета на лету
--- Пример: shader-desk-ctl "ctl.preset('Icosahedron Sphere', 'cyberpunk')"
+-- Toggle a boolean parameter (e.g., true -> false).
+-- Example: shader-desk-ctl "ctl.toggle('enable_stripes')"
+function ctl.toggle(param, output, tag)
+    with_target(output, function(name, out)
+        local target_tag = tag or get_primary_tag(out)
+        if target_tag then
+            local layer = core.get_layer(name, target_tag)
+            local current = layer:get(param)
+            if current ~= nil then
+                layer:set(param, not current)
+            end
+        end
+    end)
+end
+
+-- Cycle through a list of values. Supports colors (tables) and strings.
+-- Example: shader-desk-ctl "ctl.cycle('bg_color', {{1,0,0}, {0,1,0}, {0,0,1}})"
+function ctl.cycle(param, values_list, output, tag)
+    with_target(output, function(name, out)
+        local target_tag = tag or get_primary_tag(out)
+        if target_tag then
+            local layer = core.get_layer(name, target_tag)
+            local current = layer:get(param)
+            
+            local next_idx = 1
+            for i, val in ipairs(values_list) do
+                if is_equal(val, current) then
+                    next_idx = (i % #values_list) + 1
+                    break
+                end
+            end
+            layer:set(param, values_list[next_idx])
+        end
+    end)
+end
+
+-- Apply a preset to a layer on the fly.
+-- Example: shader-desk-ctl "ctl.preset('Icosahedron Sphere', 'cyberpunk')"
 function ctl.preset(effect_name, preset_name, output)
     with_target(output, function(name, out)
-        if core.utils.apply_preset then
+        -- Fallback to the old logic since presets apply to the entire layer configuration table
+        if core.utils.apply_preset and out.settings then
             core.utils.apply_preset(out.settings, effect_name, preset_name)
-            -- Применяем все загруженные параметры в C++
-            for k, v in pairs(out.settings) do
-                core.set_effect_param(name, k, v)
+            
+            local target_tag = get_primary_tag(out)
+            if target_tag then
+                local layer = core.get_layer(name, target_tag)
+                for k, v in pairs(out.settings) do
+                    layer:set(k, v)
+                end
             end
         end
     end)
 end
 
 -- ==============================================================================
--- 2. ИНТЕГРАЦИЯ С ТЕМАМИ И PYWAL (Theming & Unixporn)
+-- 2. THEMING & UNIXPORN INTEGRATION
 -- ==============================================================================
 
--- Автоматическая подгрузка цветовой палитры из Pywal (~/.cache/wal/colors.json)
--- Пример: shader-desk-ctl "ctl.pywal()" (можно вставить в хук запуска wal)
+-- Automatically load and apply the color palette generated by Pywal.
+-- Example: shader-desk-ctl "ctl.pywal()"
 function ctl.pywal(output)
     local wal_file = os.getenv("HOME") .. "/.cache/wal/colors.json"
     local f = io.open(wal_file, "r")
@@ -99,7 +127,6 @@ function ctl.pywal(output)
     local content = f:read("*all")
     f:close()
 
-    -- Простой парсер HEX цветов из JSON в формат {R, G, B}
     local function hex_to_rgb(hex)
         hex = hex:gsub("#", "")
         return {
@@ -116,29 +143,27 @@ function ctl.pywal(output)
     if bg_hex and accent_hex then
         ctl.set("background_color", hex_to_rgb(bg_hex), output)
         ctl.set("wireframe_color", hex_to_rgb(accent_hex), output)
-        ctl.set("wave_color", hex_to_rgb(accent_hex), output)
+        ctl.set("curve_color", hex_to_rgb(accent_hex), output)
         print("Successfully applied Pywal palette!")
     end
 end
 
--- Переключение дневной/ночной темы
--- Пример: shader-desk-ctl "ctl.theme('dark')"
+-- Switch between light and dark themes manually.
+-- Example: shader-desk-ctl "ctl.theme('dark')"
 function ctl.theme(mode, output)
     if mode == "dark" then
-        ctl.set("bloom_intensity", 0.6, output)
         ctl.set("background_color", {0.05, 0.05, 0.08}, output)
     elseif mode == "light" then
-        ctl.set("bloom_intensity", 0.0, output)
         ctl.set("background_color", {0.85, 0.90, 0.95}, output)
     end
 end
 
 -- ==============================================================================
--- 3. УПРАВЛЕНИЕ РЕСУРСАМИ И ИГРОВОЙ РЕЖИМ (Power & Gaming)
+-- 3. POWER MANAGEMENT & DATA PROVIDERS
 -- ==============================================================================
 
--- Включение/выключение реакции на аудио или мышь
--- Пример: shader-desk-ctl "ctl.provider('Cava Audio Provider', false)" (перед созвоном в Zoom)
+-- Enable or disable a Data Provider (e.g., turn off audio reaction during a Zoom call).
+-- Example: shader-desk-ctl "ctl.provider('Cava Audio Provider', false)"
 function ctl.provider(name, enabled)
     if core.providers[name] then
         core.providers[name].enabled = enabled
@@ -146,100 +171,77 @@ function ctl.provider(name, enabled)
     end
 end
 
--- "Игровой режим" или режим экономии батареи (Замораживает анимацию)
--- Пример: shader-desk-ctl "ctl.freeze(true)"
-function ctl.freeze(state, output)
+-- "Gaming Mode" or battery saver. Freezes animation parameters.
+-- Example: shader-desk-ctl "ctl.freeze(true)"
+function ctl.freeze(state, output, tag)
     with_target(output, function(name, out)
+        local target_tag = tag or get_primary_tag(out)
+        if not target_tag then return end
+        
+        local layer = core.get_layer(name, target_tag)
+        
         if state then
-            out._saved_speed = out.settings.speed or 1.0
-            out._saved_rot = out.settings.constant_rotation_speed or 0.1
-            ctl.set("speed", 0.0, name)
-            ctl.set("constant_rotation_speed", 0.0, name)
-            ctl.set("oscill_amp", 0.0, name)
+            -- Save current state to the Lua output table
+            out._saved_rot = layer:get("constant_rotation_speed") or 0.1
+            layer:set("constant_rotation_speed", 0.0)
+            layer:set("oscill_amp", 0.0)
         else
-            ctl.set("speed", out._saved_speed or 1.0, name)
-            ctl.set("constant_rotation_speed", out._saved_rot or 0.1, name)
+            -- Restore saved state
+            layer:set("constant_rotation_speed", out._saved_rot or 0.1)
         end
     end)
 end
 
 -- ==============================================================================
--- 4. ИНТЕРАКТИВНЫЕ ЭФФЕКТЫ И УВЕДОМЛЕНИЯ (Notifications & Events)
+-- 4. INTERACTIVE EVENTS & NOTIFICATIONS
 -- ==============================================================================
 
--- Вспышка цветом при получении уведомления от Dunst / Mako / SwayNC
--- Пример: shader-desk-ctl "ctl.flash({1.0, 0.0, 0.0}, 0.5)" (вспышка красным на полсекунды)
-function ctl.flash(flash_color, duration_sec, output)
+-- Temporarily flashes the wallpaper color (e.g., when receiving a Dunst/Mako notification).
+-- Example: shader-desk-ctl "ctl.flash({1.0, 0.0, 0.0}, 0.5)" (flash red for 500ms)
+function ctl.flash(flash_color, duration_sec, output, tag)
     with_target(output, function(name, out)
-        local orig_color = out.settings.wireframe_color or {0.5, 0.5, 0.7}
-        ctl.set("wireframe_color", flash_color, name)
-        
-        -- Используем таймер из твоего ядра для возврата цвета через X миллисекунд
-        core.set_interval(math.floor(duration_sec * 1000), function()
-            ctl.set("wireframe_color", orig_color, name)
-            return nil -- Останавливаем таймер
-        end)
+        local target_tag = tag or get_primary_tag(out)
+        if target_tag then
+            local layer = core.get_layer(name, target_tag)
+            
+            -- Fallback sequentially depending on the plugin type
+            local target_param = "wireframe_color"
+            local orig_color = layer:get(target_param)
+            if orig_color == nil then
+                target_param = "curve_color"
+                orig_color = layer:get(target_param)
+            end
+            if orig_color == nil then return end -- Plugin doesn't support coloring
+            
+            layer:set(target_param, flash_color)
+            
+            -- Use the Wayland core's epoll timer to revert the color
+            core.set_interval(math.floor(duration_sec * 1000), function()
+                layer:set(target_param, orig_color)
+                return nil -- Returning nil stops the timer
+            end)
+        end
     end)
 end
 
--- Импульс от удара (Временный скачок размера/амплитуды)
--- Пример: shader-desk-ctl "ctl.pulse(2.5)"
-function ctl.pulse(target_scale, output)
-    with_target(output, function(name, out)
-        local orig_scale = out.settings.sphere_scale or 1.0
-        ctl.set("sphere_scale", target_scale, name)
-        
-        core.set_interval(150, function()
-            ctl.set("sphere_scale", orig_scale, name)
-            return nil
-        end)
-    end)
-end
-
 -- ==============================================================================
--- 5. ИНТЕГРАЦИЯ С WAYBAR / EWW (Status Output)
+-- 5. WAYBAR / EWW INTEGRATION (Status Output)
 -- ==============================================================================
 
--- Вывод статуса для отображения в панелях (в формате JSON)
--- Пример: shader-desk-ctl "ctl.status()"
+-- Outputs the current status of all monitors in JSON format.
+-- Example: shader-desk-ctl "ctl.status()"
 function ctl.status()
     local result = "{"
     for name, out in pairs(core.outputs) do
-        local effect = out.effect or core.default_effect
-        result = result .. string.format('"%s": {"effect": "%s"}, ', name, effect)
+        local primary_tag = get_primary_tag(out) or "none"
+        result = result .. string.format('"%s": {"primary_layer": "%s"}, ', name, primary_tag)
     end
-    result = result:sub(1, -3) .. "}\n"
+    -- Remove the trailing comma and space
+    if #result > 1 then
+        result = result:sub(1, -3)
+    end
+    result = result .. "}\n"
     io.write(result)
-end
-
--- Вывод списка всех подключенных в данный момент к мониторам эффектов
-function ctl.list_active()
-    local res = {}
-    for output_name, out in pairs(core.outputs) do
-        table.insert(res, {
-            output = output_name,
-            effect = out.effect or core.default_effect,
-            preset = out.preset or "none"
-        })
-    end
-    -- Выводим как JSON для удобного парсинга скриптами
-    print(require("json").encode(res)) 
-end
-
--- Получить текущие (живые) значения параметров на мониторе
-function ctl.get_settings(output_name)
-    local target = output_name or "eDP-1"
-    local out = core.outputs[target]
-    if out and out.settings then
-        -- Выплевываем текущий стейт таблицы настроек
-        for k, v in pairs(out.settings) do
-            if type(v) ~= "function" then
-                print(string.format("%s = %s", k, tostring(v)))
-            end
-        end
-    else
-        print("ERROR: Output or settings not found")
-    end
 end
 
 return ctl

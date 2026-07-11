@@ -37,13 +37,14 @@ enum class RendererType {
 };
 
 struct LayerInstance {
-            std::string name;
-            std::string tag;
-            WallpaperEffectPtr effect;
-            bool is_postprocess;
-            LayerInstance(std::string n, WallpaperEffectPtr eff, bool post) 
-                : name(std::move(n)), effect(std::move(eff)), is_postprocess(post) {}
-        };
+    std::string name;
+    std::string tag;
+    WallpaperEffectPtr effect;
+    bool is_postprocess;
+    
+    LayerInstance(std::string n, std::string t, WallpaperEffectPtr eff, bool post) 
+        : name(std::move(n)), tag(std::move(t)), effect(std::move(eff)), is_postprocess(post) {}
+};
 
 
 struct WallpaperConfig {

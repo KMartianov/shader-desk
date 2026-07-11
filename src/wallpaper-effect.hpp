@@ -113,7 +113,8 @@ public:
     }
 
     bool get_parameter_abi(const char* name, ParamValueABI* out_value) const final {
-        // Запрашиваем свежие данные у дочернего C++ класса
+        // Always fetch fresh parameters to ensure we get the latest state 
+        // even if the plugin modified it internally during the render loop.
         std::vector<EffectParameter> fresh_params = get_parameters(); 
         
         for (const auto& p : fresh_params) {
@@ -130,7 +131,9 @@ public:
                 } else if (std::holds_alternative<glm::vec3>(p.value)) {
                     out_value->type = ParamType::TYPE_VEC3;
                     auto v = std::get<glm::vec3>(p.value);
-                    out_value->vec3_val[0] = v.x; out_value->vec3_val[1] = v.y; out_value->vec3_val[2] = v.z;
+                    out_value->vec3_val[0] = v.x; 
+                    out_value->vec3_val[1] = v.y; 
+                    out_value->vec3_val[2] = v.z;
                 } else if (std::holds_alternative<std::string>(p.value)) {
                     out_value->type = ParamType::TYPE_STRING;
                     std::strncpy(out_value->s_val, std::get<std::string>(p.value).c_str(), 255);

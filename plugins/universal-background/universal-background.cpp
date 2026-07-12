@@ -24,9 +24,9 @@ bool UniversalBackground::initialize(ICoreContext* core, uint32_t, uint32_t) {
 
 void UniversalBackground::render(uint32_t width, uint32_t height, float dt) {
     glUseProgram(program);
-    glDisable(GL_DEPTH_TEST); // Фону не нужен тест глубины
+    glDisable(GL_DEPTH_TEST); // Background doesn't need depth testing
     
-    // ИСПОЛЬЗУЕМ реальный dt вместо хардкода 0.016f
+    // USE real dt instead of hardcoded 0.016f
     time += dt; 
     
     glUniform3fv(u_color_top, 1, &color_top[0]);
@@ -48,10 +48,10 @@ void UniversalBackground::cleanup() {
 
 std::vector<EffectParameter> UniversalBackground::get_parameters() const {
     return {
-        {"color_top", "Основной/Верхний цвет градиента", color_top},
-        {"color_bottom", "Нижний цвет градиента", color_bottom},
-        {"gradient_type", "Тип: 0=Solid, 1=Vertical, 2=Radial", gradient_type},
-        {"pulse_speed", "Скорость пульсации цвета (0 = выкл)", pulse_speed}
+        {"color_top", "Main/Top gradient color", color_top},
+        {"color_bottom", "Bottom gradient color", color_bottom},
+        {"gradient_type", "Type: 0=Solid, 1=Vertical, 2=Radial", gradient_type},
+        {"pulse_speed", "Color pulse speed (0 = off)", pulse_speed}
     };
 }
 

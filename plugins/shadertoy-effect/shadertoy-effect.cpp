@@ -5,7 +5,7 @@
 #include <sstream>
 
 // ==============================================================================
-// 1. ПАРСИНГ ПАРАМЕТРОВ ИЗ КОММЕНТАРИЕВ GLSL
+// 1. PARSE PARAMETERS FROM GLSL COMMENTS
 // ==============================================================================
 EffectParameterValue ShaderToyEffect::parse_default_value(const std::string& type_str, const std::string& val_str) {
     if (type_str == "float") return std::stof(val_str);
@@ -21,7 +21,7 @@ EffectParameterValue ShaderToyEffect::parse_default_value(const std::string& typ
 
 void ShaderToyEffect::extract_parameters_from_source(const std::string& source) {
     dynamic_params.clear();
-    // Ищем паттерн: // @param name | type | default | description
+    // Look for pattern: // @param name | type | default | description
     std::regex param_regex(R"(//\s*@param\s+([a-zA-Z0-9_]+)\s*\|\s*(float|int|bool|vec3)\s*\|\s*([^|]+)\s*\|\s*(.*))");
     
     auto words_begin = std::sregex_iterator(source.begin(), source.end(), param_regex);
@@ -35,7 +35,7 @@ void ShaderToyEffect::extract_parameters_from_source(const std::string& source) 
         std::string default_str = match[3].str();
         param.description = match[4].str();
         
-        // Очищаем от пробелов по краям
+        // Trim whitespace from edges
         default_str.erase(0, default_str.find_first_not_of(" \t"));
         default_str.erase(default_str.find_last_not_of(" \t") + 1);
 
@@ -49,29 +49,29 @@ void ShaderToyEffect::extract_parameters_from_source(const std::string& source) 
 }
 
 // ==============================================================================
-// 2. ИНЖЕКЦИЯ КОДА И КОМПИЛЯЦИЯ
+// 2. CODE INJECTION AND COMPILATION
 // ==============================================================================
 bool ShaderToyEffect::parse_and_compile(ICoreContext* core) {
     std::string raw_frag = shader_utils::load_shader_source(core, get_name(), target_shader_file);
     if (raw_frag.empty()) return false;
 
-    // 1. Извлекаем метаданные параметров
+    // 1. Extract parameter metadata
     extract_parameters_from_source(raw_frag);
 
-    // 2. Генерируем "Обертку" ShaderToy
+    // 2. Generate ShaderToy "Wrapper"
     std::stringstream injected_frag;
     injected_frag << "#version 300 es\n";
     injected_frag << "precision highp float;\n";
     injected_frag << "out vec4 FragColor;\n";
     
-    // Встроенные Uniforms ShaderToy
+    // Built-in ShaderToy Uniforms
     injected_frag << "uniform vec3 iResolution;\n";
     injected_frag << "uniform float iTime;\n";
     injected_frag << "uniform float iTimeDelta;\n";
     injected_frag << "uniform int iFrame;\n";
     injected_frag << "uniform vec4 iMouse;\n";
 
-    // Динамические Uniforms пользователя
+    // Dynamic user Uniforms
     for (const auto& p : dynamic_params) {
         if (std::holds_alternative<float>(p.value)) injected_frag << "uniform float " << p.name << ";\n";
         else if (std::holds_alternative<int>(p.value)) injected_frag << "uniform int " << p.name << ";\n";
@@ -79,17 +79,17 @@ bool ShaderToyEffect::parse_and_compile(ICoreContext* core) {
         else if (std::holds_alternative<glm::vec3>(p.value)) injected_frag << "uniform vec3 " << p.name << ";\n";
     }
 
-    // Вставляем оригинальный код пользователя
-    injected_frag << "\n#line 1\n" << raw_frag << "\n";
+    // Insert the original user code
+    injected_frag << "\n#Line 1\n" << raw_frag << "\n";
 
-    // Добавляем точку входа main(), которая вызывает ShaderToy mainImage()
+    // Add main() entry point that calls ShaderToy's mainImage()
     injected_frag << R"(
     void main() {
         mainImage(FragColor, gl_FragCoord.xy);
     }
     )";
 
-    // 3. Создаем простейший вершинный шейдер (Fullscreen Triangle без VBO)
+    // 3. Create a simple vertex shader (Fullscreen Triangle without VBO)
     std::string vert_src = R"(
         #version 300 es
         void main() {
@@ -105,7 +105,7 @@ bool ShaderToyEffect::parse_and_compile(ICoreContext* core) {
         return false;
     }
 
-    // 4. Кэшируем locations
+    // 4. Cache locations
     u_iResolution = glGetUniformLocation(program, "iResolution");
     u_iTime = glGetUniformLocation(program, "iTime");
     u_iTimeDelta = glGetUniformLocation(program, "iTimeDelta");
@@ -151,10 +151,10 @@ void ShaderToyEffect::render(uint32_t width, uint32_t height, float dt) {
     if (u_iMouse != -1) {
         float mx = p_mouse_x ? *p_mouse_x : 0.0f;
         float my = p_mouse_y ? *p_mouse_y : 0.0f;
-        glUniform4f(u_iMouse, mx, my, 0.0f, 0.0f); // xy - позиция
+        glUniform4f(u_iMouse, mx, my, 0.0f, 0.0f); // Xy - position
     }
 
-    // Dynamic User uniforms (Передаем в видеокарту без поиска по Map)
+    // Dynamic User uniforms (Passed to the GPU without Map lookups)
     for (const auto& p : dynamic_params) {
         if (p.uniform_location == -1) continue;
 
@@ -170,7 +170,7 @@ void ShaderToyEffect::render(uint32_t width, uint32_t height, float dt) {
         }
     }
 
-    // Отрисовка
+    // Rendering
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
@@ -183,11 +183,11 @@ void ShaderToyEffect::cleanup() {
 }
 
 // ==============================================================================
-// 4. ДИНАМИЧЕСКИЙ ПРОБРОС ПАРАМЕТРОВ В LUA
+// 4. DYNAMIC PARAMETER EXPORT TO LUA
 // ==============================================================================
 std::vector<EffectParameter> ShaderToyEffect::get_parameters() const {
     std::vector<EffectParameter> exports;
-    // Обязательный параметр (позволяет менять файл шейдера из Lua на лету!)
+    // Mandatory parameter (allows changing the shader file from Lua on the fly!)
     exports.push_back({"shader_file", "File name in shaders/ folder", target_shader_file});
     
     for (const auto& p : dynamic_params) {
@@ -202,7 +202,7 @@ void ShaderToyEffect::set_parameter(const std::string& name, const EffectParamet
         return;
     }
 
-    // Ищем динамический параметр и обновляем его
+    // Find the dynamic parameter and update it
     for (auto& p : dynamic_params) {
         if (p.name == name) {
             p.value = value;
@@ -211,7 +211,7 @@ void ShaderToyEffect::set_parameter(const std::string& name, const EffectParamet
     }
 }
 
-// ABI Экспорт
+// ABI Export
 extern "C" {
     uint32_t get_abi_version() { return SHADER_DESK_ABI_VERSION; }
     IWallpaperEffectABI* create_effect() { return new ShaderToyEffect(); }

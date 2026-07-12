@@ -1,4 +1,4 @@
-// src/interactive-wallpaper.hpp
+// Src/interactive-wallpaper.hpp
 #pragma once
 
 // System libraries
@@ -12,7 +12,7 @@
 #include <sys/epoll.h>
 #include <sys/inotify.h>
 
-// Wayland и EGL
+// Wayland and EGL
 #include <wayland-client.h>
 #include <wayland-egl.h>
 #include <EGL/egl.h>
@@ -78,6 +78,8 @@ public:
         int32_t scale = 1;
         uint32_t configure_serial = 0;
         bool configured = false;
+
+        float current_fps_limit = 0.0f;
         
         // Visual effect plugin instance bound to this specific monitor
         std::vector<LayerInstance> layers;
@@ -90,7 +92,7 @@ public:
         GLuint tex_feedback = 0;
 
         int current_fbo = 0;
-        uint32_t fbo_w = 0, fbo_h = 0; // Внутреннее разрешение FBO
+        uint32_t fbo_w = 0, fbo_h = 0; // Internal FBO resolution
 
         void allocate_fbos(uint32_t w, uint32_t h);
         void destroy_fbos();
@@ -107,8 +109,8 @@ public:
         Output() {}
 
         ~Output() {
-            layers.clear(); // Безопасное удаление плагинов
-            // Уничтожаем EGL и FBO
+            layers.clear(); // Safe plugin deletion
+            // Destroy EGL and FBO
             if (parent && egl_surface != EGL_NO_SURFACE) {
                 eglMakeCurrent(parent->egl_display, egl_surface, egl_surface, parent->egl_context);
                 destroy_fbos();
@@ -185,7 +187,7 @@ private:
     EGLContext egl_context = EGL_NO_CONTEXT;
     EGLConfig egl_config = nullptr;
 
-    // --- Состояние приложения ---
+    // --- Application state ---
     WallpaperConfig config;
     std::unordered_map<wl_output*, std::unique_ptr<Output>> outputs;
     bool running = true;
@@ -208,6 +210,9 @@ private:
     void create_egl_surface(Output* output);
     void create_layer_surface(Output* output);
     void check_egl_error(const std::string& operation);
+
+    void recover_egl_context();
+
     
     // --- Inotify Initialization & Event Handling ---
     void setup_inotify();

@@ -15,10 +15,10 @@ const char* SimpleWaveEffectEffect::get_name() const {
 
 std::vector<EffectParameter> SimpleWaveEffectEffect::get_parameters() const {
     return {
-        {"wave_color", "Основной цвет волн (R,G,B)", wave_color},
-        {"speed", "Скорость движения волн", speed},
-        {"frequency", "Частота (количество) волн на экране", frequency},
-        {"is_inverted", "Инвертировать ли цвета", is_inverted},
+        {"wave_color", "Main wave color (R,G,B)", wave_color},
+        {"speed", "Wave movement speed", speed},
+        {"frequency", "Wave frequency (count) on screen", frequency},
+        {"is_inverted", "Invert colors", is_inverted},
     };
 }
 
@@ -105,10 +105,10 @@ extern "C" {
     }
     
     IWallpaperEffectABI* create_effect() {
-        return new SimpleWaveEffectEffect(); // (например, new HilbertCubeEffect())
+        return new SimpleWaveEffectEffect(); // (e.g., new HilbertCubeEffect())
     }
     void destroy_effect(IWallpaperEffectABI* effect) {
-        // static_cast safely returns us to the class to call the destructor
+        // Static_cast safely returns us to the class to call the destructor
         delete static_cast<WallpaperEffect*>(effect);
     }
 }

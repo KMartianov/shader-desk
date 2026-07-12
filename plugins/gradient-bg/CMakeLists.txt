@@ -12,7 +12,7 @@ endif()
 add_library(gradient-bg SHARED "gradient-bg.cpp")
 set_target_properties(gradient-bg PROPERTIES PREFIX "")
 
-# КЛАДЕМ БИНАРНИК В КОРЕНЬ ИСТОЧНИКОВ (Где лежат папки shaders/ и presets/)
+# PLACE THE BINARY IN THE SOURCE ROOT (Where the shaders/ and presets/ folders reside)
 set_target_properties(gradient-bg PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )

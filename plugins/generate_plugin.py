@@ -139,7 +139,7 @@ def main():
     vert_shader_path, frag_shader_path = find_shaders(shader_dir)
 
     if not frag_shader_path:
-        return # Error message already printed in find_shaders
+        return # error message already printed in find_shaders
 
     shader_content = ""
     try:

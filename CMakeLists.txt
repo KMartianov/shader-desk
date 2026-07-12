@@ -4,7 +4,7 @@
 # ==============================================================================
 cmake_minimum_required(VERSION 3.14)
 
-# Define project version for package managers
+# define project version for package managers
 project(shader-desk VERSION 1.0.0 LANGUAGES C CXX)
 
 # ==============================================================================
@@ -25,13 +25,13 @@ set(BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 set(PROTOCOL_OUTPUT_DIR "${BIN_DIR}/protocols")
 file(MAKE_DIRECTORY "${PROTOCOL_OUTPUT_DIR}")
 
-# [FIX] Create a virtual directory namespace for proper <shader-desk/...> includes
+# Create a virtual directory namespace for proper <shader-desk/...> includes
 file(MAKE_DIRECTORY "${BIN_DIR}/include")
 if(NOT EXISTS "${BIN_DIR}/include/shader-desk")
     execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink "${SRC_DIR}" "${BIN_DIR}/include/shader-desk")
 endif()
 
-# Define where compiled plugins should be installed globally
+# define where compiled plugins should be installed globally
 set(PLUGIN_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/shader-desk/plugins" 
     CACHE PATH "System directory for compiled .so plugins")
 
@@ -63,13 +63,13 @@ pkg_check_modules(LUAJIT REQUIRED luajit)
 include(FetchContent)
 
 # Lua/C++ Binding (sol2)
-# If the package manager already provided sol2, target sol2::sol2 already exists.
+# if the package manager already provided sol2, target sol2::sol2 already exists.
 # Download from the network only if it is missing.
 if(NOT TARGET sol2::sol2)
     message(STATUS "sol2 not found in system. Fetching from GitHub...")
     FetchContent_Declare(
         sol2
-        GIT_REPOSITORY https://github.com/ThePhD/sol2.git
+        GIT_REPOSITORY https://Github.com/ThePhD/sol2.git
         GIT_TAG main
     )
     FetchContent_MakeAvailable(sol2)
@@ -89,7 +89,7 @@ if(ENABLE_PROFILING)
 
         FetchContent_Declare(
             tracy
-            GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+            GIT_REPOSITORY https://Github.com/wolfpld/tracy.git
             GIT_TAG 5c75032c
         )
         FetchContent_MakeAvailable(tracy)
@@ -125,8 +125,8 @@ macro(generate_wayland_protocol XML_PATH HEADER_FILE SOURCE_FILE)
 endmacro()
 
 # 1. wlr-layer-shell (Patching C++ keyword collision)
-# FIX: We avoid using the macro with if(EXISTS) for the generated file,
-# because it doesn't exist yet during the CMake configuration phase.
+# We avoid using the macro with if(EXISTS) for the generated file,
+# Because it doesn't exist yet during the CMake configuration phase.
 set(LAYER_SHELL_XML "${THIRD_PARTY_PROTO_DIR}/unstable/wlr-layer-shell-unstable-v1.xml")
 set(LAYER_SHELL_XML_FIXED "${PROTOCOL_OUTPUT_DIR}/wlr-layer-shell-unstable-v1-fixed.xml")
 if(EXISTS "${LAYER_SHELL_XML}")
@@ -175,7 +175,7 @@ add_custom_target(wayland_protocols ALL DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# FIX: Added a separate HEADER_NAME argument to explicitly specify the lowercase filename
+# Added a separate HEADER_NAME argument to explicitly specify the lowercase filename
 macro(embed_lua_script FILE_NAME HEADER_NAME VAR_NAME)
     set(HEADER_OUT "${GENERATED_DIR}/embedded_${HEADER_NAME}.hpp")
     add_custom_command(

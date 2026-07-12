@@ -9,7 +9,7 @@
 #include <nlohmann/json.hpp>
 
 
-#include "plugin-abi.hpp"       // [NEW] Include ABI interfaces
+#include "plugin-abi.hpp"       // Include ABI interfaces
 #include "wallpaper-effect.hpp" // Include for WallpaperEffectPtr
 #include "data-provider.hpp"    
 
@@ -27,12 +27,12 @@ public:
     nlohmann::json inspect_plugin(const std::string& plugin_name);
     
     /**
-     * @brief Инициализирует найденные Data Providers.
-     * @param core Контекст ядра (epoll, BlackBoard). Теперь использует ABI интерфейс.
-     * @param configure_callback Коллбэк для конфигурации. Должен прочитать настройки из Lua,
-     *                           передать их через provider->set_parameter() и вернуть true.
-     *                           Если в Lua стоит enabled=false, должен вернуть false.
-     *                           [NEW] Теперь принимает IDataProviderABI*.
+     * @brief Initializes discovered Data Providers.
+     * @param core Core context (epoll, BlackBoard). Uses the ABI interface.
+     * @param configure_callback Configuration callback. Must read settings from Lua,
+     *                           pass them via provider->set_parameter() and return true.
+     *                           If enabled=false is set in Lua, it must return false.
+     *                           Accepts IDataProviderABI*.
      */
     void initialize_providers(ICoreContextABI* core, const std::function<bool(IDataProviderABI*)>& configure_callback = nullptr);
 
@@ -49,7 +49,7 @@ private:
     std::vector<std::shared_ptr<PluginHandle>> loaded_plugins;
     
     // Storage for ACTIVE data providers (with custom deleter from .so)
-    // [NEW] Store pointers to ABI interfaces to guarantee binary compatibility
+    // Store pointers to ABI interfaces to guarantee binary compatibility
     std::vector<std::unique_ptr<IDataProviderABI, void(*)(IDataProviderABI*)>> data_providers;
     
     // Storage for dlopen handles of Data Providers.

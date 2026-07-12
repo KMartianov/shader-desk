@@ -1,7 +1,7 @@
 #pragma once
 
 #include "plugin-abi.hpp"
-#include "wallpaper-effect.hpp" // Берем EffectParameter и EffectParameterValue оттуда
+#include "wallpaper-effect.hpp" // Get EffectParameter and EffectParameterValue from there
 #include <cstring>
 
 // ==============================================================================
@@ -32,7 +32,6 @@ public:
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
-        // БЕЗОПАСНОЕ КОПИРОВАНИЕ СТРОК В ABI
         std::strncpy(out_info->name, p.name.c_str(), sizeof(out_info->name) - 1);
         out_info->name[sizeof(out_info->name) - 1] = '\0';
         
@@ -57,8 +56,10 @@ public:
         } else if (std::holds_alternative<std::string>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_STRING;
             const std::string& str = std::get<std::string>(p.value);
-            std::strncpy(out_info->default_value.s_val, str.c_str(), 255);
-            out_info->default_value.s_val[255] = '\0';
+            size_t max_len = sizeof(out_info->default_value.s_val) - 1;
+            std::strncpy(out_info->default_value.s_val, str.c_str(), max_len);
+            out_info->default_value.s_val[max_len] = '\0';
+
         }
     }
 

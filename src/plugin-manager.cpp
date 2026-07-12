@@ -1,4 +1,4 @@
-// src/plugin-manager.cpp
+// Src/plugin-manager.cpp
 #include "plugin-manager.hpp"
 #include <dlfcn.h>
 #include <filesystem>
@@ -36,7 +36,7 @@ PluginManager::~PluginManager() {
     }
     provider_handles.clear();
     
-    // loaded_plugins will destroy themselves (triggering dlclose in ~PluginHandle)
+    // Loaded_plugins will destroy themselves (triggering dlclose in ~PluginHandle)
 }
 
 void PluginManager::discover_plugins() {
@@ -53,7 +53,7 @@ void PluginManager::discover_plugins() {
 
     // Sets to track uniqueness by plugin name.
     // If a plugin with a specific name is already loaded (e.g., from ~/.config/), 
-    // the system version from /usr/lib/ will be gracefully ignored.
+    // The system version from /usr/lib/ will be gracefully ignored.
     std::unordered_set<std::string> discovered_effects;
     std::unordered_set<std::string> discovered_providers;
 
@@ -280,7 +280,7 @@ void PluginManager::initialize_providers(ICoreContextABI* core, const std::funct
             }
         } else {
             // If plugin was disabled in config on the fly - SHUT IT DOWN!
-            // cleanup() safely unregisters it from epoll and closes the socket.
+            // Cleanup() safely unregisters it from epoll and closes the socket.
             provider->cleanup();
             std::cout << "[PluginManager] Data Provider stopped (disabled in config): " << provider->get_name() << std::endl;
         }
@@ -288,12 +288,12 @@ void PluginManager::initialize_providers(ICoreContextABI* core, const std::funct
 }
 
 WallpaperEffectPtr PluginManager::create_effect(const std::string& effect_name) {
-    for (const auto& plugin_sp : loaded_plugins) { // plugin_sp это std::shared_ptr
+    for (const auto& plugin_sp : loaded_plugins) { // Plugin_sp is a std::shared_ptr
         if (plugin_sp->name == effect_name) {
             IWallpaperEffectABI* raw_ptr = plugin_sp->create_func();
             if (raw_ptr) {
-                // Магия: лямбда захватывает plugin_sp (увеличивая счетчик ссылок).
-                // dlclose() в деструкторе PluginHandle не вызовется, пока жив этот эффект!
+                // Magic: the lambda captures plugin_sp (incrementing the reference count).
+                // Dlclose() in the PluginHandle destructor will not be called as long as this effect is alive!
                 auto custom_deleter = [plugin_sp](IWallpaperEffectABI* eff) {
                     plugin_sp->destroy_func(eff);
                 };

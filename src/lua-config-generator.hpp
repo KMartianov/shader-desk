@@ -1,4 +1,4 @@
-// src/lua-config-generator.hpp
+// Src/lua-config-generator.hpp
 #pragma once
 
 #include "plugin-manager.hpp"
@@ -6,11 +6,11 @@
 class LuaConfigGenerator {
 public:
     /**
-     * @brief Запускает процесс генерации/обновления Lua конфигураций.
-     * Сканирует все плагины, извлекает их параметры и применяет
-     * паттерн "Гибридный конфиг" для файлов в ~/.config/interactive-wallpaper/plugins/
+     * @brief Starts the generation/update process for Lua configurations.
+     * Scans all plugins, extracts their parameters, and applies
+     * the "Hybrid Config" pattern for files in ~/.config/interactive-wallpaper/plugins/
      * 
-     * @param pm Инициализированный менеджер плагинов с загруженными .so
+     * @param pm Initialized plugin manager with loaded .so libraries
      */
     static void generate_configs(PluginManager& pm, const std::string& custom_dir = "");
 

@@ -9,15 +9,15 @@
 // DEVELOPER GUIDE: EXTENDING THIS PLUGIN
 // ==============================================================================
 // This auto-generated file is just a starting point! You are encouraged to modify 
-// it and add your own complex C++ logic.
+// It and add your own complex C++ logic.
 //
 // Why write C++ logic here instead of using Lua or GLSL?
 // 1. High-Performance Math: Simulating physics (e.g., Boids, particles, fluid dynamics) 
-//    or generating procedural 3D meshes (like fractals) is too slow for Lua.
+//    Or generating procedural 3D meshes (like fractals) is too slow for Lua.
 // 2. BlackBoard Integration: Use `core->get_blackboard()` to read zero-latency 
-//    data streams from background daemons (e.g., Audio FFT bands, raw mouse inputs).
+//    Data streams from background daemons (e.g., Audio FFT bands, raw mouse inputs).
 // 3. Advanced OpenGL: You are not limited to a fullscreen triangle! You can load 
-//    textures, create Framebuffer Objects (FBOs), or dispatch Compute Shaders here.
+//    Textures, create Framebuffer Objects (FBOs), or dispatch Compute Shaders here.
 // ==============================================================================
 
 GradientBgEffect::GradientBgEffect() = default;
@@ -36,13 +36,13 @@ const char* GradientBgEffect::get_name() const {
 // ------------------------------------------------------------------------------
 std::vector<EffectParameter> GradientBgEffect::get_parameters() const {
     return {
-        {"blend_power", "Сила смешивания цветов (1.0 - жестко, 3.0+ - жидко)", blend_power},
-        {"bg_color", "Базовый цвет фона (пустоты)", bg_color},
-        {"enable_stripes", "Включить топографические линии", enable_stripes},
-        {"stripes_density", "Плотность изолиний", stripes_density},
-        {"stripes_opacity", "Прозрачность изолиний", stripes_opacity},
-        {"dithering_amount", "Шум против бандинга (ступенек цвета)", dithering_amount},
-        {"point_count", "Количество активных точек (0-16)", active_points}
+        {"blend_power", "Color blend power (1.0 - hard, 3.0+ - liquid)", blend_power},
+        {"bg_color", "Base background color (void)", bg_color},
+        {"enable_stripes", "Enable topographic lines", enable_stripes},
+        {"stripes_density", "Contour line density", stripes_density},
+        {"stripes_opacity", "Contour line opacity", stripes_opacity},
+        {"dithering_amount", "Anti-banding noise (color stepping)", dithering_amount},
+        {"point_count", "Number of active points (0-16)", active_points}
     };
 }
 
@@ -85,9 +85,9 @@ bool GradientBgEffect::initialize(ICoreContext* core, uint32_t width, uint32_t h
     // [HINT] Bind your BlackBoard variables here! 
     // Example: p_audio_bands = core->get_blackboard()->bind_float_array("audio.bands", 64);
 
-    p_positions = core->get_blackboard()->bind_float_array("grad.positions", 32); // 16 точек * (x,y)
-    p_colors    = core->get_blackboard()->bind_float_array("grad.colors", 48);    // 16 точек * (r,g,b)
-    p_radii     = core->get_blackboard()->bind_float_array("grad.radii", 16);     // 16 радиусов
+    p_positions = core->get_blackboard()->bind_float_array("grad.positions", 32); // 16 points * (x,y)
+    p_colors    = core->get_blackboard()->bind_float_array("grad.colors", 48);    // 16 points * (r,g,b)
+    p_radii     = core->get_blackboard()->bind_float_array("grad.radii", 16);     // 16 radii
 
     // 1. Load shaders from the plugin bundle directory.
     std::string vert_src = shader_utils::load_shader_source(core, get_name(), "gradient_vert.glsl");
@@ -123,7 +123,7 @@ bool GradientBgEffect::initialize(ICoreContext* core, uint32_t width, uint32_t h
 
     // 3. Create an empty VAO.
     // We use the "Zero-VBO Fullscreen Triangle" technique. The vertex shader 
-    // calculates vertex positions on the fly using gl_VertexID, so no VBO is needed.
+    // Calculates vertex positions on the fly using gl_VertexID, so no VBO is needed.
     // [HINT] If you need custom 3D geometry, create your VBOs/EBOs here instead!
     glGenVertexArrays(1, &vao);
     
@@ -138,7 +138,7 @@ bool GradientBgEffect::initialize(ICoreContext* core, uint32_t width, uint32_t h
 // ------------------------------------------------------------------------------
 void GradientBgEffect::render(uint32_t width, uint32_t height, float dt) {
     // [HINT] Process your heavy CPU logic here (e.g., update particle positions) 
-    // before sending data to the GPU.
+    // Before sending data to the GPU.
     
     glUseProgram(program);
     
@@ -170,7 +170,7 @@ void GradientBgEffect::render(uint32_t width, uint32_t height, float dt) {
     // DEFENSIVE PROGRAMMING
     // In a modular pipeline, we cannot trust the previous plugin to clean up its 
     // OpenGL state. We unbind the global VBO to ensure our "Zero-VBO" fullscreen 
-    // triangle technique doesn't crash the driver (GL_INVALID_OPERATION).
+    // Triangle technique doesn't crash the driver (GL_INVALID_OPERATION).
     // ==============================================================================
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 

@@ -32,7 +32,7 @@ end
 local function is_equal(a, b)
     if type(a) ~= type(b) then return false end
     if type(a) == "table" then
-        if #a ~= #b then return false end
+        if #A ~= #B then return false end
         for k, v in pairs(a) do
             if not is_equal(v, b[k]) then return false end
         end
@@ -83,7 +83,7 @@ function ctl.cycle(param, values_list, output, tag)
             local next_idx = 1
             for i, val in ipairs(values_list) do
                 if is_equal(val, current) then
-                    next_idx = (i % #values_list) + 1
+                    next_idx = (i % #Values_list) + 1
                     break
                 end
             end
@@ -204,21 +204,23 @@ function ctl.flash(flash_color, duration_sec, output, tag)
         if target_tag then
             local layer = core.get_layer(name, target_tag)
             
-            -- Fallback sequentially depending on the plugin type
             local target_param = "wireframe_color"
             local orig_color = layer:get(target_param)
             if orig_color == nil then
                 target_param = "curve_color"
                 orig_color = layer:get(target_param)
             end
-            if orig_color == nil then return end -- Plugin doesn't support coloring
+            if orig_color == nil then return end 
             
             layer:set(target_param, flash_color)
             
-            -- Use the Wayland core's epoll timer to revert the color
-            core.set_interval(math.floor(duration_sec * 1000), function()
+            -- Correct, deterministic timer stop with ID closure
+            local timer_id
+            timer_id = core.set_interval(math.floor(duration_sec * 1000), function()
                 layer:set(target_param, orig_color)
-                return nil -- Returning nil stops the timer
+                if timer_id then
+                    core.clear_interval(timer_id) -- Safely release the descriptor in the Linux kernel
+                end
             end)
         end
     end)
@@ -237,7 +239,7 @@ function ctl.status()
         result = result .. string.format('"%s": {"primary_layer": "%s"}, ', name, primary_tag)
     end
     -- Remove the trailing comma and space
-    if #result > 1 then
+    if #Result > 1 then
         result = result:sub(1, -3)
     end
     result = result .. "}\n"

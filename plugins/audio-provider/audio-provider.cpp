@@ -33,11 +33,11 @@ public:
 
     std::vector<EffectParameter> get_parameters() const override {
         return {
-            {"smoothing", "Сглаживание спада/инерция (0.0 - 0.99)", smoothing},
-            {"volume_multiplier", "Множитель общей громкости", volume_multiplier},
-            {"bass_multiplier", "Множитель баса", bass_multiplier},
-            {"mid_multiplier", "Множитель средних частот", mid_multiplier},
-            {"treble_multiplier", "Множитель высоких частот", treble_multiplier}
+            {"smoothing", "Decay smoothing/inertia (0.0 - 0.99)", smoothing},
+            {"volume_multiplier", "Overall volume multiplier", volume_multiplier},
+            {"bass_multiplier", "Bass multiplier", bass_multiplier},
+            {"mid_multiplier", "Mid frequencies multiplier", mid_multiplier},
+            {"treble_multiplier", "Treble multiplier", treble_multiplier}
         };
     }
 
@@ -75,7 +75,7 @@ public:
         std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-audio");
         strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
         
-        unlink(socket_path.c_str()); // ВАЖНО: Удаляем старый файл!
+        unlink(socket_path.c_str()); // IMPORTANT: Delete the old file!
 
         if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
             std::cerr << "[AudioProvider] Failed to bind socket at " << socket_path << std::endl;

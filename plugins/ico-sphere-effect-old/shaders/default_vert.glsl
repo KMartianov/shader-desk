@@ -1,47 +1,47 @@
-// Указываем версию GLSL ES (OpenGL for Embedded Systems)
+// Specify the GLSL ES version (OpenGL for Embedded Systems)
 #version 300 es
 
-// --- Входные атрибуты вершины ---
+// --- Vertex input attributes ---
 layout (location = 0) in vec3 aPos;
-layout (location = 1) in float aPhase; // Оставлено для совместимости с C++
-layout (location = 2) in vec3 aNormal; // Оставлено для совместимости с C++
+layout (location = 1) in float aPhase; // Left for C++ compatibility
+layout (location = 2) in vec3 aNormal; // Left for C++ compatibility
 
-// --- Стандартные матрицы ---
+// --- Standard matrices ---
 uniform mat4 model;      
 uniform mat4 view;       
 uniform mat4 projection; 
 
-// Переменная времени для анимации
+// Time variable for animation
 uniform float time;
 
-// --- Параметры эффектов из файла конфигурации (Не удалять комментарии!) ---
-// @param oscill_amp | float | 0.0 | Амплитуда базовых колебаний.
+// --- Effect parameters from the configuration file (Do not delete comments!) ---
+// @param oscill_amp | float | 0.0 | Base oscillation amplitude.
 uniform float oscill_amp;
-// @param oscill_freq | float | 1.0 | Частота базовых колебаний.
+// @param oscill_freq | float | 1.0 | Base oscillation frequency.
 uniform float oscill_freq;
-// @param wave_amp | float | 0.0 | Амплитуда волнового эффекта.
+// @param wave_amp | float | 0.0 | Wave effect amplitude.
 uniform float wave_amp;
-// @param wave_freq | float | 10.0 | Частота (плотность) волн на поверхности.
+// @param wave_freq | float | 10.0 | Frequency (density) of surface waves.
 uniform float wave_freq;
-// @param twist_amp | float | 0.0 | Сила эффекта скручивания.
+// @param twist_amp | float | 0.0 | Twisting effect strength.
 uniform float twist_amp;
-// @param pulse_amp | float | 0.0 | Амплитуда базовой пульсации.
+// @param pulse_amp | float | 0.0 | Base pulsation amplitude.
 uniform float pulse_amp;
-// @param noise_amp | float | 0.0 | Амплитуда шумовой деформации.
+// @param noise_amp | float | 0.0 | Noise deformation amplitude.
 uniform float noise_amp;
-// @param sphere_scale | float | 1.0 | Общий масштаб сферы.
+// @param sphere_scale | float | 1.0 | Overall sphere scale.
 uniform float sphere_scale;
 
-// --- Uniform-переменные для реакции на аудио ---
+// --- Uniform variables for audio reaction ---
 uniform float audio_bass;
 uniform float audio_mid;
 uniform float audio_treble;
-uniform float audio_bands[64]; // Массив всех 64 частот
+uniform float audio_bands[64]; // Array of all 64 frequencies
 
 out vec3 FragPos; 
 
 
-// --- 3D Simplex Noise (Отличный органический шум) ---
+// --- 3D Simplex Noise (Great organic noise) ---
 vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
 vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
 float snoise(vec3 v){ 
@@ -89,43 +89,43 @@ float snoise(vec3 v){
 
 void main()
 {
-    // Масштабируем сферу, но для вычислений берем идеальную сферу (нормализованный вектор)
+    // Scale the sphere, but use a perfect sphere (normalized vector) for calculations
     vec3 scaledPos = aPos * sphere_scale;
     vec3 normPos = normalize(aPos); 
     
-    // --- 1. ОРГАНИЧЕСКИЙ ЭКВАЛАЙЗЕР ---
-    // Модуль Y: 0.0 на экваторе, 1.0 на полюсах
+    // --- 1. ORGANIC EQUALIZER ---
+    // Y Modulus: 0.0 at the equator, 1.0 at the poles
     float mappedY = abs(normPos.y); 
     
-    // Искривляем само чтение частот! Это разбивает строгие кольца на красивые "островки"
+    // Warp the frequency reading itself! This breaks strict rings into beautiful "islands"
     float bandWarp = snoise(normPos * 3.0 - time * 0.2) * 0.15;
     
-    // Вычисляем индекс от 0 до 63
+    // Calculate index from 0 to 63
     int bandIndex = int(clamp((mappedY + bandWarp) * 63.0, 0.0, 63.0));
     
-    // Достаем частоту. pow() делает "шипы" визуально острее и ритмичнее
+    // Extract the frequency. pow() makes the "spikes" visually sharper and more rhythmic
     float local_freq = audio_bands[bandIndex];
     float spike_disp = pow(local_freq, 1.5) * 0.8;
 
-    // --- 2. БАЗОВАЯ ОРГАНИКА (ШУМ) ---
-    // Глубокий, плавный бас изгибает саму форму сферы (как капля воды)
+    // --- 2. BASE ORGANICS (NOISE) ---
+    // Deep, smooth bass warps the sphere's shape itself (like a water drop)
     float bass_warp = snoise(normPos * 1.2 + time * 0.8) * (audio_bass * 0.4);
     
-    // Легкое дыхание в тишине, чтобы сфера казалась живой
+    // Light breathing in silence to make the sphere feel alive
     float idle_morph = snoise(normPos * 2.5 - time * 0.1) * 0.08;
 
-    // --- 3. НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ ИЗ LUA ---
-    // Используем normPos.y, чтобы рисунок волн не ломался при изменении sphere_scale
+    // --- 3. USER SETTINGS FROM LUA ---
+    // Use normPos.y so the wave pattern doesn't break when sphere_scale changes
     float config_wave = sin(normPos.y * wave_freq + time * 2.0) * wave_amp;
     float config_noise = snoise(normPos * 4.0 + time) * noise_amp;
     float config_twist = sin(normPos.y * 8.0 + time * 1.5) * twist_amp;
     float config_pulse = sin(time * oscill_freq) * pulse_amp;
 
-    // --- СУММИРУЕМ ВСЕ ДЕФОРМАЦИИ ---
+    // --- SUM ALL DEFORMATIONS ---
     float total_disp = idle_morph + bass_warp + spike_disp + 
                        config_wave + config_noise + config_twist + config_pulse;
     
-    // Сдвигаем вершину от центра (normPos совпадает с нормалью для сферы в 0,0,0)
+    // Displace the vertex from the center (normPos equals the normal for a sphere at 0,0,0)
     vec3 displacedPos = scaledPos + normPos * total_disp;
     
     FragPos = vec3(model * vec4(displacedPos, 1.0));

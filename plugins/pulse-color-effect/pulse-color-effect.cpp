@@ -15,10 +15,10 @@ const char* PulseColorEffectEffect::get_name() const {
 
 std::vector<EffectParameter> PulseColorEffectEffect::get_parameters() const {
     return {
-        {"base_color", "Базовый цвет эффекта (R,G,B)", base_color},
-        {"pulse_speed", "Скорость пульсации", pulse_speed},
-        {"pulse_strength", "Амплитуда цветовой пульсации", pulse_strength},
-        {"color_shift_mode", "Включить цветовой сдвиг с фазой", color_shift_mode},
+        {"base_color", "Base effect color (R,G,B)", base_color},
+        {"pulse_speed", "Pulsation speed", pulse_speed},
+        {"pulse_strength", "Color pulsation amplitude", pulse_strength},
+        {"color_shift_mode", "Enable phase color shift", color_shift_mode},
     };
 }
 

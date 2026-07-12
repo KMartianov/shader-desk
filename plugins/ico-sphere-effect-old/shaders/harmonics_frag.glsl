@@ -1,18 +1,18 @@
 #version 300 es
-// Обязательно высокая точность
+// High precision is mandatory
 precision highp float; 
 
 in vec3 FragPos;
 
-// --- Параметры из C++ / Lua (Не удалять комментарии!) ---
-// @param is_wireframe_pass | bool | false | Флаг отрисовки сетки.
+// --- Parameters from C++ / Lua (Do not delete comments!) ---
+// @param is_wireframe_pass | bool | false | Wireframe render flag.
 uniform bool is_wireframe_pass;
-// @param wireframe_color | vec3 | 0.5, 0.5, 0.7 | Цвет проволочной сетки.
+// @param wireframe_color | vec3 | 0.5, 0.5, 0.7 | Wireframe color.
 uniform vec3 wireframe_color;
-// @param object_color | vec3 | 0.08, 0.12, 0.20 | Цвет сплошной поверхности сферы.
+// @param object_color | vec3 | 0.08, 0.12, 0.20 | Solid sphere surface color.
 uniform vec3 object_color;
 
-// Униформы для освещения
+// Uniforms for lighting
 uniform vec3 lightColor;
 uniform vec3 lightPos;
 uniform vec3 viewPos;
@@ -21,17 +21,17 @@ out vec4 FragColor;
 
 void main()
 {
-    // Вычисляем расстояние от камеры (viewPos) до текущего фрагмента
+    // Calculate the distance from the camera (viewPos) to the current fragment
     float distance = length(viewPos - FragPos);
 
     // ========================================================================
-    // ГЛАВНЫЙ РЕЖИМ: Проволочная сетка (Wireframe)
+    // MAIN MODE: Wireframe
     // ========================================================================
     if (is_wireframe_pass) {
-        // Эффект затухания в глубину (Depth Fading).
-        // 2.0 - начало затухания (передняя часть сферы)
-        // 2.5 - дальность, на которой сетка темнеет сильнее всего
-        // 0.2 - минимальная яркость (чтобы задние линии не исчезали полностью)
+        // Depth Fading effect.
+        // 2.0 - start of fading (front part of the sphere)
+        // 2.5 - distance at which the wireframe darkens the most
+        // 0.2 - minimum brightness (so back lines don't disappear completely)
         float fogFactor = clamp(1.0 - (distance - 2.0) / 2.5, 0.2, 1.0);
         
         vec3 finalWireColor = wireframe_color * fogFactor;
@@ -40,11 +40,11 @@ void main()
     }
 
     // ========================================================================
-    // РЕЗЕРВНЫЙ РЕЖИМ: Сплошная сфера (Solid Mode / Low-Poly)
-    // (Активируется, если в Lua поставить p.wireframe_mode = false)
+    // FALLBACK MODE: Solid Sphere (Solid Mode / Low-Poly)
+    // (Activated if p.wireframe_mode = false is set in Lua)
     // ========================================================================
     
-    // Аппаратное вычисление нормалей граней (делает геометрию Low-Poly граненой)
+    // Hardware face normal calculation (makes the geometry faceted/Low-Poly)
     vec3 dx = dFdx(FragPos);
     vec3 dy = dFdy(FragPos);
     vec3 normal = normalize(cross(dx, dy));
@@ -52,16 +52,16 @@ void main()
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 lightDir = normalize(lightPos - FragPos);
 
-    // Освещение (Ambient + Diffuse)
+    // Lighting (Ambient + Diffuse)
     vec3 ambient = 0.2 * lightColor;
     float diff = max(dot(normal, lightDir), 0.0);
     vec3 diffuse = diff * lightColor;
 
-    // Эффект Френеля (Светящиеся грани под углом, используем цвет сетки для стилистики)
+    // Fresnel effect (Glowing edges at an angle, using the wireframe color for styling)
     float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
     vec3 rimLight = fresnel * wireframe_color * 0.8; 
 
-    // Сборка цвета
+    // Color assembly
     vec3 result = (ambient + diffuse) * object_color + rimLight;
     
     FragColor = vec4(result, 1.0);

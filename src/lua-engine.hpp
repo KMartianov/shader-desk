@@ -1,4 +1,4 @@
-// src/lua-engine.hpp (Заменить секцию public и добавить структуру OutputConfig)
+// Src/lua-engine.hpp (Replace the public section and add the OutputConfig struct)
 
 #pragma once
 #include <sol/sol.hpp>
@@ -15,19 +15,19 @@
 class IDataProviderABI;
 class ICoreContextABI;
 
-// Конфигурация отдельного слоя 
+// Individual layer configuration 
 struct LayerConfig {
     std::string effect_name;
     std::string tag;
     sol::table custom_settings;
-    bool is_postprocess = false; // Флаг пост-обработки
+    bool is_postprocess = false; // Post-processing flag
 };
 
-// Структура, описывающая конфигурацию для конкретного монитора
+// Structure describing the configuration for a specific monitor
 struct OutputConfig {
     std::vector<LayerConfig> layers;
     float fps_limit = 0.0f;
-    float fbo_scale = 1.0f; // Оптимизация: рендер в пониженном разрешении
+    float fbo_scale = 1.0f; // Optimization: render at a lower resolution
 };
 
 
@@ -47,12 +47,12 @@ public:
     std::string get_active_effect() const;
     bool is_interactive() const;
 
-    // [NEW] Запрос конфигурации для конкретного физического монитора
+    // Request configuration for a specific physical monitor
     OutputConfig get_output_config(const std::string& output_name, const std::string& output_desc);
     
 
 
-    // [UPDATED] Применение настроек с учетом переопределений для монитора
+    // Apply settings considering monitor-specific overrides
     void apply_effect_settings(IWallpaperEffectABI* effect, 
                                const std::string& effect_name, 
                                const sol::table& output_specific_settings = sol::nil);

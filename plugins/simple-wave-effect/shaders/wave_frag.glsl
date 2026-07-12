@@ -1,40 +1,40 @@
-// plugins/simple-wave-effect/shaders/wave_frag.glsl
+// Plugins/simple-wave-effect/shaders/wave_frag.glsl
 #version 300 es
 precision highp float;
 
-// Входные данные от вершинного шейдера (координаты текселя)
+// Input data from the vertex shader (texel coordinates)
 in vec2 v_uv;
 
-// Выходной цвет
+// Output color
 out vec4 FragColor;
 
-// Стандартные uniform-переменные, всегда доступны
+// Standard uniform variables, always available
 uniform float time;
 uniform vec2 resolution;
 
-// Пользовательские параметры, которые будут управляться из конфига.
-// Формат: @param <имя_в_коде> | <тип> | <значение_по_умолчанию> | <описание>
+// Custom parameters that will be controlled from the config.
+// Format: @param <code_name> | <type> | <default_value> | <description>
 
-// @param wave_color | vec3 | 0.1, 0.5, 1.0 | Основной цвет волн (R,G,B)
+// @param wave_color | vec3 | 0.1, 0.5, 1.0 | Main wave color (R,G,B)
 uniform vec3 wave_color;
 
-// @param speed | float | 2.5 | Скорость движения волн
+// @param speed | float | 2.5 | Wave movement speed
 uniform float speed;
 
-// @param frequency | float | 20.0 | Частота (количество) волн на экране
+// @param frequency | float | 20.0 | Wave frequency (count) on the screen
 uniform float frequency;
 
-// @param is_inverted | bool | false | Инвертировать ли цвета
+// @param is_inverted | bool | false | Whether to invert colors
 uniform bool is_inverted;
 
 void main() {
-    // Нормализуем координаты, чтобы центр был (0,0)
+    // Normalize coordinates so the center is (0,0)
     vec2 uv = v_uv - 0.5;
     
-    // Простое уравнение волны, зависящее от времени и расстояния от центра
+    // Simple wave equation depending on time and distance from the center
     float wave = sin(length(uv) * frequency - time * speed);
     
-    // Сделаем волны более плавными
+    // Make the waves smoother
     wave = smoothstep(0.0, 1.0, wave);
     
     vec3 final_color = wave_color * wave;

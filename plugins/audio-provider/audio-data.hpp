@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-#pragma pack(push, 1) // Защита ABI для конкретно этого плагина
+#pragma pack(push, 1) // ABI protection specifically for this plugin
 struct AudioDatagram {
     
     uint32_t magic = 0x41554431; 
@@ -13,5 +13,5 @@ struct AudioDatagram {
 };
 #pragma pack(pop)
 
-// Гарантия, что демон и провайдер скомпилируются одинаково
+// Guarantee that the daemon and provider compile identically
 static_assert(sizeof(AudioDatagram) == 276, "AudioDatagram alignment failed");

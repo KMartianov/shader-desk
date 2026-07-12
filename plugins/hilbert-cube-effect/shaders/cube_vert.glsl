@@ -1,15 +1,15 @@
 #version 300 es
 
-// (location = 0): Позиция вершины в локальных координатах.
+// (location = 0): Vertex position in local coordinates.
 layout (location = 0) in vec3 aPos;
 
-// Uniform-переменные: матрицы для преобразования координат.
-uniform mat4 model;      // Матрица модели (поворот куба)
-uniform mat4 view;       // Матрица вида (камера)
-uniform mat4 projection; // Матрица проекции
+// Uniform variables: matrices for coordinate transformation.
+uniform mat4 model;      // Model matrix (cube rotation)
+uniform mat4 view;       // View matrix (camera)
+uniform mat4 projection; // Projection matrix
 
 void main()
 {
-    // Вычисляем финальную позицию вершины на экране.
+    // Calculate the final vertex position on the screen.
     gl_Position = projection * view * model * vec4(aPos, 1.0);
 }

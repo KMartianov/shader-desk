@@ -13,7 +13,7 @@ class IcoSphereEffect : public WallpaperEffect {
 public:
     IcoSphereEffect();
 
-    // --- Реализация интерфейса WallpaperEffect ---
+    // --- WallpaperEffect Interface Implementation ---
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height, float dt) override;
     void cleanup() override;
@@ -71,6 +71,8 @@ protected:
     // --- BlackBoard Pointers (Data from Providers) ---
     float* p_accum_x = nullptr;
     float* p_accum_y = nullptr;
+    bool first_frame_mouse = true;
+
     float last_mouse_x = 0.0f;
     float last_mouse_y = 0.0f;
 

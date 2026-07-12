@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
-// Динамическое хранилище параметров
+// Dynamic parameter storage
 struct DynamicParam {
     std::string name;
     std::string description;
-    EffectParameterValue value; // std::variant из SDK
+    EffectParameterValue value; // Std::variant from SDK
     GLuint uniform_location = 0;
 };
 
@@ -20,11 +20,11 @@ public:
 
     const char* get_name() const override { return "ShaderToy Sandbox"; }
     
-    // --- Интерфейс параметров ---
+    // --- Parameters Interface ---
     std::vector<EffectParameter> get_parameters() const override;
     void set_parameter(const std::string& name, const EffectParameterValue& value) override;
 
-    // --- Жизненный цикл ---
+    // --- Lifecycle ---
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height, float dt) override;
     void cleanup() override;
@@ -50,7 +50,7 @@ private:
     std::string target_shader_file = "st_demo_frag.glsl";
     std::vector<DynamicParam> dynamic_params;
 
-    // Утилиты
+    // Utilities
     bool parse_and_compile(ICoreContext* core);
     void extract_parameters_from_source(const std::string& source);
     EffectParameterValue parse_default_value(const std::string& type_str, const std::string& val_str);

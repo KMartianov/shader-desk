@@ -1,19 +1,19 @@
-# plugins/CMakeLists.txt
+# Plugins/CMakeLists.txt
 cmake_minimum_required(VERSION 3.14)
 
 if(POLICY CMP0177)
     cmake_policy(SET CMP0177 NEW)
 endif()
 
-# Ищем все поддиректории в текущей папке
+# Find all subdirectories in the current folder
 file(GLOB PLUGIN_SUBDIRS LIST_DIRECTORIES true "${CMAKE_CURRENT_SOURCE_DIR}/*")
 
 message(STATUS "Discovering plugins...")
-# Определяем, собирает ли юзер плагины локально в своем воркспейсе
+# Determine if the user is building plugins locally in their workspace
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(IS_USER_WORKSPACE TRUE)
     project(ShaderDesk-UserPlugins LANGUAGES CXX)
-    find_package(ShaderDesk REQUIRED) # Ищем системный SDK
+    find_package(ShaderDesk REQUIRED) # Search for system SDK
 else()
     set(IS_USER_WORKSPACE FALSE)
 endif()
@@ -29,14 +29,14 @@ foreach(PLUGIN_DIR ${PLUGIN_SUBDIRS})
 
         add_subdirectory(${PLUGIN_NAME})
         
-        # ЛОГИКА БАНДЛОВ
+        # BUNDLE LOGIC
         if(IS_USER_WORKSPACE)
-            # В воркспейсе кладем .so прямо к исходникам и шейдерам
+            # In the workspace, place the .so directly with sources and shaders
             set_target_properties(${PLUGIN_NAME} PROPERTIES 
                 LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${PLUGIN_NAME}"
             )
         else()
-            # При сборке ядра - системная установка (FHS)
+            # When building the core - system installation (FHS)
             install(TARGETS ${PLUGIN_NAME}
                 LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/shader-desk/plugins/${PLUGIN_NAME}"
             )

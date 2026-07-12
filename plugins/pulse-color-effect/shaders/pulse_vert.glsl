@@ -1,4 +1,4 @@
-// plugins/pulse-color-effect/shaders/pulse_vert.glsl
+// Plugins/pulse-color-effect/shaders/pulse_vert.glsl
 #version 300 es
 precision mediump float;
 

@@ -1,4 +1,4 @@
-// src/ico-sphere-effect.cpp
+// Src/ico-sphere-effect.cpp
 // This file combines effect logic and plugin code to compile into a single .so file.
 #define GLM_ENABLE_EXPERIMENTAL
 
@@ -21,8 +21,8 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-#include <cstddef> // Для offsetof
-// Подключаем stb_image для загрузки MatCap текстур (хром, золото)
+#include <cstddef> // For offsetof
+// Include stb_image to load MatCap textures (chrome, gold)
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -82,7 +82,7 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
     vertices.clear();
     indices.clear();
     
-    // 1. Генерируем базовый икосаэдр (12 вершин, 20 треугольников)
+    // 1. Generate a base icosahedron (12 vertices, 20 triangles)
     const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
     std::vector<glm::vec3> base_pos = {
         glm::normalize(glm::vec3(-1,  t,  0)), glm::normalize(glm::vec3( 1,  t,  0)),
@@ -100,7 +100,7 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
         4, 9, 5,    2, 4, 11,   6, 2, 10,   8, 6, 7,    9, 8, 1
     };
 
-    // 2. Сабдивидение (Подразбиение треугольников)
+    // 2. Subdivision (Triangle subdivision)
     for (int i = 0; i < subdivisions_level; i++) {
         std::vector<unsigned int> new_indices;
         std::map<std::pair<unsigned int, unsigned int>, unsigned int> midpoint_cache;
@@ -115,13 +115,13 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
         base_indices = new_indices;
     }
 
-    // 3. Генерация случайных фаз для процедурного шума
+    // 3. Generate random phases for procedural noise
     std::mt19937 gen(0);
     std::uniform_real_distribution<float> dis(0.0f, 2.0f * 3.1415926535f);
     std::vector<float> base_phases(base_pos.size());
     for (size_t i = 0; i < base_pos.size(); i++) base_phases[i] = dis(gen);
 
-    // 4. Расчет нормалей
+    // 4. Normal calculation
     std::vector<glm::vec3> base_normals(base_pos.size(), glm::vec3(0.0f));
     for (size_t i = 0; i < base_indices.size(); i += 3) {
         glm::vec3 v1 = base_pos[base_indices[i]], v2 = base_pos[base_indices[i+1]], v3 = base_pos[base_indices[i+2]];
@@ -131,10 +131,10 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
     for (auto& n : base_normals) n = glm::normalize(n);
 
     // ========================================================================
-    // 5. КРИТИЧЕСКИЙ ШАГ: Разворачивание индексов под Барицентрическую сетку.
-    // Чтобы каждый угол треугольника знал, что он (1,0,0), (0,1,0) или (0,0,1),
-    // мы дублируем вершины для каждого треугольника (Unindexed Mesh).
-    // Это полностью убирает Z-fighting при отрисовке сетки поверх полигонов!
+    // 5. CRITICAL STEP: Unrolling indices for the Barycentric wireframe.
+    // So that each triangle corner knows if it is (1,0,0), (0,1,0), or (0,0,1),
+    // We duplicate vertices for each triangle (Unindexed Mesh).
+    // This completely eliminates Z-fighting when drawing wireframes over polygons!
     // ========================================================================
     vertices.reserve(base_indices.size());
     indices.reserve(base_indices.size());
@@ -152,10 +152,10 @@ void IcoSphereEffect::generate_icosphere(int subdivisions_level) {
         v.position = base_pos[orig_idx];
         v.phase = base_phases[orig_idx];
         v.normal = base_normals[orig_idx];
-        v.barycentric = bary_coords[i % 3]; // Назначаем углы треугольника
+        v.barycentric = bary_coords[i % 3]; // Assign triangle corners
 
         vertices.push_back(v);
-        indices.push_back(static_cast<unsigned int>(i)); // Линейный индекс
+        indices.push_back(static_cast<unsigned int>(i)); // Linear index
     }
 }
 
@@ -172,7 +172,7 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     m_core = core;
     if (program != 0) return true;
 
-    // --- 1. ПРИВЯЗКА ПАМЯТИ ИЗ BLACKBOARD ---
+    // --- 1. BIND MEMORY FROM BLACKBOARD ---
     p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
     p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
     p_audio_bass = core->get_blackboard()->bind_float("audio.bass");
@@ -180,35 +180,35 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     p_audio_treble = core->get_blackboard()->bind_float("audio.treble");
     p_audio_bands = core->get_blackboard()->bind_float_array("audio.bands", 64);
 
-    // --- 2. ЗАГРУЗКА ШЕЙДЕРОВ ---
+    // --- 2. LOAD SHADERS ---
     if (!reload_shader_program()) {
         return false;
     }
 
-    // --- 3. ГЕНЕРАЦИЯ ГЕОМЕТРИИ (Уже с барицентрическими координатами!) ---
+    // --- 3. GEOMETRY GENERATION (Already with barycentric coordinates!) ---
     generate_icosphere(subdivisions);
     
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
     glGenBuffers(1, &ebo);
-    // ВАЖНО: line_ebo больше нет, так как сетка рисуется фрагментным шейдером через ebo!
+    // IMPORTANT: line_ebo is gone, since the wireframe is drawn by the fragment shader via ebo!
 
     update_buffers();
     return true;
 }
 
 void IcoSphereEffect::cleanup() {
-    // 1. Удаляем шейдерные программы (включая шейдеры Bloom пост-процессинга)
+    // 1. Delete shader programs (including Bloom post-processing shaders)
     if (program) glDeleteProgram(program);
     if (bloom_blur_program) glDeleteProgram(bloom_blur_program);
     if (bloom_final_program) glDeleteProgram(bloom_final_program);
     
-    // 2. Удаляем буферы геометрии
+    // 2. Delete geometry buffers
     if (vao) glDeleteVertexArrays(1, &vao);
     if (vbo) glDeleteBuffers(1, &vbo);
     if (ebo) glDeleteBuffers(1, &ebo);
     
-    // 3. Удаляем MatCap текстуру и FBO ресурсы для Bloom
+    // 3. Delete MatCap texture and FBO resources for Bloom
     if (matcap_texture_id) glDeleteTextures(1, &matcap_texture_id);
     destroy_bloom_resources();
 
@@ -221,7 +221,7 @@ void IcoSphereEffect::cleanup() {
 void IcoSphereEffect::fetch_uniform_locations() {
     if (!program) return;
     
-    // Стандартные
+    // Standard
     u_model = glGetUniformLocation(program, "model");
     u_view = glGetUniformLocation(program, "view");
     u_projection = glGetUniformLocation(program, "projection");
@@ -230,12 +230,12 @@ void IcoSphereEffect::fetch_uniform_locations() {
     u_lightPos = glGetUniformLocation(program, "lightPos");
     u_viewPos = glGetUniformLocation(program, "viewPos");
 
-    // Цвета и сетка
+    // Colors and grid
     u_wireframe_color = glGetUniformLocation(program, "wireframe_color");
     u_object_color = glGetUniformLocation(program, "object_color");
     u_is_wireframe_pass = glGetUniformLocation(program, "is_wireframe_pass");
 
-    // Деформации
+    // Deformations
     u_oscill_amp = glGetUniformLocation(program, "oscill_amp");
     u_oscill_freq = glGetUniformLocation(program, "oscill_freq");
     u_wave_amp = glGetUniformLocation(program, "wave_amp");
@@ -245,14 +245,14 @@ void IcoSphereEffect::fetch_uniform_locations() {
     u_noise_amp = glGetUniformLocation(program, "noise_amp");
     u_sphere_scale = glGetUniformLocation(program, "sphere_scale");
 
-    // Аудио и ударные волны
+    // Audio and shockwaves
     u_audio_bass = glGetUniformLocation(program, "audio_bass");
     u_audio_mid = glGetUniformLocation(program, "audio_mid");
     u_audio_treble = glGetUniformLocation(program, "audio_treble");
     u_audio_bands = glGetUniformLocation(program, "audio_bands");
-    u_shockwaves = glGetUniformLocation(program, "u_shockwaves"); // НОВОЕ!
+    u_shockwaves = glGetUniformLocation(program, "u_shockwaves"); // NEW!
 
-    // Новые фичи (MatCap и Инстансинг)
+    // New features (MatCap and Instancing)
     u_use_matcap = glGetUniformLocation(program, "u_use_matcap");
     u_matcap_tex = glGetUniformLocation(program, "u_matcap_tex");
     u_use_instancing = glGetUniformLocation(program, "u_use_instancing");
@@ -264,7 +264,7 @@ void IcoSphereEffect::fetch_uniform_locations() {
 bool IcoSphereEffect::reload_shader_program() {
     std::cout << "[IcoSphere] Attempting to load shader theme: '" << active_shader << "'" << std::endl;
     
-    // ShaderUtils сам найдет нужную папку бандла по get_name()!
+    // ShaderUtils will find the correct bundle folder via get_name()!
     std::string vert_src = shader_utils::load_shader_source(m_core, get_name(), active_shader + "_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source(m_core, get_name(), active_shader + "_frag.glsl");
     
@@ -293,24 +293,24 @@ void IcoSphereEffect::update_buffers() {
 
     glBindVertexArray(vao);
     
-    // Загружаем упакованную структуру Vertex (Interleaved VBO)
-    // 40 байт на вершину = максимальная скорость чтения из кэша GPU
+    // Load the packed Vertex structure (Interleaved VBO)
+    // 40 bytes per vertex = maximum read speed from GPU cache
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
     
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
-    // layout 0: position (vec3)
+    // Layout 0: position (vec3)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, position));
     glEnableVertexAttribArray(0);
-    // layout 1: phase (float)
+    // Layout 1: phase (float)
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, phase));
     glEnableVertexAttribArray(1);
-    // layout 2: normal (vec3)
+    // Layout 2: normal (vec3)
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
     glEnableVertexAttribArray(2);
-    // layout 3: barycentric (vec3) -> НОВОЕ!
+    // Layout 3: barycentric (vec3)
     glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, barycentric));
     glEnableVertexAttribArray(3);
     
@@ -318,15 +318,15 @@ void IcoSphereEffect::update_buffers() {
 }
 
 void IcoSphereEffect::trigger_shockwave(const glm::vec3& hit_point) {
-    // Записываем координаты удара на сфере и сбрасываем таймер волны (w = 0.0f)
-    // Используется кольцевой буфер на 4 волны, чтобы они красиво пересекались
+    // Record the impact coordinates on the sphere and reset the wave timer (w = 0.0f)
+    // A ring buffer of 4 waves is used so they intersect beautifully
     shockwaves[current_shockwave_idx] = glm::vec4(glm::normalize(hit_point), 0.0f);
     current_shockwave_idx = (current_shockwave_idx + 1) % 4;
 }
 
 void IcoSphereEffect::update_shockwaves(float dt) {
     for (auto& wave : shockwaves) {
-        // Если волна активна (время меньше 5 секунд), увеличиваем таймер
+        // If the wave is active (time is less than 5 seconds), increment the timer
         if (wave.w < 5.0f) {
             wave.w += dt;
         }
@@ -339,7 +339,7 @@ void IcoSphereEffect::load_matcap_from_file(const std::string& path) {
     std::string full_path = std::string(getenv("HOME")) + "/.config/interactive-wallpaper/textures/" + path;
     
     int width, height, channels;
-    // Переворачиваем текстуру по вертикали для стандарта OpenGL
+    // Flip the texture vertically for the OpenGL standard
     stbi_set_flip_vertically_on_load(true);
     unsigned char* data = stbi_load(full_path.c_str(), &width, &height, &channels, 0);
 
@@ -369,8 +369,8 @@ void IcoSphereEffect::load_matcap_from_file(const std::string& path) {
 }
 
 bool IcoSphereEffect::init_bloom_resources(uint32_t width, uint32_t height) {
-    // ВАЖНО ДЛЯ WAYLAND: Разрешение Bloom-буфера уменьшается в 4 раза (X/4, Y/4).
-    // Это дает мягкое неоновое свечение и практически не тратит батарею ноутбука.
+    // IMPORTANT FOR WAYLAND: Bloom buffer resolution is quartered (X/4, Y/4).
+    // This gives a soft neon glow and consumes almost no laptop battery.
     uint32_t bloom_w = std::max(1u, width / 4);
     uint32_t bloom_h = std::max(1u, height / 4);
 
@@ -380,7 +380,7 @@ bool IcoSphereEffect::init_bloom_resources(uint32_t width, uint32_t height) {
     bloom.width = bloom_w;
     bloom.height = bloom_h;
 
-    // 1. Создаем основной FBO для сцены
+    // 1. Create main FBO for the scene
     glGenFramebuffers(1, &bloom.fbo_scene);
     glBindFramebuffer(GL_FRAMEBUFFER, bloom.fbo_scene);
 
@@ -396,7 +396,7 @@ bool IcoSphereEffect::init_bloom_resources(uint32_t width, uint32_t height) {
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, bloom.rbo_depth);
 
-    // 2. Создаем Ping-Pong FBO для размытия Гаусса (уменьшенное разрешение)
+    // 2. Create Ping-Pong FBO for Gaussian blur (reduced resolution)
     glGenFramebuffers(2, bloom.fbo_pingpong);
     glGenTextures(2, bloom.tex_pingpong);
     for (int i = 0; i < 2; i++) {
@@ -410,7 +410,7 @@ bool IcoSphereEffect::init_bloom_resources(uint32_t width, uint32_t height) {
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloom.tex_pingpong[i], 0);
     }
 
-    // 3. Компилируем встроенные инлайн-шейдеры для Bloom (чтобы не плодить файлы)
+    // 3. Compile built-in inline shaders for Bloom (to avoid creating too many files)
     const char* vs_src = "#version 300 es\n out vec2 UV;\n void main() { float x = float((gl_VertexID & 1) << 2); float y = float((gl_VertexID & 2) << 1); UV = vec2(x * 0.5, y * 0.5); gl_Position = vec4(x - 1.0, y - 1.0, 0.0, 1.0); }";
     const char* fs_blur_src = "#version 300 es\n precision mediump float;\n in vec2 UV;\n uniform sampler2D image;\n uniform bool horizontal;\n uniform vec2 tex_offset;\n out vec4 FragColor;\n void main() { float weight[5] = float[](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216); vec3 result = texture(image, UV).rgb * weight[0]; if(horizontal) { for(int i=1; i<5; ++i) { result += texture(image, UV + vec2(tex_offset.x * float(i), 0.0)).rgb * weight[i]; result += texture(image, UV - vec2(tex_offset.x * float(i), 0.0)).rgb * weight[i]; } } else { for(int i=1; i<5; ++i) { result += texture(image, UV + vec2(0.0, tex_offset.y * float(i))).rgb * weight[i]; result += texture(image, UV - vec2(0.0, tex_offset.y * float(i))).rgb * weight[i]; } } FragColor = vec4(result, 1.0); }";
     const char* fs_final_src = "#version 300 es\n precision mediump float;\n in vec2 UV;\n uniform sampler2D scene;\n uniform sampler2D bloom;\n uniform float intensity;\n out vec4 FragColor;\n void main() { vec3 hdr = texture(scene, UV).rgb; vec3 glow = texture(bloom, UV).rgb; FragColor = vec4(hdr + glow * intensity, 1.0); }";
@@ -438,7 +438,7 @@ void IcoSphereEffect::render_bloom_postprocess(uint32_t width, uint32_t height) 
     glUseProgram(bloom_blur_program);
     glUniform2f(glGetUniformLocation(bloom_blur_program, "tex_offset"), 1.0f / bloom.width, 1.0f / bloom.height);
 
-    // 10 итераций размытия Гаусса (5 горизонтальных + 5 вертикальных)
+    // 10 Gaussian blur iterations (5 horizontal + 5 vertical)
     bool horizontal = true, first_iteration = true;
     int amount = 10;
     glViewport(0, 0, bloom.width, bloom.height);
@@ -447,12 +447,12 @@ void IcoSphereEffect::render_bloom_postprocess(uint32_t width, uint32_t height) 
         glBindFramebuffer(GL_FRAMEBUFFER, bloom.fbo_pingpong[horizontal]);
         glUniform1i(glGetUniformLocation(bloom_blur_program, "horizontal"), horizontal);
         glBindTexture(GL_TEXTURE_2D, first_iteration ? bloom.tex_scene_color : bloom.tex_pingpong[!horizontal]);
-        glDrawArrays(GL_TRIANGLES, 0, 3); // Рисуем fullscreen треугольник без VBO
+        glDrawArrays(GL_TRIANGLES, 0, 3); // Draw a fullscreen triangle without VBO
         horizontal = !horizontal;
         if (first_iteration) first_iteration = false;
     }
 
-    // Финальная композиция (Сцена + Свечение Bloom) на экран Wayland
+    // Final composition (Scene + Bloom glow) to the Wayland screen
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, width, height);
     glUseProgram(bloom_final_program);
@@ -517,11 +517,23 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
 
     if (needs_regeneration) { generate_icosphere(subdivisions); update_buffers(); needs_regeneration = false; }
 
-    // Обработка мыши из BlackBoard
+    // Mouse processing from BlackBoard
     if (p_accum_x && p_accum_y) {
-        float dx = *p_accum_x - last_mouse_x;
-        float dy = *p_accum_y - last_mouse_y;
-        last_mouse_x = *p_accum_x; last_mouse_y = *p_accum_y;
+        if (first_frame_mouse) {
+            last_mouse_x = *p_accum_x;
+            last_mouse_y = *p_accum_y;
+            first_frame_mouse = false;
+        }
+
+        float current_x = *p_accum_x;
+        float current_y = *p_accum_y;
+        
+        float dx = current_x - last_mouse_x;
+        float dy = current_y - last_mouse_y;
+        
+        last_mouse_x = current_x;
+        last_mouse_y = current_y;
+        
         angular_velocity += glm::vec3(dy, dx, 0.0f);
     }
 
@@ -530,7 +542,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     update_shockwaves(0.016f);
     time += dt;
 
-    // --- 1. НАЧАЛО РЕНДЕРА (В FBO если включен Bloom, иначе на экран Wayland) ---
+    // --- 1. START RENDER (To FBO if Bloom is enabled, otherwise to Wayland screen) ---
     if (bloom_intensity > 0.0f) {
         init_bloom_resources(width, height);
         glBindFramebuffer(GL_FRAMEBUFFER, bloom.fbo_scene);
@@ -544,7 +556,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glUseProgram(program);
     
-    // Матрицы камеры
+    // Camera matrices
     glm::mat4 model = glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
@@ -554,7 +566,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     glUniformMatrix4fv(u_projection, 1, GL_FALSE, &projection[0][0]);
     glUniform1f(u_time, time);
     
-    // Передача визуальных параметров
+    // Pass visual parameters
     glUniform3fv(u_wireframe_color, 1, &wireframe_color[0]);
     glUniform3fv(u_object_color, 1, &object_color[0]);
     glUniform1i(u_is_wireframe_pass, wireframe_mode ? 1 : 0);
@@ -564,14 +576,14 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     glUniform1f(u_twist_amp, scaled_twist_amp);   glUniform1f(u_pulse_amp, scaled_pulse_amp);
     glUniform1f(u_noise_amp, scaled_noise_amp);
 
-    // Передача аудио и ударных волн
+    // Transmit audio and shockwaves
     glUniform1f(u_audio_bass, p_audio_bass ? *p_audio_bass : 0.0f);
     glUniform1f(u_audio_mid, p_audio_mid ? *p_audio_mid : 0.0f);
     glUniform1f(u_audio_treble, p_audio_treble ? *p_audio_treble : 0.0f);
     if (p_audio_bands) glUniform1fv(u_audio_bands, 64, p_audio_bands);
     if (u_shockwaves != -1) glUniform4fv(u_shockwaves, 4, &shockwaves[0][0]);
 
-    // Передача MatCap хрома
+    // Pass chrome MatCap
     glUniform1i(u_use_matcap, use_matcap ? 1 : 0);
     if (use_matcap && matcap_texture_id > 0) {
         glActiveTexture(GL_TEXTURE0);
@@ -579,10 +591,10 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
         glUniform1i(u_matcap_tex, 0);
     }
 
-    // --- 2. ОТРИСОВКА СФЕРЫ (Инстансинг или Обычный режим) ---
+    // --- 2. DRAW SPHERE (Instancing or Standard mode) ---
     glBindVertexArray(vao);
     if (use_instancing) {
-        // Отрисовка двух сфер за 1 Draw Call ("Ядро в клетке")
+        // Draw two spheres in 1 Draw Call ("Core in a cage")
         glUniform1i(u_use_instancing, 1);
         glUniform1f(u_inner_scale, inner_scale);
         glUniform1f(u_outer_scale, outer_scale);
@@ -593,7 +605,7 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     }
     glBindVertexArray(0);
 
-    // --- 3. ЗАВЕРШЕНИЕ (Запуск Bloom пост-процессинга) ---
+    // --- 3. FINISH (Launch Bloom post-processing) ---
     if (bloom_intensity > 0.0f) {
         render_bloom_postprocess(width, height);
     }
@@ -650,7 +662,7 @@ public:
             {"max_rotation_speed", "Maximum rotation speed", max_rotation_speed},
             {"min_rotation_speed", "Minimum rotation speed", min_rotation_speed},
             {"constant_rotation_speed", "Constant rotation speed", constant_rotation_speed},
-            // --- НОВЫЕ ПАРАМЕТРЫ ДЛЯ LUA ---
+            // --- NEW LUA PARAMETERS ---
             {"bloom_intensity", "Neon glow intensity (0.0 = off, 1.0+ = strong)", bloom_intensity},
             {"matcap_texture", "Filename of MatCap texture in ~/.config/.../textures/", matcap_filename},
             {"use_instancing", "Draw inner core and outer cage in 1 call", use_instancing},
@@ -682,7 +694,7 @@ public:
             else if (name == "max_rotation_speed") { set_max_rotation_speed(std::get<float>(value)); }
             else if (name == "min_rotation_speed") { set_min_rotation_speed(std::get<float>(value)); }
             else if (name == "constant_rotation_speed") { set_constant_rotation_speed(std::get<float>(value)); }
-            // --- ОБРАБОТКА НОВЫХ ПАРАМЕТРОВ ---
+            // --- NEW PARAMETER HANDLING ---
             else if (name == "bloom_intensity")  { set_bloom_intensity(std::get<float>(value)); }
             else if (name == "matcap_texture")   { load_matcap_from_file(std::get<std::string>(value)); }
             else if (name == "use_instancing")   { set_use_instancing(std::get<bool>(value)); }
@@ -706,7 +718,7 @@ extern "C" {
         return new IcoSphereEffectPlugin(); 
     }
     void destroy_effect(IWallpaperEffectABI* effect) {
-        // static_cast safely returns us to the class to call the destructor
+        // Static_cast safely returns us to the class to call the destructor
         delete static_cast<WallpaperEffect*>(effect);
     }
 }

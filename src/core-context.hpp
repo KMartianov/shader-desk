@@ -1,7 +1,7 @@
-// src/core-context.hpp
+// Src/core-context.hpp
 #pragma once
 
-#include "plugin-abi.hpp" // Подключаем интерфейсы ABI
+#include "plugin-abi.hpp" // Include ABI interfaces
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -9,7 +9,7 @@
 #include <cstring>
 #include <stdexcept>
 
-// BlackBoard - центральная шина данных (Zero-Latency Data Router)
+// BlackBoard - central data bus (Zero-Latency Data Router)
 // Inherits a safe ABI interface to hide STL internals from plugins.
 class BlackBoard : public IBlackBoardABI {
 public:

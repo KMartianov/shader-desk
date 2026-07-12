@@ -1,4 +1,4 @@
-// src/shader-utils.hpp
+// Src/shader-utils.hpp
 #ifndef SHADER_UTILS_HPP
 #define SHADER_UTILS_HPP
 
@@ -17,6 +17,6 @@ GLuint compile_shader(GLenum type, const std::string& source);
 // Creates a shader program from vertex and fragment shaders
 GLuint create_shader_program(const std::string& vertex_src, const std::string& fragment_src);
 
-} // namespace shader_utils
+} // Namespace shader_utils
 
 #endif // SHADER_UTILS_HPP

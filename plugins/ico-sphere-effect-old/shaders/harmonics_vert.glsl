@@ -1,37 +1,37 @@
 #version 300 es
-// Обязательно высокая точность для вычислений сферической тригонометрии
+// High precision is mandatory for spherical trigonometry calculations
 precision highp float;
 
-// --- Входные атрибуты вершины ---
+// --- Vertex input attributes ---
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in float aPhase; 
 layout (location = 2) in vec3 aNormal; 
 
-// --- Стандартные матрицы ---
+// --- Standard matrices ---
 uniform mat4 model;      
 uniform mat4 view;       
 uniform mat4 projection; 
 uniform float time;
 
-// --- Параметры эффектов из файла конфигурации (СТРОГО ОРИГИНАЛЬНЫЕ!) ---
-// @param oscill_amp | float | 0.0 | Амплитуда базовых колебаний.
+// --- Effect parameters from the configuration file (STRICTLY ORIGINAL!) ---
+// @param oscill_amp | float | 0.0 | Base oscillation amplitude.
 uniform float oscill_amp;
-// @param oscill_freq | float | 1.0 | Частота базовых колебаний.
+// @param oscill_freq | float | 1.0 | Base oscillation frequency.
 uniform float oscill_freq;
-// @param wave_amp | float | 0.0 | Амплитуда волнового эффекта.
+// @param wave_amp | float | 0.0 | Wave effect amplitude.
 uniform float wave_amp;
-// @param wave_freq | float | 10.0 | Частота (плотность) волн на поверхности.
+// @param wave_freq | float | 10.0 | Frequency (density) of surface waves.
 uniform float wave_freq;
-// @param twist_amp | float | 0.0 | Сила эффекта скручивания.
+// @param twist_amp | float | 0.0 | Twisting effect strength.
 uniform float twist_amp;
-// @param pulse_amp | float | 0.0 | Амплитуда базовой пульсации.
+// @param pulse_amp | float | 0.0 | Base pulsation amplitude.
 uniform float pulse_amp;
-// @param noise_amp | float | 0.0 | Амплитуда шумовой деформации.
+// @param noise_amp | float | 0.0 | Noise deformation amplitude.
 uniform float noise_amp;
-// @param sphere_scale | float | 1.0 | Общий масштаб сферы.
+// @param sphere_scale | float | 1.0 | Overall sphere scale.
 uniform float sphere_scale;
 
-// --- Uniform-переменные для реакции на аудио ---
+// --- Uniform variables for audio reaction ---
 uniform float audio_bass;
 uniform float audio_mid;
 uniform float audio_treble;
@@ -40,38 +40,38 @@ uniform float audio_bands[64];
 out vec3 FragPos; 
 
 // ============================================================================
-// 1. БИБЛИОТЕКА СФЕРИЧЕСКОЙ ФИЗИКИ
+// 1. SPHERICAL PHYSICS LIBRARY
 // ============================================================================
 
-// Преобразование декартовых координат в сферические
+// Convert Cartesian coordinates to spherical
 vec2 get_spherical(vec3 p) {
     float r = length(p);
-    // clamp обязателен, чтобы acos не выдал NaN из-за погрешностей float
-    float theta = acos(clamp(p.y / r, -1.0, 1.0)); // Широта: [0, PI]
-    float phi = atan(p.z, p.x);                    // Долгота: [-PI, PI]
+    // Clamp is mandatory so acos doesn't yield NaN due to float inaccuracies
+    float theta = acos(clamp(p.y / r, -1.0, 1.0)); // Latitude: [0, PI]
+    float phi = atan(p.z, p.x);                    // Longitude: [-PI, PI]
     return vec2(theta, phi);
 }
 
-// Динамическая сферическая гармоника l=3, m=2 (Тетраэдрическая симметрия)
+// Dynamic spherical harmonic l=3, m=2 (Tetrahedral symmetry)
 float sh_dynamic_3_2(vec2 sph, float phase_shift) {
     float sin_t = sin(sph.x);
-    // 15.0 - математический коэффициент для данной формы
+    // 15.0 - mathematical coefficient for this shape
     return 15.0 * sin_t * sin_t * cos(sph.x) * cos(2.0 * sph.y + phase_shift);
 }
 
-// Динамическая сферическая гармоника l=4, m=3 (Октаэдрическая симметрия)
+// Dynamic spherical harmonic l=4, m=3 (Octahedral symmetry)
 float sh_dynamic_4_3(vec2 sph, float phase_shift) {
     float sin_t = sin(sph.x);
     return 105.0 * sin_t * sin_t * sin_t * cos(sph.x) * cos(3.0 * sph.y + phase_shift);
 }
 
 // ============================================================================
-// 2. БЕГУЩИЕ ВОЛНЫ (Геодезическая рябь)
+// 2. TRAVELING WAVES (Geodesic ripples)
 // ============================================================================
-// Вычисляет затухающую синусоиду, бегущую по кратчайшей дуге от точки center
+// Calculates a decaying sine wave traveling along the shortest arc from the center point
 float geodesic_ripple(vec3 p, vec3 center, float freq, float speed) {
     float dist = acos(clamp(dot(p, center), -1.0, 1.0));
-    // exp(-dist * 1.5) - фактор естественного затухания волны
+    // Exp(-dist * 1.5) - natural wave decay factor
     return exp(-dist * 1.5) * sin(dist * freq - time * speed);
 }
 
@@ -128,8 +128,8 @@ void main()
     vec3 scaledPos = aPos * sphere_scale;
     vec3 normPos = normalize(aPos); 
     
-    // Внедряем параметр twist_amp в расчет сферических координат.
-    // Это создает закручивание полюсов вокруг Y в зависимости от настройки в Lua.
+    // Inject the twist_amp parameter into spherical coordinate calculations.
+    // This creates pole twisting around the Y axis depending on the Lua setting.
     vec3 twistedPos = normPos;
     float twist_angle = normPos.y * twist_amp * sin(time * 0.5);
     float cos_t = cos(twist_angle);
@@ -142,43 +142,43 @@ void main()
     float total_disp = 0.0;
 
     // ========================================================================
-    // 1. РЕЗОНАНС (Сферические гармоники)
+    // 1. RESONANCE (Spherical harmonics)
     // ========================================================================
-    // Используем oscill_freq для управления скоростью вращения форм, 
-    // а oscill_amp работает как множитель-усилитель от пользователя.
+    // Use oscill_freq to control the rotation speed of the shapes, 
+    // And oscill_amp acts as a multiplier/amplifier from the user.
     float rot_phase = time * max(oscill_freq, 0.5); 
     
     float bass_resonance = audio_bass * sh_dynamic_3_2(sph, rot_phase * 2.0);
     float mid_resonance  = audio_mid  * sh_dynamic_4_3(sph, -rot_phase * 3.0);
     
-    // Сплющивание полюсов для тяжелого баса (сферическая гармоника l=2, m=0)
+    // Pole flattening for heavy bass (spherical harmonic l=2, m=0)
     float pole_squash = audio_bass * 0.5 * (3.0 * twistedPos.y * twistedPos.y - 1.0);
     
-    // Базовый коэффициент 0.15 + пользовательский oscill_amp
+    // Base coefficient 0.15 + user oscill_amp
     float res_multiplier = 0.15 + oscill_amp;
     total_disp += (bass_resonance + mid_resonance - pole_squash) * res_multiplier;
 
     // ========================================================================
-    // 2. БЕГУЩИЕ ВОЛНЫ (Рябь от ударов)
+    // 2. TRAVELING WAVES (Impact ripples)
     // ========================================================================
-    // Используем wave_freq для плотности волн, wave_amp как усилитель
+    // Use wave_freq for wave density, wave_amp as an amplifier
     vec3 north_pole = vec3(0.0, 1.0, 0.0);
     vec3 south_pole = vec3(0.0, -1.0, 0.0);
     
-    // Базовая частота ряби = 15.0. Если wave_freq = 0, рябь стандартная.
+    // Base ripple frequency = 15.0. If wave_freq = 0, ripple is standard.
     float actual_wave_freq = 15.0 + wave_freq;
     
     float ripple_N = geodesic_ripple(twistedPos, north_pole, actual_wave_freq, 8.0);
     float ripple_S = geodesic_ripple(twistedPos, south_pole, actual_wave_freq, 8.0);
     
-    // Базовый коэффициент 0.2 + пользовательский wave_amp
+    // Base coefficient 0.2 + user wave_amp
     total_disp += audio_bass * (ripple_N + ripple_S) * (0.2 + wave_amp);
 
     // ========================================================================
-    // 3. ОРГАНИЧНЫЙ СПЕКТРАЛЬНЫЙ МАППИНГ (64 Частоты)
+    // 3. ORGANIC SPECTRAL MAPPING (64 Frequencies)
     // ========================================================================
-    // 3D-шум используется как координата, чтобы плавно и хаотично 
-    // "натянуть" 64 полосы эквалайзера на поверхность сферы.
+    // 3D noise is used as a coordinate to smoothly and chaotically 
+    // "stretch" 64 equalizer bands across the sphere's surface.
     float spatial_noise = snoise(twistedPos * 1.5 + time * 0.2); // [-1..1]
     float normalized_noise = (spatial_noise + 1.0) * 0.5;        // [0..1]
     
@@ -187,29 +187,29 @@ void main()
     int idx2 = min(idx1 + 1, 63);
     float blend = fract(exact_idx); 
     
-    // Точная энергия аудио-полосы для данной точки на сфере
+    // Exact audio band energy for this point on the sphere
     float band_energy = mix(audio_bands[idx1], audio_bands[idx2], blend);
     
-    // Создаем микро-рельеф. noise_amp из Lua усиливает влияние спектра.
+    // Create micro-relief. noise_amp from Lua amplifies the spectrum's influence.
     float micro_surface = sin(sph.x * 20.0) * cos(sph.y * 20.0);
     total_disp += band_energy * micro_surface * (0.4 + noise_amp);
 
     // ========================================================================
-    // 4. ТРЕБЛ И ПУЛЬС
+    // 4. TREBLE AND PULSE
     // ========================================================================
-    // Мелкий высокочастотный шум
+    // Fine high-frequency noise
     total_disp += audio_treble * snoise(twistedPos * 8.0 - time * 5.0) * 0.15;
     
-    // Пользовательский pulse_amp добавляет простое "дыхание" всей сферы
+    // Custom pulse_amp adds a simple "breathing" effect to the entire sphere
     total_disp += sin(time * max(oscill_freq, 1.0)) * pulse_amp;
 
     // ========================================================================
-    // ПРИМЕНЕНИЕ И ВЫВОД
+    // APPLICATION AND OUTPUT
     // ========================================================================
-    // Защита геометрии (чтобы вершины не пересекли центр сферы)
+    // Geometry protection (so vertices don't cross the sphere center)
     total_disp = clamp(total_disp, -0.7, 1.5);
 
-    // Выталкиваем вершину вдоль нормали
+    // Push the vertex along the normal
     vec3 displacedPos = scaledPos + normPos * total_disp;
     
     FragPos = vec3(model * vec4(displacedPos, 1.0));

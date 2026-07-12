@@ -1,10 +1,10 @@
-// plugins/simple-wave-effect/shaders/wave_vert.glsl
+// Plugins/simple-wave-effect/shaders/wave_vert.glsl
 #version 300 es
 
-// Выходные данные для фрагментного шейдера
+// Output data for the fragment shader
 out vec2 v_uv;
 
-// Массив вершин для полноэкранного треугольника
+// Vertex array for the fullscreen triangle
 const vec2 positions[3] = vec2[](
     vec2(-1.0, -1.0),
     vec2(3.0, -1.0),
@@ -12,13 +12,13 @@ const vec2 positions[3] = vec2[](
 );
 
 void main() {
-    // Выбираем вершину
+    // Select vertex
     vec2 pos = positions[gl_VertexID];
     
-    // Передаем UV-координаты во фрагментный шейдер
-    // (0,0) в нижнем левом углу, (1,1) в верхнем правом
+    // Pass UV coordinates to the fragment shader
+    // (0,0) in the bottom-left corner, (1,1) in the top-right
     v_uv = pos * 0.5 + 0.5;
     
-    // Устанавливаем позицию вершины
+    // Set vertex position
     gl_Position = vec4(pos, 0.0, 1.0);
 }

@@ -1,4 +1,4 @@
-// plugins/pulse-color-effect/shaders/pulse_frag.glsl
+// Plugins/pulse-color-effect/shaders/pulse_frag.glsl
 #version 300 es
 precision mediump float;
 
@@ -12,16 +12,16 @@ out vec4 FragColor;
 uniform float time;
 uniform vec2 resolution;
 
-// @param base_color | vec3 | 0.2,0.6,1.0 | Базовый цвет эффекта (R,G,B)
+// @param base_color | vec3 | 0.2,0.6,1.0 | Base effect color (R,G,B)
 uniform vec3 base_color;
 
-// @param pulse_speed | float | 1.0 | Скорость пульсации
+// @param pulse_speed | float | 1.0 | Pulsation speed
 uniform float pulse_speed;
 
-// @param pulse_strength | float | 0.5 | Амплитуда цветовой пульсации
+// @param pulse_strength | float | 0.5 | Color pulsation amplitude
 uniform float pulse_strength;
 
-// @param color_shift_mode | bool | true | Включить цветовой сдвиг с фазой
+// @param color_shift_mode | bool | true | Enable color shift with phase
 uniform bool color_shift_mode;
 
 void main() {

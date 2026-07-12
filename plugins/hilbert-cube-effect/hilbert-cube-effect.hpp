@@ -13,7 +13,7 @@ public:
     HilbertCubeEffect();
     ~HilbertCubeEffect() override;
 
-    // --- Реализация интерфейса WallpaperEffect ---
+    // --- WallpaperEffect Interface Implementation ---
     const char* get_name() const override;
     std::vector<EffectParameter> get_parameters() const override;
     void set_parameter(const std::string& name, const EffectParameterValue& value) override;
@@ -34,7 +34,8 @@ private:
     float* p_accum_y = nullptr;
 
     float time = 0.0f;
-    
+    bool first_frame_mouse = true;
+
     // Local state for this specific monitor
     float last_mouse_x = 0.0f;
     float last_mouse_y = 0.0f;

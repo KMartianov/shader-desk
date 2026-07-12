@@ -37,10 +37,10 @@ void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, co
         vertices.push_back(start + c);
     } else {
         // Recursive step: divide cube into 8 smaller sub-cubes and call hilbert3D for each,
-        // transforming (translating, rotating, reflecting) their coordinate systems accordingly.
+        // Transforming (translating, rotating, reflecting) their coordinate systems accordingly.
 
         // This specific implementation uses a non-standard 1/3 scale factor,
-        // which was chosen to achieve the desired visual result.
+        // Which was chosen to achieve the desired visual result.
         const glm::vec3 a_s = a / 3.0f;
         const glm::vec3 b_s = b / 3.0f;
         const glm::vec3 c_s = c / 3.0f;
@@ -101,9 +101,9 @@ void HilbertCubeEffect::generate_cube_outline() {
         {-s, -s,  s}, {s, -s,  s}, {s, s,  s}, {-s, s,  s}
     };
     std::vector<unsigned int> indices = {
-        0, 1, 1, 2, 2, 3, 3, 0, // bottom face
-        4, 5, 5, 6, 6, 7, 7, 4, // top face
-        0, 4, 1, 5, 2, 6, 3, 7  // side edges
+        0, 1, 1, 2, 2, 3, 3, 0, // Bottom face
+        4, 5, 5, 6, 6, 7, 7, 4, // Top face
+        0, 4, 1, 5, 2, 6, 3, 7  // Side edges
     };
 
     glGenVertexArrays(1, &cube_vao);
@@ -164,6 +164,12 @@ void HilbertCubeEffect::update_rotation(float dt) {
 void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
     // === SAFE MOUSE READING LOGIC (Delta-calc) ===
     if (p_accum_x && p_accum_y) {
+        if (first_frame_mouse) {
+            last_mouse_x = *p_accum_x;
+            last_mouse_y = *p_accum_y;
+            first_frame_mouse = false;
+        }
+
         float current_x = *p_accum_x;
         float current_y = *p_accum_y;
         
@@ -197,10 +203,10 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
     glEnable(GL_DEPTH_TEST);
     glLineWidth(1.0f);
     
-    // ВАЖНО: Удалены glViewport и glClear! Этим теперь управляет Ядро.
+    // IMPORTANT: glViewport and glClear removed! The Core manages this now.
     glUseProgram(program);
     
-    // Применяем смещение к модели
+    // Apply offset to the model
     glm::mat4 model = glm::translate(glm::mat4(1.0f), position_offset) * glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.5f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);

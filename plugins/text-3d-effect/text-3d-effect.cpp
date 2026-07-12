@@ -1,4 +1,4 @@
-// src/plugins/text-3d-effect/text-3d-effect.cpp
+// Src/plugins/text-3d-effect/text-3d-effect.cpp
 #define GLM_ENABLE_EXPERIMENTAL
 #define STB_TRUETYPE_IMPLEMENTATION
 
@@ -31,7 +31,7 @@ std::vector<EffectParameter> Text3DEffect::get_parameters() const {
         {"bend_radius", "Cylinder bend radius (0 = flat)", bend_radius},
         {"text_color", "Primary text color", text_color},
         {"bg_color", "Background color", bg_color},
-        // Новые параметры
+        // New parameters
         {"base_rotation_axis", "Ideal rotation axis (X,Y,Z)", base_rotation_axis},
         {"base_rotation_speed", "Speed around ideal axis", base_rotation_speed},
         {"mouse_sensitivity", "Mouse interaction strength", mouse_sensitivity},
@@ -230,13 +230,13 @@ bool Text3DEffect::initialize(ICoreContext* core, uint32_t width, uint32_t heigh
 }
 
 void Text3DEffect::update_rotation(float dt) {
-    // 1. Обновляем базовую "идеальную" ось вращения
+    // 1. Update the base "ideal" rotation axis
     if (glm::length(base_rotation_axis) > 0.001f) {
         base_angle += base_rotation_speed * dt;
     }
     glm::quat base_quat = glm::angleAxis(base_angle, glm::normalize(base_rotation_axis));
 
-    // 2. Обрабатываем влияние пользователя (смещение)
+    // 2. Process user influence (offset)
     if (p_accum_x && p_accum_y) {
         float dx = *p_accum_x - last_mouse_x;
         float dy = *p_accum_y - last_mouse_y;
@@ -244,23 +244,23 @@ void Text3DEffect::update_rotation(float dt) {
         last_mouse_y = *p_accum_y;
 
         if (std::abs(dx) > 0.0001f || std::abs(dy) > 0.0001f) {
-            // Ось вращения от мыши (Инвертируем X и Y для естественного вращения)
+            // Mouse rotation axis (Invert X and Y for natural rotation)
             glm::vec3 axis = glm::vec3(dy, dx, 0.0f); 
             float angle = glm::length(axis) * mouse_sensitivity;
             axis = glm::normalize(axis);
             
             glm::quat delta = glm::angleAxis(angle, axis);
-            // Умножаем, чтобы накапливать смещение от пользователя
+            // Multiply to accumulate the user's offset
             mouse_quat = glm::normalize(delta * mouse_quat); 
         }
     }
 
-    // 3. Эффект пружины: Медленно возвращаем смещение мыши к нулевому (Identity)
+    // 3. Spring effect: Slowly return the mouse offset back to zero (Identity)
     if (return_friction > 0.001f) {
         mouse_quat = glm::slerp(mouse_quat, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), return_friction * dt);
     }
 
-    // 4. Итоговая ориентация (Пользовательское смещение + Базовое вращение)
+    // 4. Final orientation (User offset + Base rotation)
     final_orientation = base_quat * mouse_quat;
 }
 
@@ -285,8 +285,8 @@ void Text3DEffect::render(uint32_t width, uint32_t height, float dt) {
     glUseProgram(program);
     
     // ====================================================================
-    // ЛОГИКА ЦЕНТРА МАСС (PIVOT)
-    // Строим матрицу: Сдвигаем в pivot -> Вращаем -> Сдвигаем обратно
+    // CENTER OF MASS LOGIC (PIVOT)
+    // Build matrix: Translate to pivot -> Rotate -> Translate back
     // ====================================================================
     glm::mat4 model_matrix = glm::mat4(1.0f);
     model_matrix = glm::translate(model_matrix, pivot_offset);
@@ -332,10 +332,10 @@ extern "C" {
     }
     
     IWallpaperEffectABI* create_effect() {
-        return new Text3DEffect(); // (например, new HilbertCubeEffect())
+        return new Text3DEffect(); // (e.g., new HilbertCubeEffect())
     }
     void destroy_effect(IWallpaperEffectABI* effect) {
-        // static_cast safely returns us to the class to call the destructor
+        // Static_cast safely returns us to the class to call the destructor
         delete static_cast<WallpaperEffect*>(effect);
     }
 }

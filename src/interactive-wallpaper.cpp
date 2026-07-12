@@ -1,4 +1,4 @@
-// src/interactive-wallpaper.cpp
+// Src/interactive-wallpaper.cpp
 #include "interactive-wallpaper.hpp"
 #include <glm/glm.hpp>
 #include <cmath>
@@ -10,18 +10,18 @@
 #include <chrono>
 #include <cstdlib>
 #include <atomic>
-#include <sys/signalfd.h> // Для безопасной обработки сигналов через epoll
+#include <sys/signalfd.h> // For safe signal handling via epoll
 #include <signal.h>
 #include <filesystem>
 #include <sys/socket.h> 
 #include <sys/un.h>   
 #include "ipc-utils.hpp"  
 
-// Безопасное подключение Tracy: если профилирование выключено в CMake,
+// Safe Tracy inclusion: if profiling is disabled in CMake,
 #ifdef TRACY_ENABLE
     #include <tracy/Tracy.hpp>
 #else
-    // Все макросы превращаются в пустышки с 0% накладных расходов процессора
+    // All macros turn into no-ops with 0% CPU overhead
     #define ZoneScoped
     #define ZoneScopedN(name)
     #define ZoneText(txt, size)
@@ -32,7 +32,7 @@
 
 extern std::atomic<bool> global_running;
 
-// --- Статические слушатели протоколов Wayland ---
+// --- Static Wayland protocol listeners ---
 static const wl_registry_listener registry_listener = {
     .global = InteractiveWallpaper::registry_global,
     .global_remove = InteractiveWallpaper::registry_global_remove,
@@ -76,12 +76,12 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine
 
     // Bind the tag-based lookup function for the LuaEngine.
     // This allows the Lua Fluent API (e.g., core.get_layer("DP-1", "bg_back")) 
-    // to safely resolve the C++ plugin instance dynamically per frame, 
-    // completely eliminating the risk of dangling pointers during hot-reloads.
+    // To safely resolve the C++ plugin instance dynamically per frame, 
+    // Completely eliminating the risk of dangling pointers during hot-reloads.
     lua_engine.get_layer_by_tag = [this](const std::string& output_name, const std::string& tag) -> IWallpaperEffectABI* {
         for (auto& pair : outputs) {
             // Match the specific physical monitor, or fallback to the first matching 
-            // instance if the wildcard "*" is used.
+            // Instance if the wildcard "*" is used.
             if (pair.second->name == output_name || output_name == "*") {
                 for (auto& layer : pair.second->layers) {
                     if (layer.tag == tag && layer.effect) {
@@ -156,12 +156,13 @@ void InteractiveWallpaper::register_epoll_fd_cxx(int fd, std::function<void(uint
 // CONFIGURATION (Lua) & INOTIFY (Hot-Reloading)
 // ==============================================================================
 
-// [UPDATED] Применение настроек ко всем слоям конкретного монитора
+// Apply settings to all layers of a specific monitor
 void InteractiveWallpaper::apply_config_to_effect(Output* output) {
     if (!output || output->layers.empty()) return;
     
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
-    
+    output->current_fps_limit = out_cfg.fps_limit; 
+
     for (size_t i = 0; i < output->layers.size() && i < out_cfg.layers.size(); ++i) {
         auto& layer = output->layers[i];
         if (layer.effect) {
@@ -178,7 +179,7 @@ void InteractiveWallpaper::apply_config_to_all_outputs() {
 
 const char* InteractiveWallpaper::get_bundle_path(const char* plugin_name) {
     if (!plugin_manager_ || !plugin_name) return "";
-    // Возвращаем указатель на внутреннюю строку из map (это безопасно, пока жив PluginManager)
+    // Return a pointer to the internal string from the map (safe as long as PluginManager is alive)
     static std::string last_queried_path; 
     last_queried_path = plugin_manager_->get_bundle_path(plugin_name);
     return last_queried_path.c_str();
@@ -188,44 +189,66 @@ void InteractiveWallpaper::setup_inotify() {
     inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (inotify_fd < 0) return;
     
-    // Реагируем только на финализацию записи или атомарную подмену
+    // React only to write finalization or atomic replacement
     uint32_t mask = IN_CLOSE_WRITE | IN_MOVED_TO;
 
     const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
     std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
                                         : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
 
-    // 1. Базовые пользовательские директории
+    // 1. Base user directories
     inotify_add_watch(inotify_fd, config_dir.c_str(), mask);
     inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), mask);
 
-    // 2. Вспомогательная лямбда для рекурсивного добавления папок
+    // 2. Helper lambda for recursively adding folders
     std::error_code ec;
     auto options = std::filesystem::directory_options::follow_directory_symlink | std::filesystem::directory_options::skip_permission_denied;
     
     auto watch_dir_tree = [&](const std::string& root_path) {
-        if (std::filesystem::exists(root_path, ec)) {
-            inotify_add_watch(inotify_fd, root_path.c_str(), mask);
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(root_path, options, ec)) {
-                if (entry.is_directory(ec)) {
-                    inotify_add_watch(inotify_fd, entry.path().c_str(), mask);
+        if (!std::filesystem::exists(root_path, ec)) return;
+
+        // 1. First add the root folder itself to inotify
+        inotify_add_watch(inotify_fd, root_path.c_str(), mask);
+
+        // 2. Create explicit iterators
+        auto it = std::filesystem::recursive_directory_iterator(root_path, options, ec);
+        auto end = std::filesystem::recursive_directory_iterator();
+
+        // 3. Traverse the tree
+        while (it != end) {
+            if (it->is_directory(ec)) {
+                std::string path_str = it->path().string();
+
+                // Check if this folder should be ignored
+                if (path_str.find("/.git") != std::string::npos || 
+                    path_str.find("/build") != std::string::npos ||
+                    path_str.find("/node_modules") != std::string::npos) {
+                    
+                    // Call the ITERATOR method: it will skip entering this directory
+                    it.disable_recursion_pending(); 
+                } else {
+                    // If the folder is useful, subscribe to it
+                    inotify_add_watch(inotify_fd, path_str.c_str(), mask);
                 }
             }
+            
+            // Safely advance to the next element
+            it.increment(ec);
         }
     };
 
-    // 3. Добавляем в прослушку все возможные места обитания плагинов и конфигов
-    watch_dir_tree(config_dir + "/effects");           // Сценарий 3 (Sandbox моддера)
-    watch_dir_tree("./src/defaults");                  // Сценарий 1 (Локальный init.lua)
-    watch_dir_tree("./plugins");                       // Сценарий 1 (Исходники шейдеров In-Tree)
+    // 3. Add all possible plugin and config locations to the watch list
+    watch_dir_tree(config_dir + "/effects");           // Scenario 3 (Modder's Sandbox)
+    watch_dir_tree("./src/defaults");                  // Scenario 1 (Local init.lua)
+    watch_dir_tree("./plugins");                       // Scenario 1 (In-Tree shader sources)
     
-    // (Опционально) Если CMake копирует шейдеры прямо в build-папку
+    // (Optional) If CMake copies shaders directly into the build folder
     watch_dir_tree("./build-release/plugins");         
     watch_dir_tree("./build-tracy/plugins");
 
     watch_dir_tree(config_dir + "/scenes");
 
-    // Добавляем системную папку со сценами (для FHS режима)
+    // Add the system scenes folder (for FHS mode)
     #ifdef SYSTEM_SCENES_DIR
     watch_dir_tree(SYSTEM_SCENES_DIR);
     #endif
@@ -244,7 +267,7 @@ void InteractiveWallpaper::setup_ipc() {
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
     unlink(socket_path.c_str()); 
 
-    // ЗАЩИТА ПРАВ ДОСТУПА: Только наш пользователь сможет писать в сокет (0600)
+    // ACCESS PROTECTION: Only our user will be able to write to the socket (0600)
     mode_t old_mask = umask(0077); 
     int bind_res = bind(ipc_fd, (struct sockaddr*)&addr, sizeof(addr));
     umask(old_mask); 
@@ -256,12 +279,12 @@ void InteractiveWallpaper::setup_ipc() {
         return;
     }
 
-    // Слушаем входящие подключения
+    // Listen for incoming connections
     register_epoll_fd_cxx(ipc_fd, [this](uint32_t) {
         int client_fd = accept4(ipc_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (client_fd < 0) return;
 
-        // Регистрируем НОВЫЙ клиентский сокет в epoll для чтения данных
+        // Register the NEW client socket in epoll for reading data
         register_epoll_fd_cxx(client_fd, [this, client_fd](uint32_t) {
             char buffer[1024];
             ssize_t bytes = read(client_fd, buffer, sizeof(buffer));
@@ -269,16 +292,16 @@ void InteractiveWallpaper::setup_ipc() {
             if (bytes > 0) {
                 ipc_buffers[client_fd].append(buffer, bytes);
                 
-                // Защита от спама/OOM (если прислали > 8кб без переноса строки)
+                // Spam/OOM protection (if > 8kb is sent without a newline)
                 if (ipc_buffers[client_fd].size() > 8192) goto close_client;
 
-                // ФРЕЙМИНГ: Выполняем все полные команды, разделенные '\n'
+                // FRAMING: Execute all complete commands separated by '\n'
                 size_t pos;
                 while ((pos = ipc_buffers[client_fd].find('\n')) != std::string::npos) {
                     std::string cmd = ipc_buffers[client_fd].substr(0, pos);
                     ipc_buffers[client_fd].erase(0, pos + 1);
 
-                    // БЕЗОПАСНОЕ ИСПОЛНЕНИЕ (Без C++ Exception, без abort'а)
+                    // SAFE EXECUTION (Without C++ Exceptions, without abort)
                     auto result = lua_engine.get_state().safe_script(cmd, sol::script_pass_on_error);
                     
                     if (result.valid()) {
@@ -299,7 +322,7 @@ void InteractiveWallpaper::setup_ipc() {
     });
 }
 
-//  Обработчик горячей перезагрузки (Мультимониторный)
+// Hot-reload handler (Multi-monitor)
 void InteractiveWallpaper::process_inotify_events() {
     char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
     bool reload_lua = false;
@@ -315,7 +338,7 @@ void InteractiveWallpaper::process_inotify_events() {
             if (event->len > 0) {
                 std::string name(event->name);
                 
-                // Игнорируем скрытые файлы и временные swap-файлы редакторов (.swp, .tmp)
+                // Ignore hidden files and editor temporary swap files (.swp, .tmp)
                 if (name.empty() || name[0] == '.' || name.back() == '~') continue;
 
                 if (name.find(".lua") != std::string::npos) reload_lua = true;
@@ -326,11 +349,11 @@ void InteractiveWallpaper::process_inotify_events() {
         }
     }
 
-    // --- МГНОВЕННЫЙ БЕЗОПАСНЫЙ RELOAD ---
+    // --- INSTANT SAFE RELOAD ---
 
     if (reload_lua) {
         std::cout << "\n\033[36m[Hot-Reload] Validating Lua configuration...\033[0m" << std::endl;
-        if (lua_engine.reload()) { // Внутри будет синтаксическая предпроверка!
+        if (lua_engine.reload()) { // Includes a syntax pre-check inside!
             for (auto& pair : outputs) {
                 apply_effect_to_output(pair.second.get());
             }
@@ -353,23 +376,23 @@ void InteractiveWallpaper::process_inotify_events() {
                 for (auto& layer : out->layers) {
                     if (!layer.effect) continue;
 
-                    // 1. Создаем теневую (новую) копию эффекта
+                    // 1. Create a shadow (new) copy of the effect
                     WallpaperEffectPtr shadow_effect = plugin_manager_->create_effect(layer.name);
                     if (!shadow_effect) continue;
 
-                    // 2. Пытаемся инициализировать (компиляция шейдеров происходит здесь)
+                    // 2. Attempt to initialize (shader compilation happens here)
                     if (shadow_effect->initialize(this, out->fbo_w, out->fbo_h)) {
-                        // 3. Успех! Делаем Swap
+                        // 3. Success! Perform Swap
                         layer.effect = std::move(shadow_effect);
                         std::cout << "  ✓ '" << layer.name << "' recompiled seamlessly." << std::endl;
                     } else {
-                        // 4. Ошибка компиляции! 
-                        // shadow_effect будет уничтожен при выходе из области видимости,
-                        // а layer.effect (старая рабочая версия) продолжит рендериться на экране.
+                        // 4. Compilation error! 
+                        // Shadow_effect will be destroyed when out of scope,
+                        // And layer.effect (the old working version) will continue rendering on the screen.
                         std::cerr << "\033[31m  ✗ '" << layer.name << "' compilation failed. Keeping old version.\033[0m" << std::endl;
                     }
                 }
-                // Заново применяем настройки из Lua (цвета, скорость) к новым инстансам
+                // Re-apply Lua settings (colors, speed) to new instances
                 apply_config_to_effect(out);
             }
         }
@@ -414,7 +437,7 @@ bool InteractiveWallpaper::init_egl() {
 void InteractiveWallpaper::create_egl_surface(Output* output) {
     if (!output || !output->surface || output->width == 0 || output->height == 0) return;
 
-    // Вычисляем физический размер в пикселях
+    // Calculate physical dimensions in pixels
     uint32_t buffer_width = output->width * output->scale;
     uint32_t buffer_height = output->height * output->scale;
 
@@ -446,7 +469,7 @@ bool InteractiveWallpaper::initialize() {
     setup_inotify();
     setup_ipc();
 
-    // Безопасный перехват сигналов завершения через epoll
+    // Safe termination signal interception via epoll
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -471,11 +494,92 @@ bool InteractiveWallpaper::initialize() {
 }
 
 // ==============================================================================
+// NATIVE IN-PROCESS EGL RECOVERY (Suspend/Resume Handler)
+// ==============================================================================
+void InteractiveWallpaper::recover_egl_context() {
+    std::cout << "\n\033[36m[Core] Initiating native in-process EGL recovery...\033[0m" << std::endl;
+
+    // 1. Clean up old resources (even if the context is dead, we must reset the C++ plugins state)
+    for (auto& pair : outputs) {
+        Output* out = pair.second.get();
+        if (out->egl_surface != EGL_NO_SURFACE) {
+            // Make the dead context current so plugins can safely call glDelete* without a Segfault
+            eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context);
+            
+            for (auto& layer : out->layers) {
+                if (layer.effect) layer.effect->cleanup(); // Resets shaders and VAO
+            }
+            out->destroy_fbos(); // Deletes old core textures
+            
+            // Unbind EGL from Wayland
+            eglDestroySurface(egl_display, out->egl_surface);
+            out->egl_surface = EGL_NO_SURFACE;
+            
+            if (out->egl_window) {
+                wl_egl_window_destroy(out->egl_window);
+                out->egl_window = nullptr;
+            }
+        }
+    }
+
+    // 2. Complete destruction of the EGL session
+    if (egl_context != EGL_NO_CONTEXT) {
+        eglDestroyContext(egl_display, egl_context);
+        egl_context = EGL_NO_CONTEXT;
+    }
+    if (egl_display != EGL_NO_DISPLAY) {
+        eglTerminate(egl_display);
+        egl_display = EGL_NO_DISPLAY;
+    }
+
+    // 3. Bring up the driver from scratch
+    if (!init_egl()) {
+        std::cerr << "\033[31m[Core] CRITICAL: Failed to re-initialize EGL driver. Shutting down.\033[0m" << std::endl;
+        global_running = false;
+        this->stop();
+        return;
+    }
+
+    // 4. Restore the pipeline for each monitor
+    for (auto& pair : outputs) {
+        Output* out = pair.second.get();
+        if (out->width > 0 && out->height > 0) {
+            // Create new Wayland-EGL windows
+            create_egl_surface(out);
+
+            if (out->egl_surface != EGL_NO_SURFACE && eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
+                
+                // Calculate the physical buffer size (accounting for Lua scaling)
+                OutputConfig out_cfg = lua_engine.get_output_config(out->name, out->identifier);
+                uint32_t target_fbo_w = (out->width * out->scale) * out_cfg.fbo_scale;
+                uint32_t target_fbo_h = (out->height * out->scale) * out_cfg.fbo_scale;
+
+                // Reallocate memory on the GPU
+                out->allocate_fbos(target_fbo_w, target_fbo_h);
+
+                // Recompile shaders inside the old plugin instances
+                for (auto& layer : out->layers) {
+                    if (layer.effect) {
+                        if (!layer.effect->initialize(this, target_fbo_w, target_fbo_h)) {
+                            std::cerr << "\033[31m[Core] Failed to revive layer: " << layer.name << "\033[0m" << std::endl;
+                        }
+                    }
+                }
+                
+                // CRITICAL: Restore Lua settings to plugins (otherwise colors will reset)
+                apply_config_to_effect(out);
+            }
+        }
+    }
+    std::cout << "\033[32m[Core] GPU Recovery successful! Resuming render loop.\033[0m\n" << std::endl;
+}
+
+// ==============================================================================
 // MAIN EVENT LOOP (ZERO-LATENCY EPOLL BASED)
 // ==============================================================================
 
 void InteractiveWallpaper::run() {
-    tracy::SetThreadName("Wayland Event Loop"); // Имя потока в профайлере
+    tracy::SetThreadName("Wayland Event Loop"); // Thread name in profiler
     if (!display) return;
     std::cout << "Starting main loop (epoll based)..." << std::endl;
     wl_display_roundtrip(display);
@@ -533,7 +637,7 @@ void InteractiveWallpaper::set_plugin_manager(PluginManager* pm, const std::stri
     default_effect_name_ = default_effect;
 }
 
-// [NEW] Управление памятью FBO
+// FBO memory management
 void InteractiveWallpaper::Output::destroy_fbos() {
     if (fbo[0]) { glDeleteFramebuffers(2, fbo); fbo[0] = fbo[1] = 0; }
     if (tex[0]) { glDeleteTextures(2, tex); tex[0] = tex[1] = 0; }
@@ -586,8 +690,11 @@ void InteractiveWallpaper::Output::allocate_fbos(uint32_t w, uint32_t h) {
 void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     if (!plugin_manager_) return;
     
+
     // 1. Fetch the multi-layer configuration for this specific physical monitor
     OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
+    output->current_fps_limit = out_cfg.fps_limit; 
+
     if (out_cfg.layers.empty()) return;
 
     // Check if the EGL context is ready for this output
@@ -610,12 +717,12 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     for (const auto& layer_cfg : out_cfg.layers) {
         bool reused = false;
         
-        // [UPDATED] Ищем слой не только по имени эффекта, но и по уникальному ТЕГУ.
-        // Это позволяет использовать один и тот же плагин несколько раз (например, 2 слоя фона).
+        // Search for the layer not only by effect name, but also by a unique TAG.
+        // This allows using the same plugin multiple times (e.g., 2 background layers).
         auto it = std::find_if(output->layers.begin(), output->layers.end(), [&](const LayerInstance& l) {
             return l.effect != nullptr && 
                    l.name == layer_cfg.effect_name && 
-                   l.tag == layer_cfg.tag && // <--- Проверка тега
+                   l.tag == layer_cfg.tag && // <--- Tag check
                    l.is_postprocess == layer_cfg.is_postprocess;
         });
 
@@ -638,7 +745,7 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
                 }
                 
                 if (init_ok) {
-                    // [UPDATED] Передаем tag в конструктор LayerInstance
+                    // Pass tag to the LayerInstance constructor
                     new_layers.emplace_back(layer_cfg.effect_name, layer_cfg.tag, std::move(eff), layer_cfg.is_postprocess);
                 } else {
                     std::cerr << "\033[31m[Core] Dropping layer '" << layer_cfg.effect_name 
@@ -659,7 +766,7 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
         for (size_t i = 0; i < output->layers.size(); ++i) {
             auto& layer = output->layers[i];
             if (layer.effect) {
-                // Применяем настройки, прочитанные из конфигурации
+                // Apply settings read from the configuration
                 lua_engine.apply_effect_settings(layer.effect.get(), layer.name, out_cfg.layers[i].custom_settings);
                 layer.effect->resize(output->fbo_w, output->fbo_h);
             }
@@ -681,29 +788,30 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
     if (output->parent) output->parent->render_output(output);
 }
 
-// [UPDATED] Рендеринг кадра с защитой от скачков dt и вызовом покадрового Lua-хука
-// [UPDATED] Многослойный конвейер рендеринга (Ping-Pong FBO)
+
 void InteractiveWallpaper::render_output(Output* output) {
+    // Ensure the output is fully initialized and has active visual layers
     if (!output->configured || output->layers.empty() || output->egl_surface == EGL_NO_SURFACE) return;
 
     ZoneScoped; 
     ZoneText(output->name.c_str(), output->name.length()); 
 
+    // Calculate real delta time
     auto now = std::chrono::steady_clock::now();
     std::chrono::duration<float> delta_duration = now - output->last_frame_time;
     float real_dt = delta_duration.count();
     output->last_frame_time = now;
 
+    // Clamp delta time to prevent physics explosions after suspend/resume
     if (real_dt > 0.1f || real_dt < 0.0f) real_dt = 0.0166f;
 
     output->time_since_last_render += real_dt;
-    float render_dt = output->time_since_last_render;
 
-    OutputConfig out_cfg = lua_engine.get_output_config(output->name, output->identifier);
-    if (out_cfg.fps_limit > 0.0f) {
-        float min_frame_time = 1.0f / out_cfg.fps_limit;
+    // Custom FPS limiter logic
+    if (output->current_fps_limit > 0.0f) {
+        float min_frame_time = 1.0f / output->current_fps_limit;
         if (output->time_since_last_render < min_frame_time) {
-            // [FIX] Устранение утечки памяти Wayland
+            // Prevent Wayland memory leak by cleaning up the old callback
             if (output->frame_callback) {
                 wl_callback_destroy(output->frame_callback);
                 output->frame_callback = nullptr;
@@ -722,6 +830,7 @@ void InteractiveWallpaper::render_output(Output* output) {
         
         {
             ZoneScopedN("Lua on_frame"); 
+            // Execute the Lua control-plane hook for smooth mathematical animation
             lua_engine.on_frame(real_dt, output->name); 
         }
 
@@ -729,7 +838,7 @@ void InteractiveWallpaper::render_output(Output* output) {
         uint32_t fbo_h = output->fbo_h;
         glViewport(0, 0, fbo_w, fbo_h);
         
-        // --- 1. Очистка стартового FBO ---
+        // --- 1. Clear the starting FBO ---
         output->current_fbo = 0;
         glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -740,33 +849,35 @@ void InteractiveWallpaper::render_output(Output* output) {
 
         {
             ZoneScopedN("Layers Pipeline"); 
-            // --- 2. Оркестрация слоев ---
+            // --- 2. Orchestrate rendering layers ---
             for (size_t i = 0; i < output->layers.size(); ++i) {
                 auto& layer = output->layers[i];
                 if (!layer.effect) continue;
 
                 if (layer.is_postprocess && i > 0) {
-                    // PING-PONG SWAP
+                    // PING-PONG SWAP: Send previous FBO as input to current layer
                     int next_fbo = 1 - output->current_fbo;
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[next_fbo]);
                     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                     
                     glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, output->tex[output->current_fbo]); // u_prev_layer
+                    glBindTexture(GL_TEXTURE_2D, output->tex[output->current_fbo]); // U_prev_layer
                     
                     output->current_fbo = next_fbo; 
                 } else {
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
-                    if (i > 0) glClear(GL_DEPTH_BUFFER_BIT); // Защита 3D
+                    if (i > 0) glClear(GL_DEPTH_BUFFER_BIT); // Protect 3D depth between standard layers
                 }
 
-                // Фидбек прошлого кадра
+                // Provide previous frame's feedback texture (useful for liquid/trail effects)
                 glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // u_feedback_layer
+                glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // U_feedback_layer
                 glActiveTexture(GL_TEXTURE0);
 
+                // Execute C++ plugin logic
                 layer.effect->render(fbo_w, fbo_h, real_dt);
                 
+                // Isolate OpenGL state to prevent cross-plugin contamination
                 glBindVertexArray(0);
                 glUseProgram(0);
                 glEnable(GL_BLEND);
@@ -774,19 +885,19 @@ void InteractiveWallpaper::render_output(Output* output) {
             }
         }
 
-        // --- 3. Сохранение фидбека ---
+        // --- 3. Save current frame for the next frame's feedback loop ---
         glBindFramebuffer(GL_READ_FRAMEBUFFER, output->fbo[output->current_fbo]);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, output->fbo_feedback);
         glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-        // --- 4. Финальный вывод на экран (Упскейл) ---
+        // --- 4. Final output to screen (Upscale to physical resolution) ---
         uint32_t phys_w = output->width * output->scale;
         uint32_t phys_h = output->height * output->scale;
         
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // EGL Backbuffer
         glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, phys_w, phys_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
-        // [FIX] Устранение утечки памяти Wayland
+        // Clean up and register new frame callback for Wayland synchronization
         if (output->frame_callback) {
             wl_callback_destroy(output->frame_callback);
             output->frame_callback = nullptr;
@@ -796,7 +907,26 @@ void InteractiveWallpaper::render_output(Output* output) {
         
         {
             ZoneScopedN("EGL Swap Buffers"); 
-            eglSwapBuffers(egl_display, output->egl_surface);
+            EGLBoolean swap_result = eglSwapBuffers(egl_display, output->egl_surface);
+            
+            // --- NATIVE EGL RECOVERY LOGIC ---
+            // Handles GPU suspend/resume cycles without requiring a process restart
+            if (swap_result == EGL_FALSE) {
+                EGLint error = eglGetError();
+                if (error == EGL_CONTEXT_LOST) {
+                    std::cerr << "\n\033[33m[EGL] WARNING: EGL_CONTEXT_LOST detected. GPU woke from sleep?\033[0m" << std::endl;
+                    
+                    // Trigger the native in-process recovery state machine
+                    this->recover_egl_context();
+                    
+                    // Abort rendering this frame. The next Wayland tick will use the revived context.
+                    return; 
+                    
+                } else {
+                    std::cerr << "\033[31m[EGL] Error: eglSwapBuffers failed: 0x" 
+                              << std::hex << error << std::dec << "\033[0m" << std::endl;
+                }
+            }
         }
         
         FrameMarkNamed(output->name.c_str()); 
@@ -879,7 +1009,7 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
     Output* output = static_cast<Output*>(data);
     if (width == 0 || height == 0) return;
 
-    // 1. Сохраняем логические размеры (нужны для протокола Wayland)
+    // 1. Save logical dimensions (needed for the Wayland protocol)
     output->width = width;
     output->height = height;
     output->configure_serial = serial;
@@ -887,10 +1017,10 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
 
     zwlr_layer_surface_v1_ack_configure(surface, serial);
 
-    // 2. КРИТИЧЕСКИЙ ШАГ ДЛЯ HIDPI: Говорим композитору не размывать буфер
+    // 2. CRITICAL STEP FOR HIDPI: Tell the compositor not to blur the buffer
     wl_surface_set_buffer_scale(output->surface, output->scale);
 
-    // 3. Вычисляем физический размер для OpenGL (пиксели)
+    // 3. Calculate physical dimensions for OpenGL (pixels)
     uint32_t buffer_width = width * output->scale;
     uint32_t buffer_height = height * output->scale;
 
@@ -906,21 +1036,21 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
                 output->allocate_fbos(target_fbo_w, target_fbo_h);
                 for (auto& layer : output->layers) {
                     if (layer.effect) {
-                        // Первичная инициализация C++ плагина (компиляция шейдеров)
+                        // Initial C++ plugin initialization (shader compilation)
                         if (!layer.effect->initialize(output->parent, target_fbo_w, target_fbo_h)) {
                             layer.effect.reset();
                         }
                     }
                 }
                 // ==============================================================================
-                // [ИСПРАВЛЕНИЕ]: Применяем Lua-настройки сразу после инициализации EGL-контекста!
+                // Apply Lua settings immediately after EGL context initialization!
                 // ==============================================================================
                 output->parent->apply_config_to_effect(output);
             }
         }
         if (!output->frame_callback) output->parent->render_output(output);
     } else {
-        // Ресайзим буфер EGL до физических размеров
+        // Resize the EGL buffer to physical dimensions
         if (output->egl_window) {
             wl_egl_window_resize(output->egl_window, buffer_width, buffer_height, 0, 0);
         }

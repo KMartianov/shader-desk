@@ -1,7 +1,7 @@
 #version 300 es
 
-// Трюк для создания полноэкранного полигона без использования VBO/VAO.
-// Экономит память и CPU-вызовы. Идеально для Raymarching'а.
+// Trick to create a fullscreen polygon without using VBO/VAO.
+// Saves memory and CPU calls. Ideal for Raymarching.
 void main() {
     float x = -1.0 + float((gl_VertexID & 1) << 2);
     float y = -1.0 + float((gl_VertexID & 2) << 1);

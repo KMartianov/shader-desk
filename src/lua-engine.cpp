@@ -1,4 +1,4 @@
-// src/lua-engine.cpp
+// Src/lua-engine.cpp
 #include "lua-engine.hpp"
 #include <iostream>
 #include <filesystem>
@@ -52,23 +52,24 @@ void LuaEngine::merge_preset_into_target(sol::table target, const sol::table& pr
 
         if (preset_val.is<sol::table>()) {
             if (target_val.valid() && target_val.is<sol::table>()) {
-                // У юзера тоже таблица (например, vec3). Сливаем рекурсивно.
+                // The user also has a table (e.g., vec3). Merge recursively.
                 merge_preset_into_target(target_val.as<sol::table>(), preset_val.as<sol::table>());
             } else if (!target_val.valid()) {
-                // Юзер не задал таблицу. Делаем глубокую копию, чтобы избежать утечки ссылок.
+                // The user did not set a table. Perform a deep copy to avoid reference leaks.
                 sol::table new_table = lua.create_table();
                 merge_preset_into_target(new_table, preset_val.as<sol::table>());
                 target[key] = new_table;
             }
         } else {
-            // Примитивный тип (число, строка, bool).
-            // Записываем из пресета ТОЛЬКО если юзер не переопределил его в init.lua
+            // Primitive type (number, string, bool).
+            // Write from preset ONLY if the user hasn't overridden it in init.lua
             if (!target_val.valid()) {
                 target[key] = preset_val;
             }
         }
     }
 }
+
 
 
 bool LuaEngine::load() {
@@ -97,17 +98,19 @@ bool LuaEngine::load() {
     lua["os"]["remove"]  = sol::nil;
     lua["os"]["rename"]  = sol::nil;
     lua["os"]["exit"]    = sol::nil;
+
+
     
     // ==============================================================================
     // SMART MODULE RESOLUTION (package.path & package.preload)
     // ==============================================================================
     // Lua will search for modules (like ctl.lua) in the user config dir first, 
-    // then fallback to the local source tree (useful for development).
+    // Then fallback to the local source tree (useful for development).
     std::string package_path = lua["package"]["path"];
     lua["package"]["path"] = package_path + ";" + dir + "/?.lua;./src/defaults/?.lua";
 
     // If 'ctl.lua' cannot be found on the filesystem at all (e.g., system-wide install 
-    // with no user config generated yet), load it directly from the embedded C++ string!
+    // With no user config generated yet), load it directly from the embedded C++ string!
     lua["package"]["preload"]["ctl"] = [](sol::this_state s) {
         sol::state_view lua(s);
         return lua.load(Embedded::CTL_LUA);
@@ -190,7 +193,7 @@ bool LuaEngine::load() {
 
     if (!target_file.empty()) {
         // Safe execution: If the user made a fatal logic error in init.lua, 
-        // we catch it gracefully and fallback to the embedded C++ string.
+        // We catch it gracefully and fallback to the embedded C++ string.
         auto result = lua.safe_script_file(target_file, sol::script_pass_on_error);
         
         if (!result.valid()) {
@@ -212,7 +215,7 @@ bool LuaEngine::load() {
 
 
 // --- PROVIDER CONFIGURATION IMPLEMENTATION ---
-// [ABI UPDATE]: Now accepting safe IDataProviderABI*
+// Now accepting safe IDataProviderABI*
 bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     if (!provider) return false;
 
@@ -222,7 +225,7 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
     // ==============================================================================
     // 1. SAFE LUA EXTRACTION
     // We navigate the Lua tables defensively. If the user removed the provider's 
-    // config entirely from init.lua, we still proceed to reset it to C++ defaults.
+    // Config entirely from init.lua, we still proceed to reset it to C++ defaults.
     // ==============================================================================
     sol::object core_obj = lua["core"];
     if (core_obj.is<sol::table>()) {
@@ -287,8 +290,10 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
                     else if (expected_type == ParamType::TYPE_STRING && lua_val.is<std::string>()) {
                         std::string lua_str = lua_val.as<std::string>();
                         // Ensure strict null-termination and prevent buffer overflow in C-ABI
-                        std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
-                        abi_val.s_val[255] = '\0'; 
+                        size_t max_len = sizeof(abi_val.s_val) - 1;
+                        std::strncpy(abi_val.s_val, lua_str.c_str(), max_len);
+                        abi_val.s_val[max_len] = '\0'; 
+
                     }
                 } catch (const sol::error& e) {
                     std::cerr << "[LuaEngine] Type Error for provider parameter '" 
@@ -309,7 +314,7 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
 // SAFE PROXY OBJECT FOR FLUENT API
 // This struct acts as a safe bridge between Lua and the C++ plugins.
 // It never holds direct pointers to plugins, completely preventing segfaults 
-// if a plugin is hot-reloaded or destroyed during the frame.
+// If a plugin is hot-reloaded or destroyed during the frame.
 // ==============================================================================
 struct LuaLayerProxy {
     std::string output_name;
@@ -355,8 +360,10 @@ struct LuaLayerProxy {
                 abi_val.vec3_val[1] = t.get_or(2, 0.0f); 
                 abi_val.vec3_val[2] = t.get_or(3, 0.0f);
             } else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
-                std::strncpy(abi_val.s_val, val.as<std::string>().c_str(), 255);
-                abi_val.s_val[255] = '\0';
+                size_t max_len = sizeof(abi_val.s_val) - 1;
+                std::strncpy(abi_val.s_val, val.as<std::string>().c_str(), max_len);
+                abi_val.s_val[max_len] = '\0';
+
             } else {
                 return *this;
             }
@@ -397,9 +404,9 @@ struct LuaLayerProxy {
 };
 
 // --- DEBUG API IMPLEMENTATION ---
-// [ABI UPDATE]: Accepting ICoreContextABI*
-// [UPDATED] Привязка API ядра к Lua (Исправлена ошибка компиляции Sol2)
-// [UPDATED] Привязка API ядра к Lua
+// Accepting ICoreContextABI*
+// Core API to Lua binding (Fixed Sol2 compilation error)
+// Core API to Lua binding
 void LuaEngine::bind_core_api(ICoreContextABI* core) {
     if (!core) return;
     current_core = core; 
@@ -409,7 +416,7 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     }
     sol::table core_table = lua["core"];
     
-    // --- 1. ЗАПИСЬ В BLACKBOARD ---
+    // --- 1. WRITE TO BLACKBOARD ---
     core_table["set_string"] = [core](const std::string& key, const std::string& val) {
         core->get_blackboard()->set_string(key.c_str(), val.c_str());
     };
@@ -424,7 +431,7 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         }
     };
 
-    // --- 2. ЧТЕНИЕ ИЗ BLACKBOARD ---
+    // --- 2. READ FROM BLACKBOARD ---
     core_table["get_float"] = [core](const std::string& key, sol::optional<float> default_val) -> float {
         float* ptr = core->get_blackboard()->bind_float(key.c_str());
         return ptr ? *ptr : default_val.value_or(0.0f);
@@ -448,7 +455,7 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         return result;
     };
 
-    // --- 3. РЕГИСТРАЦИЯ ПОКАДРОВОГО ХУКА ---
+    // --- 3. REGISTER PER-FRAME HOOK ---
     core_table["on_frame"] = [this](sol::protected_function cb) {
         if (cb.valid()) {
             this->frame_callback = cb;
@@ -456,11 +463,11 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         }
     };
 
-    // --- 4. АСИНХРОННЫЕ ТАЙМЕРЫ (EPOLL TIMERFD) ---
+    // --- 4. ASYNCHRONOUS TIMERS (EPOLL TIMERFD) ---
     core_table["set_interval"] = [this](int ms, sol::protected_function callback) -> int {
         if (ms <= 0 || !callback.valid() || !current_core) return -1;
 
-        // ЗАЩИТА: Лимит в 32 активных таймера на весь Lua-скрипт
+        // PROTECTION: Limit of 32 active timers per Lua script
         if (active_timers.size() >= 32) {
             std::cerr << "[LuaEngine] ERROR: Maximum timer limit (32) reached. "
                     << "Are you calling set_interval inside on_frame?" << std::endl;
@@ -565,18 +572,18 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
 
 }
 
-// [NEW] Реализация покадрового хука с защитой от спама ошибками
+// Per-frame hook implementation with error spam protection
 void LuaEngine::on_frame(float dt, const std::string& output_name) {
     if (!frame_callback.valid()) return;
 
-    // Вызываем Lua функцию: on_frame(dt, "DP-1")
+    // Call the Lua function: on_frame(dt, "DP-1")
     auto result = frame_callback(dt, output_name);
     
     if (!result.valid()) {
         sol::error err = result;
         std::cerr << "\033[31m[Lua Frame Error on " << output_name << "] " << err.what() << "\033[0m" << std::endl;
         std::cerr << "[LuaEngine] Faulty on_frame callback disabled to prevent 144Hz log spam." << std::endl;
-        // Сбрасываем коллбэк при первой же ошибке, чтобы композитор продолжал работать
+        // Reset the callback on the very first error so the compositor continues working
         frame_callback = sol::nil; 
     }
 }
@@ -605,7 +612,7 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
     if (out_conf_obj.is<sol::table>()) {
         sol::table out_conf = out_conf_obj.as<sol::table>();
         res.fps_limit = out_conf.get_or("fps_limit", res.fps_limit);
-        res.fbo_scale = out_conf.get_or("fbo_scale", 1.0f); // Читаем масштаб FBO
+        res.fbo_scale = out_conf.get_or("fbo_scale", 1.0f); // Read FBO scale
 
         if (out_conf["layers"].is<sol::table>()) {
             sol::table layers_table = out_conf["layers"];
@@ -617,7 +624,7 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 if (eff_name.empty()) continue;
 
                 // Extract the semantic tag. If the user didn't specify one, 
-                // default to the effect name itself for backward compatibility.
+                // Default to the effect name itself for backward compatibility.
                 std::string tag = layer_tbl.get_or("tag", eff_name); 
                 
                 sol::table settings = layer_tbl["settings"].is<sol::table>() ? layer_tbl["settings"] : lua.create_table();
@@ -639,7 +646,7 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 res.layers.push_back({eff_name, tag, settings, is_post});
             }
         } else {
-            // Старый формат (1 эффект)
+            // Old format (1 effect)
             std::string eff_name = out_conf.get_or("effect", fallback_effect);
             if (!eff_name.empty()) {
                 sol::table settings = out_conf["settings"].is<sol::table>() ? out_conf["settings"] : lua.create_table();
@@ -655,7 +662,7 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
 }
 
 void LuaEngine::clear_timers() {
-    // [ABI UPDATE]: active_timers is now a map, iterate by key-value pairs
+    // Active_timers is now a map, iterate by key-value pairs
     for (auto& pair : active_timers) {
         int tfd = pair.first;
         if (current_core) {
@@ -673,25 +680,25 @@ bool LuaEngine::reload() {
     
     std::filesystem::path active_init;
 
-    // Определяем, какой конфиг сейчас является главным (Приоритет 1 vs Приоритет 2)
+    // Determine which config is currently the main one (Priority 1 vs Priority 2)
     if (std::filesystem::exists(user_init)) {
         active_init = user_init;
     } else if (std::filesystem::exists(local_init)) {
         active_init = local_init;
     }
 
-    // --- ПРЕД-ВАЛИДАЦИЯ (Синтаксис) ---
+    // --- PRE-VALIDATION (Syntax) ---
     if (!active_init.empty()) {
         sol::load_result syntax_check = lua.load_file(active_init.string());
         if (!syntax_check.valid()) {
             sol::error err = syntax_check;
             std::cerr << "\033[31m[Lua Syntax Error in " << active_init.filename().string() 
                       << "] Aborting reload:\n" << err.what() << "\033[0m" << std::endl;
-            return false; // Отмена! Оставляем старый State рабочим.
+            return false; // Abort! Keep the old State working.
         }
     }
 
-    // Если синтаксис верный, безопасно пересоздаем среду
+    // If syntax is valid, safely recreate the environment
     std::cout << "[LuaEngine] Syntax OK. Clearing active timers before reload..." << std::endl;
     clear_timers(); 
     return load();
@@ -713,7 +720,7 @@ bool LuaEngine::is_interactive() const {
     return true;
 }
 
-// [ABI UPDATE]: Now accepting safe IWallpaperEffectABI*
+// Now accepting safe IWallpaperEffectABI*
 void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect, 
                                       const std::string& effect_name, 
                                       const sol::table& output_specific_settings) 
@@ -729,14 +736,14 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
         ParamType expected_type = info.default_value.type;
         std::string key = info.name;
 
-        // --- КАСКАДНЫЙ ВЫБОР ЗНАЧЕНИЯ ---
+        // --- CASCADING VALUE SELECTION ---
         sol::object final_lua_val = sol::nil;
         
-        // 1. Берем из глобального конфига плагина (plugins/*.lua)
+        // 1. Take from the global plugin config (plugins/*.lua)
         if (base_settings.valid()) {
             final_lua_val = base_settings[key];
         }
-        // 2. Переопределяем настройками конкретного монитора (init.lua), если они есть
+        // 2. Override with specific monitor settings (init.lua), if any
         if (output_specific_settings.valid()) {
             sol::object local_val = output_specific_settings[key];
             if (local_val.valid()) {
@@ -744,10 +751,10 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
             }
         }
 
-        // 3. Базовое значение из C++ ABI (если в Lua вообще ничего нет)
+        // 3. Base value from C++ ABI (if nothing is set in Lua)
         ParamValueABI abi_val = info.default_value;
 
-        // --- ПАРСИНГ LUA -> C-ABI (Если значение переопределено) ---
+        // --- PARSE LUA -> C-ABI (If the value is overridden) ---
         if (final_lua_val.valid()) {
             try {
                 if (expected_type == ParamType::TYPE_BOOL && final_lua_val.is<bool>()) {
@@ -767,15 +774,17 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
                 }
                 else if (expected_type == ParamType::TYPE_STRING && final_lua_val.is<std::string>()) {
                     std::string lua_str = final_lua_val.as<std::string>();
-                    std::strncpy(abi_val.s_val, lua_str.c_str(), 255);
-                    abi_val.s_val[255] = '\0';
+                    size_t max_len = sizeof(abi_val.s_val) - 1;
+                    std::strncpy(abi_val.s_val, lua_str.c_str(), max_len);
+                    abi_val.s_val[max_len] = '\0';
+
                 }
             } catch (const sol::error& e) {
                 std::cerr << "[LuaEngine] Type Error for parameter '" << key << "': " << e.what() << std::endl;
             }
         }
         
-        // 4. Применяем к плагину!
+        // 4. Apply to the plugin!
         effect->set_parameter_abi(key.c_str(), &abi_val);
     }
 }

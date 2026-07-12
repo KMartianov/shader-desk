@@ -29,7 +29,7 @@ std::atomic<bool> global_running{true};
 std::vector<std::string> get_plugin_directories(const std::string& custom_config_dir) {
     std::vector<std::string> dirs;
     
-    // ПРИОРИТЕТ 1: Воркспейс (Кастомный через --config или стандартный ~/.config)
+    // PRIORITY 1: Workspace (Custom via --config or standard ~/.config)
     if (!custom_config_dir.empty()) {
         dirs.push_back(custom_config_dir + "/effects");
     } else {
@@ -39,19 +39,19 @@ std::vector<std::string> get_plugin_directories(const std::string& custom_config
         }
     }
     
-    // ПРИОРИТЕТ 2: Локальная сборка (Запуск прямо из репозитория)
+    // PRIORITY 2: Local build (Running directly from the repository)
     #ifdef LOCAL_PLUGIN_DIR
     dirs.push_back(LOCAL_PLUGIN_DIR);
     #endif
     
-    // Возвращаем твои хардкод-пути для разных профилей сборки (Tracy, Release, Debug)
+    // Return hardcoded paths for different build profiles (Tracy, Release, Debug)
     dirs.push_back("./build-tracy/plugins");
     dirs.push_back("./build-release/plugins");
     dirs.push_back("./build/plugins");
     dirs.push_back("./plugins");
     dirs.push_back("../plugins");
     
-    // ПРИОРИТЕТ 3: Системная установка FHS (/usr/lib)
+    // PRIORITY 3: System installation FHS (/usr/lib)
     #ifdef SYSTEM_PLUGIN_DIR
     dirs.push_back(SYSTEM_PLUGIN_DIR);
     #endif
@@ -87,7 +87,7 @@ void init_user_workspace(const std::string& custom_config_dir) {
         return;
     }
 
-    // Внедряем собранные .so файлы в новые бандлы
+    // Inject compiled .so files into the new bundles
     std::vector<std::string> search_dirs = get_plugin_directories(custom_config_dir);
     for (const auto& entry : fs::directory_iterator(user_effects_dir)) {
         if (!entry.is_directory()) continue;
@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
     // 5. CRITICAL RAII ORDER: Initialize PluginManager FIRST.
     // When main() exits, C++ destroys local variables in reverse declaration order.
     // By declaring PluginManager before InteractiveWallpaper, we guarantee that dlclose() 
-    // is called only AFTER the Wayland microkernel has safely destroyed all visual effects.
+    // Is called only AFTER the Wayland microkernel has safely destroyed all visual effects.
     std::vector<std::string> plugin_dirs = get_plugin_directories(custom_config_dir);
     PluginManager plugin_manager(plugin_dirs);
     plugin_manager.discover_plugins();

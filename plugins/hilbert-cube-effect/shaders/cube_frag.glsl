@@ -1,10 +1,10 @@
 #version 300 es
 precision mediump float;
 
-// Цвет, передаваемый из C++ кода.
+// Color passed from C++ code.
 uniform vec3 line_color;
 
-// Выходной цвет фрагмента.
+// Output fragment color.
 out vec4 FragColor;
 
 void main()

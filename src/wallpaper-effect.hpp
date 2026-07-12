@@ -1,4 +1,4 @@
-// src/wallpaper-effect.hpp
+// Src/wallpaper-effect.hpp
 #pragma once
 
 #include "plugin-abi.hpp" 
@@ -66,7 +66,7 @@ public:
         if (index >= param_cache.size()) return;
         const auto& p = param_cache[index];
         
-        // БЕЗОПАСНОЕ КОПИРОВАНИЕ СТРОК В ABI (Защита от Dangling Pointers)
+        // SAFE STRING COPYING TO ABI (Protection against Dangling Pointers)
         std::strncpy(out_info->name, p.name.c_str(), sizeof(out_info->name) - 1);
         out_info->name[sizeof(out_info->name) - 1] = '\0';
         
@@ -92,9 +92,9 @@ public:
         } else if (std::holds_alternative<std::string>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_STRING;
             const std::string& str = std::get<std::string>(p.value);
-            // Копируем до 255 символов (чтобы оставить 1 байт для \0)
-            std::strncpy(out_info->default_value.s_val, str.c_str(), 255);
-            out_info->default_value.s_val[255] = '\0'; // Гарантированный нуль-терминатор
+            size_t max_len = sizeof(out_info->default_value.s_val) - 1;
+            std::strncpy(out_info->default_value.s_val, str.c_str(), max_len);
+            out_info->default_value.s_val[max_len] = '\0'; // Guaranteed null-terminator
         }
     }
 
@@ -114,7 +114,7 @@ public:
 
     bool get_parameter_abi(const char* name, ParamValueABI* out_value) const final {
         // Always fetch fresh parameters to ensure we get the latest state 
-        // even if the plugin modified it internally during the render loop.
+        // Even if the plugin modified it internally during the render loop.
         std::vector<EffectParameter> fresh_params = get_parameters(); 
         
         for (const auto& p : fresh_params) {
@@ -136,8 +136,9 @@ public:
                     out_value->vec3_val[2] = v.z;
                 } else if (std::holds_alternative<std::string>(p.value)) {
                     out_value->type = ParamType::TYPE_STRING;
-                    std::strncpy(out_value->s_val, std::get<std::string>(p.value).c_str(), 255);
-                    out_value->s_val[255] = '\0';
+                    size_t max_len = sizeof(out_value->s_val) - 1;
+                    std::strncpy(out_value->s_val, std::get<std::string>(p.value).c_str(), max_len);
+                    out_value->s_val[max_len] = '\0';
                 }
                 return true;
             }

@@ -1,4 +1,4 @@
-// src/ico-sphere-effect.cpp
+// Src/ico-sphere-effect.cpp
 // This file combines effect logic and plugin code to compile into a single .so file.
 #define GLM_ENABLE_EXPERIMENTAL
 
@@ -327,15 +327,22 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
 
     // Mouse rotation (Data is already processed by the Provider)
     if (p_accum_x && p_accum_y) {
+        if (first_frame_mouse) {
+            last_mouse_x = *p_accum_x;
+            last_mouse_y = *p_accum_y;
+            first_frame_mouse = false;
+        }
+
         float current_x = *p_accum_x;
         float current_y = *p_accum_y;
+        
         float dx = current_x - last_mouse_x;
         float dy = current_y - last_mouse_y;
+        
         last_mouse_x = current_x;
         last_mouse_y = current_y;
         
-        // Small base constant to convert pixels to radians
-        angular_velocity += glm::vec3(dy, dx, 0.0f); 
+        angular_velocity += glm::vec3(dy, dx, 0.0f);
     }
 
     if (needs_regeneration) {
@@ -348,10 +355,10 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     
     
     glEnable(GL_DEPTH_TEST);
-    // ВАЖНО: glViewport, glClear и glClearColor нет. Этим управляет Ядро.
+    // IMPORTANT: No glViewport, glClear, or glClearColor. The Core manages this.
     glUseProgram(program);
     
-    // Применяем смещение (offset) к матрице модели
+    // Apply offset to the model matrix
     glm::mat4 model = glm::translate(glm::mat4(1.0f), position_offset) * glm::toMat4(orientation);
     glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 3.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
@@ -511,7 +518,7 @@ extern "C" {
         return new IcoSphereEffectPlugin(); 
     }
     void destroy_effect(IWallpaperEffectABI* effect) {
-        // static_cast safely returns us to the class to call the destructor
+        // Static_cast safely returns us to the class to call the destructor
         delete static_cast<WallpaperEffect*>(effect);
     }
 }

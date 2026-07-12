@@ -1,113 +1,113 @@
 #version 300 es
-// Используем highp, так как вычисление дистанций требует высокой точности,
-// иначе на градиентах могут появиться артефакты плавающей запятой.
+// Use highp, because distance calculations require high precision,
+// Otherwise floating-point artifacts might appear on gradients.
 precision highp float;
 
 in vec2 v_uv;
 out vec4 FragColor;
 
 // ==============================================================================
-// 1. АВТОГЕНЕРИРУЕМЫЕ ПАРАМЕТРЫ (Для скрипта generate_plugin.py)
+// 1. AUTO-GENERATED PARAMETERS (For the generate_plugin.py script)
 // ==============================================================================
 
-// @param blend_power | float | 2.5 | Сила смешивания цветов (1.0 - жестко, 3.0+ - жидко)
+// @param blend_power | float | 2.5 | Color blending power (1.0 - hard, 3.0+ - liquid)
 uniform float blend_power;
-// @param bg_color | vec3 | 0.05, 0.05, 0.08 | Базовый цвет фона (пустоты)
+// @param bg_color | vec3 | 0.05, 0.05, 0.08 | Base background color (void)
 uniform vec3 bg_color;
 
-// --- Настройки изолиний (Топография) ---
-// @param enable_stripes | bool | false | Включить топографические линии
+// --- Contour settings (Topography) ---
+// @param enable_stripes | bool | false | Enable topographic lines
 uniform bool enable_stripes;
-// @param stripes_density | float | 15.0 | Плотность изолиний
+// @param stripes_density | float | 15.0 | Contour line density
 uniform float stripes_density;
-// @param stripes_opacity | float | 0.15 | Прозрачность изолиний
+// @param stripes_opacity | float | 0.15 | Contour line opacity
 uniform float stripes_opacity;
 
-// --- Настройки рендера ---
-// @param dithering_amount | float | 0.02 | Шум против бандинга (ступенек цвета)
+// --- Render settings ---
+// @param dithering_amount | float | 0.02 | Anti-banding noise (color stepping prevention)
 uniform float dithering_amount;
 
 // ==============================================================================
-// 2. ДИНАМИЧЕСКИЕ ДАННЫЕ (Читаются из BlackBoard, настраиваются в C++)
+// 2. DYNAMIC DATA (Read from BlackBoard, configured in C++)
 // ==============================================================================
 
-uniform vec2 resolution; // Передается из шаблона C++
+uniform vec2 resolution; // Passed from C++ template
 
 #define MAX_POINTS 16
-uniform int active_points;                    // Сколько точек реально используется
-uniform vec2 point_positions[MAX_POINTS];     // UV координаты точек (0.0 - 1.0)
-uniform vec3 point_colors[MAX_POINTS];        // RGB цвета
-uniform float point_radii[MAX_POINTS];        // Радиусы влияния
+uniform int active_points;                    // How many points are actually used
+uniform vec2 point_positions[MAX_POINTS];     // UV coordinates of points (0.0 - 1.0)
+uniform vec3 point_colors[MAX_POINTS];        // RGB colors
+uniform float point_radii[MAX_POINTS];        // Influence radii
 
 // ==============================================================================
-// 3. УТИЛИТЫ
+// 3. UTILITIES
 // ==============================================================================
 
-// Быстрый псевдослучайный генератор для дизеринга
+// Fast pseudo-random generator for dithering
 float rand(vec2 co) {
     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
 }
 
 void main() {
-    // Коррекция соотношения сторон (чтобы круги не сплющивались в овалы)
+    // Aspect ratio correction (so circles don't squash into ovals)
     float aspect = resolution.x / resolution.y;
     vec2 pos = v_uv;
     pos.x = (pos.x - 0.5) * aspect + 0.5;
 
     vec3 total_color = vec3(0.0);
-    float total_weight = 0.0001; // Защита от деления на ноль в пустых зонах
+    float total_weight = 0.0001; // Protection against division by zero in empty areas
 
     // ========================================================================
-    // ШАГ 1: ВЫЧИСЛЕНИЕ ПОЛЯ НАПРЯЖЕННОСТИ (METABALLS / IDW)
+    // STEP 1: CALCULATE THE INTENSITY FIELD (METABALLS / IDW)
     // ========================================================================
     for(int i = 0; i < MAX_POINTS; i++) {
-        // Оптимизация: выходим из цикла, если обработали все активные точки
+        // Optimization: exit the loop if all active points have been processed
         if (i >= active_points) break; 
 
         vec2 pt_pos = point_positions[i];
-        pt_pos.x = (pt_pos.x - 0.5) * aspect + 0.5; // Корректируем позицию точки
+        pt_pos.x = (pt_pos.x - 0.5) * aspect + 0.5; // Correct point position
 
-        // Дистанция от текущего пикселя до точки
+        // Distance from the current pixel to the point
         float dist = distance(pos, pt_pos);
-        dist = max(dist, 0.001); // Защита от деления на ноль прямо в центре точки
+        dist = max(dist, 0.001); // Protection against division by zero right at the point's center
 
-        // Расчет веса (влияния) этой точки на данный пиксель.
-        // Чем больше радиус и меньше дистанция, тем выше вес.
+        // Calculate the weight (influence) of this point on the current pixel.
+        // The larger the radius and smaller the distance, the higher the weight.
         float weight = pow(point_radii[i] / dist, blend_power);
 
         total_weight += weight;
         total_color += point_colors[i] * weight;
     }
 
-    // Итоговый цвет пикселя (Взвешенное среднее + плавный уход в цвет фона)
+    // Final pixel color (Weighted average + smooth fade to background color)
     vec3 final_color = total_color / total_weight;
     
-    // Смешиваем с фоном там, где суммарный вес меньше 1.0 (за пределами радиусов)
+    // Mix with the background where the total weight is less than 1.0 (outside radii)
     final_color = mix(bg_color, final_color, clamp(total_weight, 0.0, 1.0));
 
     // ========================================================================
-    // ШАГ 2: ИЗОЛИНИИ (TOPOGRAPHY / STRIPES)
+    // STEP 2: CONTOUR LINES (TOPOGRAPHY / STRIPES)
     // ========================================================================
     if (enable_stripes) {
-        // Используем логарифм от суммарного веса, чтобы поле распределялось 
-        // равномернее и линии не скапливались в кучу возле центров точек.
+        // Use the logarithm of the total weight so the field distributes 
+        // More evenly and lines won't clump together near point centers.
         float field = log(total_weight + 1.0); 
         
-        // Генерируем волну на основе поля
+        // Generate a wave based on the field
         float wave = sin(field * stripes_density);
         
-        // Делаем тонкие жесткие линии (оставляем только пики синусоиды)
+        // Create thin hard lines (leave only the sine wave peaks)
         float line = smoothstep(0.9, 1.0, wave);
         
-        // Накладываем линии поверх градиента (светлые полупрозрачные)
+        // Overlay lines on top of the gradient (light and semi-transparent)
         final_color = mix(final_color, vec3(1.0), line * stripes_opacity);
     }
 
     // ========================================================================
-    // ШАГ 3: ДИЗЕРИНГ (DITHERING)
+    // STEP 3: DITHERING
     // ========================================================================
-    // Извлекаем микроскопический шум [-0.5..0.5] для каждого пикселя.
-    // Это разрушает 8-битные "лесенки" градиента при выводе на монитор.
+    // Extract microscopic noise [-0.5..0.5] for each pixel.
+    // This breaks up 8-bit gradient banding when displayed on the monitor.
     float noise = (rand(gl_FragCoord.xy) - 0.5) * dithering_amount;
     final_color += noise;
 

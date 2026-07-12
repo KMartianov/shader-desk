@@ -27,10 +27,10 @@ public:
     // --- Implementation of the new parameter interface ---
     std::vector<EffectParameter> get_parameters() const override {
         return {
-            {"mouse_sensitivity", "Чувствительность обычной мыши", mouse_sensitivity},
-            {"touchpad_sensitivity", "Чувствительность тачпада (абс. координаты)", touchpad_sensitivity},
-            {"invert_x", "Инвертировать движение по оси X", invert_x},
-            {"invert_y", "Инвертировать движение по оси Y", invert_y}
+            {"mouse_sensitivity", "Standard mouse sensitivity", mouse_sensitivity},
+            {"touchpad_sensitivity", "Touchpad sensitivity (absolute coordinates)", touchpad_sensitivity},
+            {"invert_x", "Invert X-axis movement", invert_x},
+            {"invert_y", "Invert Y-axis movement", invert_y}
         };
     }
 
@@ -62,7 +62,7 @@ public:
         std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-pointer");
         strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
         
-        unlink(socket_path.c_str()); // ВАЖНО: Удаляем старый файл!
+        unlink(socket_path.c_str()); // IMPORTANT: Delete the old file!
         
         if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
             std::cerr << "[PointerProvider] Failed to bind socket at " << socket_path << std::endl;

@@ -1,4 +1,4 @@
-// utilities/shader-desk-ctl.cpp
+// Utilities/shader-desk-ctl.cpp
 #include <iostream>
 #include <string>
 #include <sys/socket.h>
@@ -13,7 +13,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Собираем аргументы в одну строку команды
+    // Assemble arguments into a single command string
     std::string command;
     for (int i = 1; i < argc; ++i) {
         command += argv[i];
@@ -37,10 +37,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Отправляем команду
+    // Send command
     write(sockfd, command.c_str(), command.length());
 
-    // Читаем ответ от сервера
+    // Read response from server
     char buffer[1024]{0};
     ssize_t n = read(sockfd, buffer, sizeof(buffer) - 1);
     if (n > 0) {

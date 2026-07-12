@@ -1,4 +1,4 @@
-// src/lua-config-generator.cpp
+// Src/lua-config-generator.cpp
 #include "lua-config-generator.hpp"
 #include "embedded_ctl.hpp"   
 #include "embedded_init.hpp"
@@ -16,7 +16,7 @@ namespace fs = std::filesystem;
 // ==============================================================================
 
 std::string LuaConfigGenerator::get_config_dir(const std::string& custom_dir) {
-    if (!custom_dir.empty()) return custom_dir; // Если передали кастомный путь, используем его!
+    if (!custom_dir.empty()) return custom_dir; // If a custom path was provided, use it!
     
     const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
     std::string base_dir;
@@ -38,7 +38,7 @@ std::string LuaConfigGenerator::sanitize_filename(std::string name) {
 }
 
 // Converts C-ABI values (ParamValueABI) to Lua syntax
-// [NEW] This function now works exclusively with flat C-structs, not std::variant.
+// This function now works exclusively with flat C-structs, not std::variant.
 std::string LuaConfigGenerator::value_to_lua_string(const ParamValueABI& val) {
     switch (val.type) {
         case ParamType::TYPE_BOOL: 
@@ -84,21 +84,21 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& 
 
     std::cout << "Generating Lua configs in: " << config_dir << std::endl;
 
-    // 1. Создаем ctl.lua (если не существует) <--- НОВЫЙ БЛОК!
+    // 1. Create ctl.lua (if it doesn't exist)
     fs::path ctl_lua_path = fs::path(config_dir) / "ctl.lua";
     if (!fs::exists(ctl_lua_path)) {
         generate_ctl_lua(ctl_lua_path.string());
         std::cout << "  ✓ Generated auxiliary CLI module: ctl.lua" << std::endl;
     }
 
-    // 2. Создаем init.lua (если не существует)
+    // 2. Create init.lua (if it doesn't exist)
     fs::path init_lua_path = fs::path(config_dir) / "init.lua";
     if (!fs::exists(init_lua_path)) {
         generate_init_lua(init_lua_path.string(), available_effects[0]);
         std::cout << "  ✓ Generated main config: init.lua" << std::endl;
     }
 
-    // Инициализация пользовательских Сцен
+    // Initialization of user Scenes
     fs::path user_scenes_dir = fs::path(config_dir) / "scenes";
     fs::create_directories(user_scenes_dir);
 
@@ -110,7 +110,7 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& 
     if (src_scenes_dir.empty() && fs::exists(SYSTEM_SCENES_DIR)) src_scenes_dir = SYSTEM_SCENES_DIR;
     #endif
 
-    // Резервный фоллбэк
+    // Fallback reserve
     if (src_scenes_dir.empty() && fs::exists("./src/defaults/scenes")) src_scenes_dir = "./src/defaults/scenes";
 
     if (!src_scenes_dir.empty()) {
@@ -211,11 +211,11 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     
     out << "-- ==============================================================================\n";
     out << "-- <<< BEGIN MANAGED PARAMS >>>\n";
-    out << "-- Не удаляйте маркеры. Изменяйте значения справа от знака '='.\n";
+    out << "-- Do not remove markers. Change values to the right of the '=' sign.\n";
     out << "-- ==============================================================================\n";
 
     // Write actual parameters from C++
-    // [NEW] Use safe C-ABI to get the plugin parameter list.
+    // Use safe C-ABI to get the plugin parameter list.
     uint32_t count = effect->get_parameter_count_abi();
     for (uint32_t i = 0; i < count; ++i) {
         ParamInfoABI param_info;
@@ -229,10 +229,10 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
         if (user_values.count(param_name)) {
             // Restore user-modified value
             out << user_values[param_name] << " -- " << param_info.description << "\n";
-            user_values.erase(param_name); // Удаляем, чтобы найти DEPRECATED
+            user_values.erase(param_name); // Remove to find DEPRECATED
         } else {
             // Insert new default value
-            out << default_val << " -- [NEW] " << param_info.description << "\n";
+            out << default_val << " -- " << param_info.description << "\n";
         }
     }
 
@@ -240,7 +240,7 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
     for (const auto& [dep_key, dep_val] : user_values) {
         // Prevent duplicate DEPRECATED markers
         if (dep_key.find("[DEPRECATED]") == std::string::npos) {
-            out << "-- [DEPRECATED] p." << dep_key << " = " << dep_val << " -- Удалено в новой версии\n";
+            out << "-- [DEPRECATED] p." << dep_key << " = " << dep_val << " -- Removed in new version\n";
         }
     }
 
@@ -258,9 +258,9 @@ void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const
             out << line << "\n";
         }
     } else {
-        out << "\n-- ЗОНА СВОБОДНОЙ ЛОГИКИ ПЛАГИНА:\n";
-        out << "-- Пишите здесь функции и переопределения, специфичные для этого плагина.\n";
-        out << "-- Пример загрузки пресета (раскомментируйте, если пресет существует):\n";
+        out << "\n-- PLUGIN FREE LOGIC ZONE:\n";
+        out << "-- Write plugin-specific functions and overrides here.\n";
+        out << "-- Preset loading example (uncomment if preset exists):\n";
         out << "-- core.utils.apply_preset(p, \"" << plugin_name << "\", \"default\")\n";
     }
 

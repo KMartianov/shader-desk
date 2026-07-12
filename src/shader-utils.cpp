@@ -1,11 +1,11 @@
-// src/shader-utils.cpp
+// Src/shader-utils.cpp
 #include "shader-utils.hpp"
 #include "plugin-abi.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <cstdlib>
-#include <filesystem> // <--- ВОТ ЭТОГО НЕ ХВАТАЛО!
+#include <filesystem> // <--- THIS WAS MISSING!
 
 namespace fs = std::filesystem;
 
@@ -17,7 +17,7 @@ std::string load_shader_source(ICoreContextABI* core, const std::string& plugin_
         bundle_dir = core->get_bundle_path(plugin_name.c_str());
     }
 
-    // 1. Поиск в папке бандла плагина: .../effects/<bundle>/shaders/<filename>
+    // 1. Search in the plugin bundle folder: .../effects/<bundle>/shaders/<filename>
     if (!bundle_dir.empty()) {
         fs::path filepath = fs::path(bundle_dir) / "shaders" / shader_filename;
         std::ifstream file(filepath);
@@ -31,7 +31,7 @@ std::string load_shader_source(ICoreContextABI* core, const std::string& plugin_
         }
     }
 
-    // 2. Fallback: поиск относительно текущей рабочей директории
+    // 2. Fallback: search relative to the current working directory
     std::ifstream file(shader_filename);
     if (file.is_open()) {
         std::stringstream buffer;
@@ -94,4 +94,4 @@ GLuint create_shader_program(const std::string& vertex_src, const std::string& f
     return program;
 }
 
-} // namespace shader_utils
+} // Namespace shader_utils

@@ -12,6 +12,21 @@ Shader Desk  это модульный, высокопроизводительн
 > `[GIF: Демонстрация интерактивного 3D-объекта (реакция на мышь)]`
 > `[GIF: Демонстрация портативного шейдера из ShaderToy]`
 
+## Оглавление документации
+**Начало работы**
+* [Установка и настройка](docs/ru/01-installation-and-setup.md)
+* [Конфигурация и сцены](docs/ru/02-configuration-and-scenes.md)
+* [Рабочие пространства (Workspaces) и шейдеры](docs/ru/03-workspaces-and-shaders.md)
+
+**Управление и автоматизация**
+* [Руководство по утилите shader-desk-ctl](docs/ru/shader-desk-ctl.md)
+
+**Разработка (SDK) и под капотом**
+* [SDK: Создание визуальных плагинов](docs/ru/04-sdk-visual-plugins.md)
+* [SDK: Создание провайдеров данных](docs/ru/05-sdk-data-providers.md)
+* [Справочник Lua API](docs/ru/06-lua-api-reference.md)
+* [Обзор архитектуры](docs/ru/07-architecture-overview.md)
+
 ## Совместимость с графическими окружениями
 
 Для вывода изображения на фон рабочего стола Shader Desk использует открытый протокол **`zwlr_layer_shell_v1`**. Проект работает исключительно под управлением сеансов Wayland (X11 не поддерживается).
@@ -149,14 +164,16 @@ shader-desk-ctl "ctl.toggle('enable_stripes', '*')"
 Полная техническая документация разделена по уровням и доступна в директории `docs/ru/`.
 
 1. **Для пользователей**
-   * [Установка, сборка и интеграция с WM](docs/ru/01-installation.md)
-   * [Конфигурация через Lua API и пресеты](docs/ru/02-configuration.md)
+   * [Установка, сборка и интеграция с WM](docs/ru/01-installation-and-setup.md)
+   * [Конфигурация через Lua API и пресеты](docs/ru/02-configuration-and-scenes.md)
+   * [Управление из консоли и автоматизация (shader-desk-ctl)](docs/ru/shader-desk-ctl.md)
 2. **Для креаторов и художников**
-   * [Работа с шейдерами, ShaderToy и локальным воркспейсом](docs/ru/03-workspaces-shaders.md)
+   * [Работа с шейдерами, ShaderToy и локальным воркспейсом](docs/ru/03-workspaces-and-shaders.md)
 3. **Для разработчиков (C++ SDK)**
-   * [Создание визуальных C-ABI плагинов и шаблоны](docs/ru/04-cpp-plugins.md)
-   * [Разработка демонов и провайдеров данных](docs/ru/05-data-daemons.md)
-   * [Архитектура микроядра и телеметрия (Tracy)](docs/ru/06-architecture.md)
+   * [Создание визуальных C-ABI плагинов и шаблоны](docs/ru/04-sdk-visual-plugins.md)
+   * [Разработка демонов и провайдеров данных](docs/ru/05-sdk-data-providers.md)
+   * [Справочник Lua API](docs/ru/06-lua-api-reference.md)
+   * [Архитектура микроядра и телеметрия (Tracy)](docs/ru/07-architecture-overview.md)
 
 ## Экосистема и сторонние плагины
 

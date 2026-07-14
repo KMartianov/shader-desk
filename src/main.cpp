@@ -6,12 +6,16 @@
 #include <signal.h>
 #include <sys/signalfd.h>
 #include <algorithm>
+#include <sys/file.h>
 
 #include <nlohmann/json.hpp>
 #include "interactive-wallpaper.hpp"
 #include "plugin-manager.hpp"
 #include "lua-engine.hpp"
 #include "lua-config-generator.hpp"
+
+// Include the compile-time embedded help text
+#include "embedded_help.hpp"
 
 namespace fs = std::filesystem;
 
@@ -71,7 +75,7 @@ void init_user_workspace(const std::string& custom_config_dir) {
     else if (fs::exists("../plugins")) source_to_use = "../plugins";
     else if (fs::exists(SYSTEM_SOURCE_DIR)) source_to_use = SYSTEM_SOURCE_DIR;
     else {
-        std::cerr << "Error: Source directory not found." << std::endl;
+        std::cerr << "[Error] Source directory not found." << std::endl;
         return;
     }
 
@@ -83,7 +87,7 @@ void init_user_workspace(const std::string& custom_config_dir) {
     fs::copy(source_to_use, user_effects_dir, copy_opts, ec);
     
     if (ec) {
-        std::cerr << "Failed to copy workspace sources: " << ec.message() << std::endl;
+        std::cerr << "[Error] Failed to copy workspace sources: " << ec.message() << std::endl;
         return;
     }
 
@@ -119,17 +123,34 @@ int main(int argc, char** argv) {
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--config" && i + 1 < argc) {
+        
+        // --- HELP FLAG ---
+        if (arg == "-h" || arg == "--help") {
+            std::cout << Embedded::HELP_TEXT << std::endl;
+            return 0; // Print embedded help and exit cleanly
+        } 
+        else if (arg == "--config" && i + 1 < argc) {
             // CRITICAL: Convert to absolute path immediately.
             // If run via Hyprland/Sway "exec-once", relative paths will point to $HOME.
             custom_config_dir = fs::absolute(argv[i + 1]).string();
             i++; // Skip the path argument
-        } else if (arg == "--inspect" && i + 1 < argc) {
+        } 
+        else if (arg == "--inspect" && i + 1 < argc) {
             main_command = arg;
             inspect_target = argv[i + 1];
             i++; // Skip the plugin name argument
-        } else if (arg.rfind("--", 0) == 0) {
-            main_command = arg; // Remember main action (--init-config, --list-plugins, etc.)
+        } 
+        else if (arg == "--init-workspace" || arg == "--init-config" || 
+                 arg == "--list-plugins" || arg == "--list-providers") {
+            // Strict white-list for utility commands
+            main_command = arg; 
+        }
+        else {
+            // --- UNKNOWN ARGUMENT PROTECTION ---
+            // Catch typos (e.g. "--h"), garbage strings, or missing values
+            std::cerr << "\033[31m[Error] Unknown command or argument: '" << arg << "'\033[0m\n\n";
+            std::cout << Embedded::HELP_TEXT << std::endl;
+            return 1; // Exit with error code
         }
     }
 
@@ -169,7 +190,7 @@ int main(int argc, char** argv) {
                 }
                 nlohmann::json info = pm.inspect_plugin(inspect_target);
                 if (info.is_null()) {
-                    std::cerr << "Error: Plugin '" << inspect_target << "' not found." << std::endl;
+                    std::cerr << "[Error] Plugin '" << inspect_target << "' not found." << std::endl;
                     return 1;
                 }
                 std::cout << info.dump(2) << std::endl;
@@ -178,6 +199,18 @@ int main(int argc, char** argv) {
         }
     } 
 
+    // 2.5 Single Instance Protection
+    // Prevent multiple instances of the microkernel from clashing over UNIX sockets.
+    std::string lock_file = "/tmp/shader-desk-" + std::to_string(getuid()) + ".lock";
+    int lock_fd = open(lock_file.c_str(), O_CREAT | O_RDWR, 0600);
+    if (lock_fd < 0 || flock(lock_fd, LOCK_EX | LOCK_NB) < 0) {
+        std::cerr << "\033[31m[Error] Shader Desk is already running for this user.\033[0m\n";
+        std::cerr << "Close the existing instance before starting a new one.\n";
+        if (lock_fd >= 0) close(lock_fd);
+        return 1;
+    }
+    // The lock is held automatically until the process exits or crashes.
+
     // 3. Block POSIX signals. 
     // They will be handled safely via signalfd integrated into the Wayland epoll loop.
     sigset_t mask;
@@ -185,7 +218,7 @@ int main(int argc, char** argv) {
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGTERM);
     if (sigprocmask(SIG_BLOCK, &mask, nullptr) == -1) {
-        std::cerr << "Failed to block POSIX signals." << std::endl;
+        std::cerr << "[Error] Failed to block POSIX signals." << std::endl;
         return 1;
     }
 
@@ -206,7 +239,7 @@ int main(int argc, char** argv) {
 
     auto available_effects = plugin_manager.get_available_effects();
     if (available_effects.empty()) {
-        std::cerr << "CRITICAL: No visual plugins discovered. Exiting." << std::endl;
+        std::cerr << "\033[31mCRITICAL: No visual plugins discovered. Exiting.\033[0m" << std::endl;
         return 1;
     }
 
@@ -222,7 +255,7 @@ int main(int argc, char** argv) {
 
     // 8. Load user configuration
     if (!lua_engine.load()) {
-        std::cerr << "Warning: Failed to evaluate Lua configuration. Proceeding with fallback defaults." << std::endl;
+        std::cerr << "\033[33m[Warning] Failed to evaluate Lua configuration. Proceeding with fallback defaults.\033[0m" << std::endl;
     }
 
     // 9. Select the default fallback effect if the configured one is missing
@@ -236,7 +269,7 @@ int main(int argc, char** argv) {
     
     // 10. Connect to the Wayland display and bind compositor interfaces (layer-shell, EGL)
     if (!wallpaper.initialize()) {
-        std::cerr << "CRITICAL: Failed to connect to the Wayland compositor or initialize EGL." << std::endl;
+        std::cerr << "\033[31mCRITICAL: Failed to connect to the Wayland compositor or initialize EGL.\033[0m" << std::endl;
         return 1;
     }
 
@@ -246,7 +279,7 @@ int main(int argc, char** argv) {
     });
 
     // 12. Enter the zero-latency epoll event loop
-    std::cout << "[Core] Entering main epoll event loop..." << std::endl;
+    std::cout << "\033[32m[Core] Entering main epoll event loop...\033[0m" << std::endl;
     wallpaper.run();
     
     std::cout << "[Core] Microkernel shut down gracefully. Clean RAII resource deallocation in progress..." << std::endl;

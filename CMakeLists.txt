@@ -170,13 +170,13 @@ generate_wayland_protocol("${WP_STABLE_DIR}/xdg-shell/xdg-shell.xml"
 add_custom_target(wayland_protocols ALL DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_PROTOCOL_HEADERS})
 
 # ==============================================================================
-# 5. EMBEDDED RESOURCES GENERATION (Lua -> C++ Headers)
+# 5. EMBEDDED RESOURCES GENERATION (Text/Lua -> C++ Headers)
 # ==============================================================================
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# Added a separate HEADER_NAME argument to explicitly specify the lowercase filename
-macro(embed_lua_script FILE_NAME HEADER_NAME VAR_NAME)
+# A generic macro to bake any text file into a C++ header at compile time
+macro(embed_text_resource FILE_NAME HEADER_NAME VAR_NAME)
     set(HEADER_OUT "${GENERATED_DIR}/embedded_${HEADER_NAME}.hpp")
     add_custom_command(
         OUTPUT "${HEADER_OUT}"
@@ -192,8 +192,11 @@ macro(embed_lua_script FILE_NAME HEADER_NAME VAR_NAME)
     list(APPEND EMBEDDED_HEADERS "${HEADER_OUT}")
 endmacro()
 
-embed_lua_script("ctl.lua" "ctl" "CTL_LUA")
-embed_lua_script("init.lua" "init" "INIT_LUA")
+# Bake Lua configs and the CLI Help text
+embed_text_resource("ctl.lua" "ctl" "CTL_LUA")
+embed_text_resource("init.lua" "init" "INIT_LUA")
+embed_text_resource("help.txt" "help" "HELP_TEXT")
+
 add_custom_target(embedded_resources ALL DEPENDS ${EMBEDDED_HEADERS})
 
 # ==============================================================================

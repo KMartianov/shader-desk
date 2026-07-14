@@ -131,7 +131,7 @@ core.get_layer("DP-1", "bg_layer")
   *Пример:* `shader-desk-ctl "ctl.cycle('bg_color', {{1,0,0}, {0,1,0}, {0,0,1}}, '*')"`
 * **`ctl.provider(name, enabled)`**
   Включает или выключает демона сбора данных (Data Provider) на лету.
-  *Пример:* `shader-desk-ctl "ctl.provider('Cava Audio Provider', false)"`
+  *Пример:* `shader-desk-ctl "ctl.provider('Native FFTW Audio Provider', false)"`
 
 ### Темы и интеграция с Pywal
 * **`ctl.pywal(output)`**

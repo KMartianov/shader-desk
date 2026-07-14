@@ -87,7 +87,8 @@ bool LuaEngine::load() {
     #endif
     
     // 2. Load standard safe Lua libraries
-    lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, sol::lib::string, sol::lib::table, sol::lib::package);
+    lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, 
+                       sol::lib::string, sol::lib::table, sol::lib::package, sol::lib::io);
 
     // ==============================================================================
     // SECURITY PATCH: Sandbox the 'os' library.
@@ -98,6 +99,22 @@ bool LuaEngine::load() {
     lua["os"]["remove"]  = sol::nil;
     lua["os"]["rename"]  = sol::nil;
     lua["os"]["exit"]    = sol::nil;
+
+    lua["io"]["popen"]   = sol::nil; // Prevents shell command execution via pipes
+
+    // SECURITY PATCH: Restrict io.open to Read-Only mode
+    lua.safe_script(R"(
+        local original_open = io.open
+        io.open = function(filename, mode)
+            local m = mode or "r"
+            if m:match("w") or m:match("a") or m:match("+") then
+                return nil, "Security Error: Write access denied in Shader Desk"
+            end
+            return original_open(filename, m)
+        end
+        io.output = nil
+        io.write = nil
+    )", sol::script_pass_on_error);
 
 
     
@@ -376,6 +393,24 @@ struct LuaLayerProxy {
         return *this; 
     }
 
+    // Zero-allocation method for hot-path parameter updates (e.g., inside on_frame).
+    // Prevents LuaJIT from creating garbage collection spikes when updating colors/vectors.
+    LuaLayerProxy& set_vec3(const std::string& param_name, float x, float y, float z) {
+        if (!engine->get_layer_by_tag) return *this;
+        
+        IWallpaperEffectABI* effect = engine->get_layer_by_tag(output_name, tag);
+        if (!effect) return *this;
+
+        ParamValueABI abi_val;
+        abi_val.type = ParamType::TYPE_VEC3;
+        abi_val.vec3_val[0] = x;
+        abi_val.vec3_val[1] = y;
+        abi_val.vec3_val[2] = z;
+
+        effect->set_parameter_abi(param_name.c_str(), &abi_val);
+        return *this;
+    }
+
     // Reads the current parameter state directly from the C++ plugin.
     sol::object get(const std::string& param_name, sol::this_state s) {
         if (!engine->get_layer_by_tag) return sol::make_object(s, sol::nil);
@@ -521,6 +556,7 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     // Register the proxy object structure in Sol2
     lua.new_usertype<LuaLayerProxy>("LayerProxy",
         "set", &LuaLayerProxy::set,
+        "set_vec3", &LuaLayerProxy::set_vec3,
         "get", &LuaLayerProxy::get
     );
 

@@ -48,7 +48,7 @@ core.providers = {
         mouse_sensitivity = 1.0,
         touchpad_sensitivity = 2.5,
     },
-    ["Cava Audio Provider"] = {
+    ["Native FFTW Audio Provider"] = {
         enabled = true,
         smoothing = 0.85,          
         volume_multiplier = 100.0,

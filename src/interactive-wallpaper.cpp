@@ -265,59 +265,94 @@ void InteractiveWallpaper::setup_ipc() {
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    
+    // Always remove the stale socket file from a previous unclean shutdown
     unlink(socket_path.c_str()); 
 
-    // ACCESS PROTECTION: Only our user will be able to write to the socket (0600)
+    // SECURITY: Temporarily set umask to ensure the socket is created with 0600 permissions.
+    // This strictly prevents other Linux users on the system from controlling your wallpaper.
     mode_t old_mask = umask(0077); 
     int bind_res = bind(ipc_fd, (struct sockaddr*)&addr, sizeof(addr));
     umask(old_mask); 
 
     if (bind_res < 0 || listen(ipc_fd, 5) < 0) {
-        std::cerr << "Failed to bind IPC socket at " << socket_path << std::endl;
+        std::cerr << "[Core] Failed to bind IPC socket at " << socket_path << std::endl;
         close(ipc_fd);
         ipc_fd = -1;
         return;
     }
 
-    // Listen for incoming connections
+    // Register the main server socket in the epoll event loop
     register_epoll_fd_cxx(ipc_fd, [this](uint32_t) {
         int client_fd = accept4(ipc_fd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (client_fd < 0) return;
 
-        // Register the NEW client socket in epoll for reading data
-        register_epoll_fd_cxx(client_fd, [this, client_fd](uint32_t) {
-            char buffer[1024];
-            ssize_t bytes = read(client_fd, buffer, sizeof(buffer));
+        // Register the newly connected client socket for reading
+        register_epoll_fd_cxx(client_fd, [this, client_fd](uint32_t events) {
+            char buffer[8192]; // Optimized buffer size for handling piped Lua scripts
+            
+            // Zero-Latency Drain Pattern:
+            // Continually read from the socket until the OS kernel signals EAGAIN/EWOULDBLOCK.
+            // This prevents data buffering delays and keeps the epoll loop lean.
+            while (true) {
+                ssize_t bytes = read(client_fd, buffer, sizeof(buffer));
 
-            if (bytes > 0) {
-                ipc_buffers[client_fd].append(buffer, bytes);
-                
-                // Spam/OOM protection (if > 8kb is sent without a newline)
-                if (ipc_buffers[client_fd].size() > 8192) goto close_client;
-
-                // FRAMING: Execute all complete commands separated by '\n'
-                size_t pos;
-                while ((pos = ipc_buffers[client_fd].find('\n')) != std::string::npos) {
-                    std::string cmd = ipc_buffers[client_fd].substr(0, pos);
-                    ipc_buffers[client_fd].erase(0, pos + 1);
-
-                    // SAFE EXECUTION (Without C++ Exceptions, without abort)
-                    auto result = lua_engine.get_state().safe_script(cmd, sol::script_pass_on_error);
+                if (bytes > 0) {
+                    ipc_buffers[client_fd].append(buffer, bytes);
                     
-                    if (result.valid()) {
-                        write(client_fd, "OK\n", 3);
-                    } else {
-                        sol::error err = result;
-                        std::string resp = std::string("LUA_ERR: ") + err.what() + "\n";
-                        write(client_fd, resp.c_str(), resp.length());
+                    // OOM (Out-Of-Memory) / Spam Protection: 
+                    // Terminate connection if the accumulated payload exceeds 128 KB without a frame delimiter.
+                    if (ipc_buffers[client_fd].size() > 131072) {
+                        goto close_client;
                     }
+
+                    // NULL-TERMINATED FRAMING PROTOCOL:
+                    // Extract and execute all complete commands delimited by '\0'.
+                    size_t pos;
+                    while ((pos = ipc_buffers[client_fd].find('\0')) != std::string::npos) {
+                        std::string cmd = ipc_buffers[client_fd].substr(0, pos);
+                        ipc_buffers[client_fd].erase(0, pos + 1);
+
+                        if (cmd.empty()) continue; // Safely ignore empty frames
+
+                        // Execute the received command within the isolated Lua sandbox
+                        auto result = lua_engine.get_state().safe_script(cmd, sol::script_pass_on_error);
+                        
+                        std::string resp;
+                        if (result.valid()) {
+                            resp = "OK";
+                        } else {
+                            sol::error err = result;
+                            resp = std::string("LUA_ERR: ") + err.what();
+                        }
+                        
+                        // CRITICAL: Append the null-byte delimiter to the outgoing response 
+                        // so the CLI utility knows exactly when the server message ends.
+                        resp.push_back('\0');
+                        
+                        // For local UNIX domain sockets, typical responses fit entirely within 
+                        // the kernel's send buffer. A single non-blocking write is sufficient here.
+                        write(client_fd, resp.data(), resp.size());
+                    }
+                } else if (bytes < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        break; // Socket drained successfully, return to epoll wait
+                    }
+                    if (errno == EINTR) {
+                        continue; // Interrupted by a system signal, retry reading
+                    }
+                    goto close_client; // Unrecoverable socket error
+                } else if (bytes == 0) {
+                    // EOF: The client process cleanly closed the connection (or terminated)
+                    goto close_client;
                 }
-            } else if (bytes == 0 || (bytes < 0 && errno != EAGAIN)) {
-            close_client:
-                ipc_buffers.erase(client_fd);
-                unregister_epoll_fd(client_fd);
-                close(client_fd);
             }
+            return;
+
+        close_client:
+            ipc_buffers.erase(client_fd);
+            unregister_epoll_fd(client_fd);
+            close(client_fd);
         });
     });
 }
@@ -499,19 +534,19 @@ bool InteractiveWallpaper::initialize() {
 void InteractiveWallpaper::recover_egl_context() {
     std::cout << "\n\033[36m[Core] Initiating native in-process EGL recovery...\033[0m" << std::endl;
 
-    // 1. Clean up old resources (even if the context is dead, we must reset the C++ plugins state)
+    // 1. Discard dead resources. 
+    // DO NOT make the context current (it's physically dead).
+    // DO NOT call glDelete* (it will cause NVIDIA driver Segfaults).
     for (auto& pair : outputs) {
         Output* out = pair.second.get();
         if (out->egl_surface != EGL_NO_SURFACE) {
-            // Make the dead context current so plugins can safely call glDelete* without a Segfault
-            eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context);
             
-            for (auto& layer : out->layers) {
-                if (layer.effect) layer.effect->cleanup(); // Resets shaders and VAO
-            }
-            out->destroy_fbos(); // Deletes old core textures
+            // Cleanly destroy C++ plugin instances. 
+            // The OS driver has already reclaimed all GPU memory (FBOs, VAOs, VBOs).
+            out->layers.clear(); 
+            out->destroy_fbos(); // Only resets local handles (0)
             
-            // Unbind EGL from Wayland
+            // Detach Wayland EGL
             eglDestroySurface(egl_display, out->egl_surface);
             out->egl_surface = EGL_NO_SURFACE;
             
@@ -522,7 +557,7 @@ void InteractiveWallpaper::recover_egl_context() {
         }
     }
 
-    // 2. Complete destruction of the EGL session
+    // 2. Terminate the dead EGL driver completely
     if (egl_context != EGL_NO_CONTEXT) {
         eglDestroyContext(egl_display, egl_context);
         egl_context = EGL_NO_CONTEXT;
@@ -532,7 +567,7 @@ void InteractiveWallpaper::recover_egl_context() {
         egl_display = EGL_NO_DISPLAY;
     }
 
-    // 3. Bring up the driver from scratch
+    // 3. Restart GPU connection
     if (!init_egl()) {
         std::cerr << "\033[31m[Core] CRITICAL: Failed to re-initialize EGL driver. Shutting down.\033[0m" << std::endl;
         global_running = false;
@@ -540,34 +575,18 @@ void InteractiveWallpaper::recover_egl_context() {
         return;
     }
 
-    // 4. Restore the pipeline for each monitor
+    // 4. Rebuild the visual pipeline entirely from scratch
     for (auto& pair : outputs) {
         Output* out = pair.second.get();
         if (out->width > 0 && out->height > 0) {
-            // Create new Wayland-EGL windows
             create_egl_surface(out);
-
-            if (out->egl_surface != EGL_NO_SURFACE && eglMakeCurrent(egl_display, out->egl_surface, out->egl_surface, egl_context)) {
-                
-                // Calculate the physical buffer size (accounting for Lua scaling)
-                OutputConfig out_cfg = lua_engine.get_output_config(out->name, out->identifier);
-                uint32_t target_fbo_w = (out->width * out->scale) * out_cfg.fbo_scale;
-                uint32_t target_fbo_h = (out->height * out->scale) * out_cfg.fbo_scale;
-
-                // Reallocate memory on the GPU
-                out->allocate_fbos(target_fbo_w, target_fbo_h);
-
-                // Recompile shaders inside the old plugin instances
-                for (auto& layer : out->layers) {
-                    if (layer.effect) {
-                        if (!layer.effect->initialize(this, target_fbo_w, target_fbo_h)) {
-                            std::cerr << "\033[31m[Core] Failed to revive layer: " << layer.name << "\033[0m" << std::endl;
-                        }
-                    }
-                }
-                
-                // CRITICAL: Restore Lua settings to plugins (otherwise colors will reset)
-                apply_config_to_effect(out);
+            
+            // By calling apply_effect_to_output, we force the PluginManager 
+            // to instantiate fresh copies of the plugins and reload their state from Lua.
+            // This bypasses the need for an ABI change entirely!
+            apply_effect_to_output(out);
+            if (!out->frame_callback) {
+                this->render_output(out);
             }
         }
     }
@@ -612,6 +631,16 @@ void InteractiveWallpaper::run() {
             if (fd == wl_fd) {
                 wayland_event = true;
             } else if (epoll_callbacks.find(fd) != epoll_callbacks.end()) {
+                // SECURITY: Catch broken pipes or closed sockets before executing the callback.
+                // Prevents 100% CPU usage in an infinite epoll_wait loop.
+                if (revents & (EPOLLERR | EPOLLHUP)) {
+                    std::cerr << "[Core] Epoll detected broken FD: " << fd << ". Unregistering safely." << std::endl;
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                    epoll_callbacks.erase(fd);
+                    close(fd);
+                    continue; // Skip the callback execution
+                }
+                
                 epoll_callbacks[fd](revents);
             }
         }
@@ -790,40 +819,45 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
 
 
 void InteractiveWallpaper::render_output(Output* output) {
-    // Ensure the output is fully initialized and has active visual layers
+    // Ensure the output is fully initialized, has active visual layers, and an active EGL surface
     if (!output->configured || output->layers.empty() || output->egl_surface == EGL_NO_SURFACE) return;
 
     ZoneScoped; 
     ZoneText(output->name.c_str(), output->name.length()); 
 
-    // Calculate real delta time
+    // Calculate elapsed time since the LAST RENDERED frame
     auto now = std::chrono::steady_clock::now();
     std::chrono::duration<float> delta_duration = now - output->last_frame_time;
-    float real_dt = delta_duration.count();
-    output->last_frame_time = now;
+    float dt_since_last_render = delta_duration.count();
 
-    // Clamp delta time to prevent physics explosions after suspend/resume
-    if (real_dt > 0.1f || real_dt < 0.0f) real_dt = 0.0166f;
-
-    output->time_since_last_render += real_dt;
-
-    // Custom FPS limiter logic
+    // Hardware-accelerated FPS limiter logic via timerfd
     if (output->current_fps_limit > 0.0f) {
         float min_frame_time = 1.0f / output->current_fps_limit;
-        if (output->time_since_last_render < min_frame_time) {
-            // Prevent Wayland memory leak by cleaning up the old callback
-            if (output->frame_callback) {
-                wl_callback_destroy(output->frame_callback);
-                output->frame_callback = nullptr;
+        
+        if (dt_since_last_render < min_frame_time) {
+            // Calculate remaining time until the next frame is allowed
+            float delay_s = min_frame_time - dt_since_last_render;
+            
+            // Arm the hardware timerfd. The main epoll loop will wake up when this expires.
+            if (output->fps_timer_fd >= 0) {
+                struct itimerspec ts{};
+                ts.it_value.tv_sec = static_cast<time_t>(delay_s);
+                ts.it_value.tv_nsec = static_cast<long>((delay_s - ts.it_value.tv_sec) * 1e9);
+                timerfd_settime(output->fps_timer_fd, 0, &ts, nullptr);
             }
-            output->frame_callback = wl_surface_frame(output->surface);
-            wl_callback_add_listener(output->frame_callback, &frame_listener, output);
-            wl_surface_commit(output->surface); 
-            return;
+            // Early exit. Do NOT update last_frame_time here to prevent Delta Time Starvation,
+            // which would cause smooth math animations in Lua to stutter.
+            return; 
         }
-        output->time_since_last_render = std::fmod(output->time_since_last_render, min_frame_time);
-    } else {
-        output->time_since_last_render = 0.0f;
+    }
+
+    // FPS check passed. Commit to rendering this frame.
+    output->last_frame_time = now;
+    float frame_dt = dt_since_last_render;
+
+    // Clamp delta time to prevent physics explosions after system suspend/resume cycles
+    if (frame_dt > 0.1f || frame_dt < 0.0f) {
+        frame_dt = 0.0166f; // Fallback to a stable 60Hz delta
     }
 
     if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
@@ -831,7 +865,7 @@ void InteractiveWallpaper::render_output(Output* output) {
         {
             ZoneScopedN("Lua on_frame"); 
             // Execute the Lua control-plane hook for smooth mathematical animation
-            lua_engine.on_frame(real_dt, output->name); 
+            lua_engine.on_frame(frame_dt, output->name); 
         }
 
         uint32_t fbo_w = output->fbo_w;
@@ -844,12 +878,13 @@ void InteractiveWallpaper::render_output(Output* output) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // Standard blending for typical 2D/3D compositing
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         {
             ZoneScopedN("Layers Pipeline"); 
-            // --- 2. Orchestrate rendering layers ---
+            // --- 2. Orchestrate multi-layer rendering pipeline ---
             for (size_t i = 0; i < output->layers.size(); ++i) {
                 auto& layer = output->layers[i];
                 if (!layer.effect) continue;
@@ -875,9 +910,9 @@ void InteractiveWallpaper::render_output(Output* output) {
                 glActiveTexture(GL_TEXTURE0);
 
                 // Execute C++ plugin logic
-                layer.effect->render(fbo_w, fbo_h, real_dt);
+                layer.effect->render(fbo_w, fbo_h, frame_dt);
                 
-                // Isolate OpenGL state to prevent cross-plugin contamination
+                // Defensive State Isolation: Prevent cross-plugin OpenGL contamination
                 glBindVertexArray(0);
                 glUseProgram(0);
                 glEnable(GL_BLEND);
@@ -897,7 +932,19 @@ void InteractiveWallpaper::render_output(Output* output) {
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // EGL Backbuffer
         glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, phys_w, phys_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
-        // Clean up and register new frame callback for Wayland synchronization
+        // ========================================================================
+        // Wayland Transparency Optimization & Ghosting Prevention
+        // Some plugins might leave Alpha < 1.0 in the FBO. Since the wallpaper is 
+        // the absolute bottom layer, we force the final EGL Backbuffer to be 100% 
+        // opaque. This prevents Wayland from performing expensive hardware blending 
+        // against the empty void behind the wallpaper, eliminating visual ghosting.
+        // ========================================================================
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE); // Target only the Alpha channel
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);               // Set Alpha to 1.0
+        glClear(GL_COLOR_BUFFER_BIT);                       // glClear bypasses glViewport automatically
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);    // Restore standard color write mask
+
+        // Clean up and register new frame callback for precise Wayland synchronization
         if (output->frame_callback) {
             wl_callback_destroy(output->frame_callback);
             output->frame_callback = nullptr;
@@ -910,7 +957,7 @@ void InteractiveWallpaper::render_output(Output* output) {
             EGLBoolean swap_result = eglSwapBuffers(egl_display, output->egl_surface);
             
             // --- NATIVE EGL RECOVERY LOGIC ---
-            // Handles GPU suspend/resume cycles without requiring a process restart
+            // Handles GPU suspend/resume cycles seamlessly without requiring a process restart
             if (swap_result == EGL_FALSE) {
                 EGLint error = eglGetError();
                 if (error == EGL_CONTEXT_LOST) {
@@ -919,7 +966,7 @@ void InteractiveWallpaper::render_output(Output* output) {
                     // Trigger the native in-process recovery state machine
                     this->recover_egl_context();
                     
-                    // Abort rendering this frame. The next Wayland tick will use the revived context.
+                    // Abort rendering this frame. The next Wayland tick will use the newly revived context.
                     return; 
                     
                 } else {
@@ -1020,6 +1067,19 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
     // 2. CRITICAL STEP FOR HIDPI: Tell the compositor not to blur the buffer
     wl_surface_set_buffer_scale(output->surface, output->scale);
 
+    // ========================================================================
+    // [WAYLAND OPTIMIZATION]: Disable Compositor Alpha Blending
+    // Inform the compositor that our wallpaper is 100% opaque.
+    // This dramatically reduces GPU memory bandwidth usage on the desktop.
+    // ========================================================================
+    struct wl_region* opaque_region = wl_compositor_create_region(output->parent->compositor);
+    if (opaque_region) {
+        // Note: Wayland regions use logical (scaled) coordinates, not physical pixels
+        wl_region_add(opaque_region, 0, 0, width, height);
+        wl_surface_set_opaque_region(output->surface, opaque_region);
+        wl_region_destroy(opaque_region); // Safe to destroy immediately
+    }
+
     // 3. Calculate physical dimensions for OpenGL (pixels)
     uint32_t buffer_width = width * output->scale;
     uint32_t buffer_height = height * output->scale;
@@ -1042,10 +1102,18 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
                         }
                     }
                 }
-                // ==============================================================================
-                // Apply Lua settings immediately after EGL context initialization!
-                // ==============================================================================
+                // Apply Lua settings immediately after EGL context initialization
                 output->parent->apply_config_to_effect(output);
+            }
+            
+            // BUGFIX: Register the FPS limiter timerfd in the epoll loop EXACTLY ONCE upon creation!
+            if (output->fps_timer_fd >= 0 && output->parent) {
+                output->parent->register_epoll_fd_cxx(output->fps_timer_fd, [output](uint32_t) {
+                    uint64_t expirations;
+                    read(output->fps_timer_fd, &expirations, sizeof(expirations));
+                    // The timer fired, now we are allowed to render and commit to Wayland
+                    if (output->parent) output->parent->render_output(output);
+                });
             }
         }
         if (!output->frame_callback) output->parent->render_output(output);

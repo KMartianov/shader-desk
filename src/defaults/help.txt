@@ -1,0 +1,26 @@
+Shader Desk - Interactive Wayland Wallpaper Engine
+
+Usage:
+  interactive-wallpaper [options]
+
+Options:
+  -h, --help                 Show this help message and exit.
+  --config <path>            Specify a custom configuration/workspace directory.
+                             (Default: ~/.config/interactive-wallpaper)
+
+Workspace & Configuration Utilities:
+  --init-workspace           Initialize a local user sandbox in ~/.config/.../effects
+                             Copies system plugins for safe modification (Hot-Reload).
+  --init-config              Generate/update Lua configuration files (init.lua, ctl.lua, 
+                             and plugin configs) based on discovered .so libraries.
+
+Plugin Inspection Utilities:
+  --list-plugins             Output a JSON list of all available visual effects.
+  --list-providers           Output a JSON list of all available data providers.
+  --inspect "<name>"         Output detailed JSON metadata (parameters, types, defaults)
+                             for a specific plugin or provider.
+
+Examples:
+  interactive-wallpaper --init-workspace
+  interactive-wallpaper --config /home/user/my-custom-setup
+  interactive-wallpaper --inspect "ShaderToy Sandbox"

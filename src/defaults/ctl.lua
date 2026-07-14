@@ -163,7 +163,7 @@ end
 -- ==============================================================================
 
 -- Enable or disable a Data Provider (e.g., turn off audio reaction during a Zoom call).
--- Example: shader-desk-ctl "ctl.provider('Cava Audio Provider', false)"
+-- Example: shader-desk-ctl "ctl.provider('Native FFTW Audio Provider', false)"
 function ctl.provider(name, enabled)
     if core.providers[name] then
         core.providers[name].enabled = enabled

@@ -29,7 +29,7 @@ class AudioProvider : public IDataProvider {
     float treble_multiplier = 1.0f;
 
 public:
-    const char* get_name() const override { return "Cava Audio Provider"; }
+    const char* get_name() const override { return "Native FFTW Audio Provider"; }
 
     std::vector<EffectParameter> get_parameters() const override {
         return {

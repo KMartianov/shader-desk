@@ -67,7 +67,7 @@ public:
         std::string identifier;
 
         std::chrono::steady_clock::time_point last_frame_time = std::chrono::steady_clock::now();
-        float time_since_last_render = 0.0f;
+        
         // Wayland objects
         wl_output* output_obj = nullptr;
         wl_surface* surface = nullptr;
@@ -105,8 +105,11 @@ public:
         EGLSurface egl_surface = EGL_NO_SURFACE;
 
         wl_callback* frame_callback = nullptr;
+        int fps_timer_fd = -1;
         
-        Output() {}
+        Output() {
+            fps_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+        }
 
         ~Output() {
             layers.clear(); // Safe plugin deletion
@@ -121,6 +124,7 @@ public:
             if (layer_surface) zwlr_layer_surface_v1_destroy(layer_surface);
             if (surface) wl_surface_destroy(surface);
             if (output_obj) wl_output_release(output_obj);
+            if (fps_timer_fd >= 0) {if (parent) parent->unregister_epoll_fd(fps_timer_fd); close(fps_timer_fd); }
         }
     };
     

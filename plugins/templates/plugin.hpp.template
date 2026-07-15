@@ -26,14 +26,20 @@ private:
     GLuint program = 0;
     GLuint vao = 0;
     float time = 0.0f;
+    ICoreContext* m_core = nullptr;
 
     // --- Parameter Member Variables ---
 {{MEMBER_DECLARATIONS}}
+
+    // --- Texture State Variables ---
+{{TEX_MEMBERS}}
 
     // --- Uniform Locations ---
     GLuint u_time = 0;
     GLuint u_resolution = 0;
 {{UNIFORM_DECLARATIONS}}
+
+{{TEX_PROCESS_DECL}}
 };
 
 #endif // {{HEADER_GUARD}}

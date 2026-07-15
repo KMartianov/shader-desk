@@ -56,8 +56,9 @@ struct Device {
 };
 
 static int create_send_socket() {
-    // SOCK_NONBLOCK ensures we never hang during transmission
-    int s = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    // Create a connectionless datagram socket for zero-latency IPC.
+    // SOCK_CLOEXEC prevents file descriptor leaks if the daemon forks or execs child processes.
+    int s = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (s < 0) {
         std::cerr << "socket() failed: " << strerror(errno) << "\n";
     }
@@ -95,6 +96,7 @@ static void scan_and_add_devices(std::vector<Device>& devices) {
         int rc = libevdev_new_from_fd(fd, &dev);
         if (rc < 0) { close(fd); continue; }
 
+        /*
         bool is_keyboard = libevdev_has_event_code(dev, EV_KEY, KEY_A) || 
                    libevdev_has_event_code(dev, EV_KEY, KEY_ENTER);
 
@@ -103,7 +105,8 @@ static void scan_and_add_devices(std::vector<Device>& devices) {
             close(fd);
             continue; // Skip keyboards for security reasons!
         }
-
+        */
+        
         bool has_rel = libevdev_has_event_code(dev, EV_REL, REL_X) && libevdev_has_event_code(dev, EV_REL, REL_Y);
         bool has_abs = libevdev_has_event_code(dev, EV_ABS, ABS_X) && libevdev_has_event_code(dev, EV_ABS, ABS_Y);
 
@@ -158,13 +161,17 @@ static void send_pending_event(Device* dptr, int send_sock) {
         datagram.abs_y  = dptr->abs_y_norm;
         datagram.is_absolute = dptr->has_abs ? 1 : 0;
 
-        // Configure IPC UNIX socket address
+        // Configure secure file-based IPC UNIX socket address
         struct sockaddr_un addr{};
         addr.sun_family = AF_UNIX;
         
+        // Resolve a secure, user-isolated socket path (e.g., /run/user/1000/shader-desk-pointer.sock)
         std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-pointer");
         strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-        socklen_t addr_len = sizeof(sa_family_t) + socket_path.length() + 1;
+        
+        // Calculate the exact size required for a file-based UNIX socket.
+        // For file sockets, the length is exactly the size of the family plus the length of the path string.
+        socklen_t addr_len = sizeof(addr.sun_family) + strlen(addr.sun_path)+1;
 
         // Fire-and-Forget non-blocking send
         ssize_t rc = sendto(send_sock, &datagram, sizeof(datagram), MSG_DONTWAIT, 
@@ -208,7 +215,9 @@ int main(int argc, char** argv) {
     int send_sock = create_send_socket();
     if (send_sock < 0) return 1;
 
-    std::cout << "evdev-pointer-daemon starting. Routing events to '@shader-desk-pointer'...\n";
+    // Fetch the actual file path to display it correctly in the terminal logs
+    std::string target_path = shader_desk::get_ipc_socket_path("shader-desk-pointer");
+    std::cout << "evdev-pointer-daemon starting. Routing events to secure socket: " << target_path << "\n";
 
     const int RESCAN_INTERVAL_MS = 5000;
     auto last_scan = std::chrono::steady_clock::now();

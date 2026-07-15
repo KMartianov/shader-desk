@@ -13,7 +13,7 @@ core = core or {}
 -- The "*" acts as a fallback for any unmapped connected displays.
 -- ==============================================================================
 core.outputs = {
-    ["*"] = core.load_scene("default")
+    ["*"] = core.load_scene("calm_floating_gallery")
     
     -- Examples of explicit hardware targeting:
     -- ["HDMI-A-1"] = core.load_scene("default"),

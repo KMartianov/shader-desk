@@ -297,12 +297,23 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
                     else if (expected_type == ParamType::TYPE_FLOAT && lua_val.is<double>()) {
                         abi_val.f_val = static_cast<float>(lua_val.as<double>());
                     }
+                    else if (expected_type == ParamType::TYPE_VEC2 && lua_val.is<sol::table>()) {
+                        sol::table t = lua_val.as<sol::table>();
+                        abi_val.vec2_val[0] = t.get_or(1, 0.0f);
+                        abi_val.vec2_val[1] = t.get_or(2, 0.0f);
+                    }
                     else if (expected_type == ParamType::TYPE_VEC3 && lua_val.is<sol::table>()) {
                         sol::table t = lua_val.as<sol::table>();
-                        // Safely extract table values, defaulting to 0.0f if the table is too short
                         abi_val.vec3_val[0] = t.get_or(1, 0.0f);
                         abi_val.vec3_val[1] = t.get_or(2, 0.0f);
                         abi_val.vec3_val[2] = t.get_or(3, 0.0f);
+                    }
+                    else if (expected_type == ParamType::TYPE_VEC4 && lua_val.is<sol::table>()) {
+                        sol::table t = lua_val.as<sol::table>();
+                        abi_val.vec4_val[0] = t.get_or(1, 0.0f);
+                        abi_val.vec4_val[1] = t.get_or(2, 0.0f);
+                        abi_val.vec4_val[2] = t.get_or(3, 0.0f);
+                        abi_val.vec4_val[3] = t.get_or(4, 0.0f);
                     }
                     else if (expected_type == ParamType::TYPE_STRING && lua_val.is<std::string>()) {
                         std::string lua_str = lua_val.as<std::string>();
@@ -310,7 +321,6 @@ bool LuaEngine::configure_provider(IDataProviderABI* provider) {
                         size_t max_len = sizeof(abi_val.s_val) - 1;
                         std::strncpy(abi_val.s_val, lua_str.c_str(), max_len);
                         abi_val.s_val[max_len] = '\0'; 
-
                     }
                 } catch (const sol::error& e) {
                     std::cerr << "[LuaEngine] Type Error for provider parameter '" 
@@ -371,16 +381,25 @@ struct LuaLayerProxy {
                 abi_val.i_val = val.as<int>();
             } else if (expected_type == ParamType::TYPE_FLOAT && val.is<double>()) {
                 abi_val.f_val = static_cast<float>(val.as<double>());
+            } else if (expected_type == ParamType::TYPE_VEC2 && val.is<sol::table>()) {
+                sol::table t = val.as<sol::table>();
+                abi_val.vec2_val[0] = t.get_or(1, 0.0f); 
+                abi_val.vec2_val[1] = t.get_or(2, 0.0f); 
             } else if (expected_type == ParamType::TYPE_VEC3 && val.is<sol::table>()) {
                 sol::table t = val.as<sol::table>();
                 abi_val.vec3_val[0] = t.get_or(1, 0.0f); 
                 abi_val.vec3_val[1] = t.get_or(2, 0.0f); 
                 abi_val.vec3_val[2] = t.get_or(3, 0.0f);
+            } else if (expected_type == ParamType::TYPE_VEC4 && val.is<sol::table>()) {
+                sol::table t = val.as<sol::table>();
+                abi_val.vec4_val[0] = t.get_or(1, 0.0f); 
+                abi_val.vec4_val[1] = t.get_or(2, 0.0f); 
+                abi_val.vec4_val[2] = t.get_or(3, 0.0f);
+                abi_val.vec4_val[3] = t.get_or(4, 0.0f);
             } else if (expected_type == ParamType::TYPE_STRING && val.is<std::string>()) {
                 size_t max_len = sizeof(abi_val.s_val) - 1;
                 std::strncpy(abi_val.s_val, val.as<std::string>().c_str(), max_len);
                 abi_val.s_val[max_len] = '\0';
-
             } else {
                 return *this;
             }
@@ -395,9 +414,22 @@ struct LuaLayerProxy {
 
     // Zero-allocation method for hot-path parameter updates (e.g., inside on_frame).
     // Prevents LuaJIT from creating garbage collection spikes when updating colors/vectors.
+    LuaLayerProxy& set_vec2(const std::string& param_name, float x, float y) {
+        if (!engine->get_layer_by_tag) return *this;
+        IWallpaperEffectABI* effect = engine->get_layer_by_tag(output_name, tag);
+        if (!effect) return *this;
+
+        ParamValueABI abi_val;
+        abi_val.type = ParamType::TYPE_VEC2;
+        abi_val.vec2_val[0] = x;
+        abi_val.vec2_val[1] = y;
+
+        effect->set_parameter_abi(param_name.c_str(), &abi_val);
+        return *this;
+    }
+
     LuaLayerProxy& set_vec3(const std::string& param_name, float x, float y, float z) {
         if (!engine->get_layer_by_tag) return *this;
-        
         IWallpaperEffectABI* effect = engine->get_layer_by_tag(output_name, tag);
         if (!effect) return *this;
 
@@ -406,6 +438,22 @@ struct LuaLayerProxy {
         abi_val.vec3_val[0] = x;
         abi_val.vec3_val[1] = y;
         abi_val.vec3_val[2] = z;
+
+        effect->set_parameter_abi(param_name.c_str(), &abi_val);
+        return *this;
+    }
+
+    LuaLayerProxy& set_vec4(const std::string& param_name, float x, float y, float z, float w) {
+        if (!engine->get_layer_by_tag) return *this;
+        IWallpaperEffectABI* effect = engine->get_layer_by_tag(output_name, tag);
+        if (!effect) return *this;
+
+        ParamValueABI abi_val;
+        abi_val.type = ParamType::TYPE_VEC4;
+        abi_val.vec4_val[0] = x;
+        abi_val.vec4_val[1] = y;
+        abi_val.vec4_val[2] = z;
+        abi_val.vec4_val[3] = w;
 
         effect->set_parameter_abi(param_name.c_str(), &abi_val);
         return *this;
@@ -425,11 +473,25 @@ struct LuaLayerProxy {
                 case ParamType::TYPE_INT:    return sol::make_object(s, abi_val.i_val);
                 case ParamType::TYPE_BOOL:   return sol::make_object(s, abi_val.b_val);
                 case ParamType::TYPE_STRING: return sol::make_object(s, std::string(abi_val.s_val));
+                case ParamType::TYPE_VEC2: {
+                    sol::table t = sol::state_view(s).create_table();
+                    t[1] = abi_val.vec2_val[0]; 
+                    t[2] = abi_val.vec2_val[1]; 
+                    return t;
+                }
                 case ParamType::TYPE_VEC3: {
                     sol::table t = sol::state_view(s).create_table();
                     t[1] = abi_val.vec3_val[0]; 
                     t[2] = abi_val.vec3_val[1]; 
                     t[3] = abi_val.vec3_val[2];
+                    return t;
+                }
+                case ParamType::TYPE_VEC4: {
+                    sol::table t = sol::state_view(s).create_table();
+                    t[1] = abi_val.vec4_val[0]; 
+                    t[2] = abi_val.vec4_val[1]; 
+                    t[3] = abi_val.vec4_val[2];
+                    t[4] = abi_val.vec4_val[3];
                     return t;
                 }
             }
@@ -556,7 +618,9 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     // Register the proxy object structure in Sol2
     lua.new_usertype<LuaLayerProxy>("LayerProxy",
         "set", &LuaLayerProxy::set,
+        "set_vec2", &LuaLayerProxy::set_vec2,
         "set_vec3", &LuaLayerProxy::set_vec3,
+        "set_vec4", &LuaLayerProxy::set_vec4,
         "get", &LuaLayerProxy::get
     );
 
@@ -802,18 +866,29 @@ void LuaEngine::apply_effect_settings(IWallpaperEffectABI* effect,
                 else if (expected_type == ParamType::TYPE_FLOAT && final_lua_val.is<double>()) {
                     abi_val.f_val = static_cast<float>(final_lua_val.as<double>());
                 } 
+                else if (expected_type == ParamType::TYPE_VEC2 && final_lua_val.is<sol::table>()) {
+                    sol::table t = final_lua_val.as<sol::table>();
+                    abi_val.vec2_val[0] = t.get_or(1, 0.0f);
+                    abi_val.vec2_val[1] = t.get_or(2, 0.0f);
+                }
                 else if (expected_type == ParamType::TYPE_VEC3 && final_lua_val.is<sol::table>()) {
                     sol::table t = final_lua_val.as<sol::table>();
                     abi_val.vec3_val[0] = t.get_or(1, 0.0f);
                     abi_val.vec3_val[1] = t.get_or(2, 0.0f);
                     abi_val.vec3_val[2] = t.get_or(3, 0.0f);
                 }
+                else if (expected_type == ParamType::TYPE_VEC4 && final_lua_val.is<sol::table>()) {
+                    sol::table t = final_lua_val.as<sol::table>();
+                    abi_val.vec4_val[0] = t.get_or(1, 0.0f);
+                    abi_val.vec4_val[1] = t.get_or(2, 0.0f);
+                    abi_val.vec4_val[2] = t.get_or(3, 0.0f);
+                    abi_val.vec4_val[3] = t.get_or(4, 0.0f);
+                }
                 else if (expected_type == ParamType::TYPE_STRING && final_lua_val.is<std::string>()) {
                     std::string lua_str = final_lua_val.as<std::string>();
                     size_t max_len = sizeof(abi_val.s_val) - 1;
                     std::strncpy(abi_val.s_val, lua_str.c_str(), max_len);
                     abi_val.s_val[max_len] = '\0';
-
                 }
             } catch (const sol::error& e) {
                 std::cerr << "[LuaEngine] Type Error for parameter '" << key << "': " << e.what() << std::endl;

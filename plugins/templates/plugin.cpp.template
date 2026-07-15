@@ -4,6 +4,8 @@
 #include <iostream>
 #include <stdexcept>
 
+{{STB_INCLUDE}}
+
 // ==============================================================================
 // DEVELOPER GUIDE: EXTENDING THIS PLUGIN
 // ==============================================================================
@@ -52,8 +54,7 @@ void {{CLASS_NAME}}::set_parameter(const std::string& name, const EffectParamete
 // INITIALIZATION & SHADER COMPILATION
 // ------------------------------------------------------------------------------
 bool {{CLASS_NAME}}::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
-    // [HINT] Bind your BlackBoard variables here! 
-    // Example: p_audio_bands = core->get_blackboard()->bind_float_array("audio.bands", 64);
+    m_core = core;
 
     // 1. Load shaders from the plugin bundle directory.
     std::string vert_src = shader_utils::load_shader_source(core, get_name(), "{{VERT_SHADER_FILENAME}}");
@@ -76,9 +77,7 @@ bool {{CLASS_NAME}}::initialize(ICoreContext* core, uint32_t width, uint32_t hei
 {{GET_UNIFORM_LOCS_IMPL}}
 
     // 3. Create an empty VAO.
-    // We use the "Zero-VBO Fullscreen Triangle" technique. The vertex shader 
-    // calculates vertex positions on the fly using gl_VertexID, so no VBO is needed.
-    // [HINT] If you need custom 3D geometry, create your VBOs/EBOs here instead!
+    // We use the "Zero-VBO Fullscreen Triangle" technique.
     glGenVertexArrays(1, &vao);
     
     std::cout << "[" << get_name() << "] Initialized successfully (Resolution: " 
@@ -86,14 +85,15 @@ bool {{CLASS_NAME}}::initialize(ICoreContext* core, uint32_t width, uint32_t hei
     return true;
 }
 
+{{TEX_PROCESS_IMPL}}
+
 // ------------------------------------------------------------------------------
 // MAIN RENDER LOOP
 // Called by the Wayland compositor core every frame (e.g., 60 or 144 times/sec).
 // ------------------------------------------------------------------------------
 void {{CLASS_NAME}}::render(uint32_t width, uint32_t height, float dt) {
-    // [HINT] Process your heavy CPU logic here (e.g., update particle positions) 
-    // before sending data to the GPU.
-    
+{{TEX_PROCESS_CALL}}
+
     glUseProgram(program);
     
     // Use the real time delta provided by the Wayland compositor for smooth animation
@@ -105,21 +105,20 @@ void {{CLASS_NAME}}::render(uint32_t width, uint32_t height, float dt) {
     // Apply auto-generated uniform variables from Lua configuration
 {{SET_UNIFORMS_IMPL}}
 
+    // Bind textures and resolutions
+{{TEX_RENDER_BIND}}
+
     // Disable depth testing for 2D/Background effects to prevent Z-fighting
     glDisable(GL_DEPTH_TEST);
 
-    // ==============================================================================
-    // DEFENSIVE PROGRAMMING
-    // In a modular pipeline, we cannot trust the previous plugin to clean up its 
-    // OpenGL state. We unbind the global VBO to ensure our "Zero-VBO" fullscreen 
-    // triangle technique doesn't crash the driver (GL_INVALID_OPERATION).
-    // ==============================================================================
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // Draw the fullscreen triangle using the empty VAO
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
+    
     glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
 
     // Restore depth testing for subsequent 3D layers in the rendering pipeline
     glEnable(GL_DEPTH_TEST);
@@ -137,11 +136,11 @@ void {{CLASS_NAME}}::cleanup() {
         glDeleteVertexArrays(1, &vao);
         vao = 0;
     }
+{{TEX_CLEANUP}}
 }
 
 // ==============================================================================
 // C-ABI EXPORTS (Plugin Manager Entry Points)
-// This guarantees stable binary compatibility between the .so and the host core.
 // ==============================================================================
 extern "C" {
     uint32_t get_abi_version() {

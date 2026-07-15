@@ -47,19 +47,30 @@ public:
         } else if (std::holds_alternative<float>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_FLOAT;
             out_info->default_value.f_val = std::get<float>(p.value);
+        } else if (std::holds_alternative<glm::vec2>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_VEC2;
+            auto v = std::get<glm::vec2>(p.value);
+            out_info->default_value.vec2_val[0] = v.x;
+            out_info->default_value.vec2_val[1] = v.y;
         } else if (std::holds_alternative<glm::vec3>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_VEC3;
             auto v = std::get<glm::vec3>(p.value);
             out_info->default_value.vec3_val[0] = v.x;
             out_info->default_value.vec3_val[1] = v.y;
             out_info->default_value.vec3_val[2] = v.z;
+        } else if (std::holds_alternative<glm::vec4>(p.value)) {
+            out_info->default_value.type = ParamType::TYPE_VEC4;
+            auto v = std::get<glm::vec4>(p.value);
+            out_info->default_value.vec4_val[0] = v.x;
+            out_info->default_value.vec4_val[1] = v.y;
+            out_info->default_value.vec4_val[2] = v.z;
+            out_info->default_value.vec4_val[3] = v.w;
         } else if (std::holds_alternative<std::string>(p.value)) {
             out_info->default_value.type = ParamType::TYPE_STRING;
             const std::string& str = std::get<std::string>(p.value);
             size_t max_len = sizeof(out_info->default_value.s_val) - 1;
             std::strncpy(out_info->default_value.s_val, str.c_str(), max_len);
             out_info->default_value.s_val[max_len] = '\0';
-
         }
     }
 
@@ -69,7 +80,9 @@ public:
             case ParamType::TYPE_BOOL: cpp_val = value->b_val; break;
             case ParamType::TYPE_INT: cpp_val = value->i_val; break;
             case ParamType::TYPE_FLOAT: cpp_val = value->f_val; break;
+            case ParamType::TYPE_VEC2: cpp_val = glm::vec2(value->vec2_val[0], value->vec2_val[1]); break;
             case ParamType::TYPE_VEC3: cpp_val = glm::vec3(value->vec3_val[0], value->vec3_val[1], value->vec3_val[2]); break;
+            case ParamType::TYPE_VEC4: cpp_val = glm::vec4(value->vec4_val[0], value->vec4_val[1], value->vec4_val[2], value->vec4_val[3]); break;
             case ParamType::TYPE_STRING: cpp_val = std::string(value->s_val); break;
         }
         this->set_parameter(std::string(name), cpp_val);

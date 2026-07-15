@@ -224,9 +224,17 @@ nlohmann::json PluginManager::inspect_plugin(const std::string& plugin_name) {
                 case ParamType::TYPE_INT:    p["type"] = "int"; p["default"] = info.default_value.i_val; break;
                 case ParamType::TYPE_FLOAT:  p["type"] = "float"; p["default"] = info.default_value.f_val; break;
                 case ParamType::TYPE_STRING: p["type"] = "string"; p["default"] = info.default_value.s_val; break;
+                case ParamType::TYPE_VEC2:   
+                    p["type"] = "vec2"; 
+                    p["default"] = {info.default_value.vec2_val[0], info.default_value.vec2_val[1]}; 
+                    break;
                 case ParamType::TYPE_VEC3:   
                     p["type"] = "vec3"; 
                     p["default"] = {info.default_value.vec3_val[0], info.default_value.vec3_val[1], info.default_value.vec3_val[2]}; 
+                    break;
+                case ParamType::TYPE_VEC4:   
+                    p["type"] = "vec4"; 
+                    p["default"] = {info.default_value.vec4_val[0], info.default_value.vec4_val[1], info.default_value.vec4_val[2], info.default_value.vec4_val[3]}; 
                     break;
             }
             j_params.push_back(p);

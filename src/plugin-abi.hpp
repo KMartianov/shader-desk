@@ -19,7 +19,9 @@ enum class ParamType : uint32_t {
     TYPE_BOOL = 0,
     TYPE_INT,
     TYPE_FLOAT,
+    TYPE_VEC2,
     TYPE_VEC3,
+    TYPE_VEC4,
     TYPE_STRING
 };
 
@@ -36,7 +38,10 @@ struct alignas(8) ParamValueABI {
         bool b_val;
         int32_t i_val;
         float f_val;
+        float vec2_val[2];
         float vec3_val[3];
+        float vec4_val[4];
+
         
         // 504 bytes: Accommodates Linux NAME_MAX (255) with ample overhead.
         // Safely holds long relative paths, preset names, and shader identifiers.

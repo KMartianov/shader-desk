@@ -11,6 +11,9 @@
 class PointerProvider : public IDataProvider {
     float* p_accum_x = nullptr;
     float* p_accum_y = nullptr;
+    float* p_abs_x   = nullptr; 
+    float* p_abs_y   = nullptr; 
+
     int sockfd = -1;
 
     // --- Managed parameters (from Lua) ---
@@ -99,10 +102,10 @@ public:
                     latest_abs = datagram;
                     has_abs = true;
                 }
-                else {
+             
                     *p_accum_x += datagram.rel_dx * mouse_sensitivity * (invert_x ? -1.0f : 1.0f);
                     *p_accum_y += datagram.rel_dy * mouse_sensitivity * (invert_y ? -1.0f : 1.0f);
-                }
+                
             }
         }
 
@@ -110,6 +113,7 @@ public:
             *p_abs_x = latest_abs.abs_x;
             *p_abs_y = latest_abs.abs_y;
         }
+    }
 
     void cleanup() override {
         if (sockfd >= 0) {

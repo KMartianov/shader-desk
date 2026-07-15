@@ -13,7 +13,14 @@ core = core or {}
 -- The "*" acts as a fallback for any unmapped connected displays.
 -- ==============================================================================
 core.outputs = {
-    ["*"] = core.load_scene("calm_floating_gallery")
+    --["*"] = core.load_scene("calm_floating_gallery")
+    --["*"] = core.load_scene("cyber_horizon")
+    ["*"] = core.load_scene("macos_mesh")
+    --["*"] = core.load_scene("macos_mesh")
+    --["*"] = core.load_scene("live_stream")
+    
+    
+    
     
     -- Examples of explicit hardware targeting:
     -- ["HDMI-A-1"] = core.load_scene("default"),
@@ -45,7 +52,7 @@ end)
 core.providers = {
     ["Evdev Pointer Provider"] = {
         enabled = true,
-        mouse_sensitivity = 1.0,
+        mouse_sensitivity = 10.0,
         touchpad_sensitivity = 2.5,
     },
     ["Native FFTW Audio Provider"] = {

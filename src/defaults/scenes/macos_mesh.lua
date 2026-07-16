@@ -27,7 +27,8 @@ local M = {
                 color_3 = {0.95, 0.75, 0.35}, -- Top-Right (Peach)
                 color_4 = {0.45, 0.25, 0.85}, -- Bottom-Left (Purple)
             }
-        }
+        },
+       
     },
     
     state = { time = 0.0 }

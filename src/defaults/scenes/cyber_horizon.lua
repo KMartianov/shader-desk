@@ -36,6 +36,7 @@ local M = {
                 rotation_decay = 0.95 
             }
         },
+        
     },
     
     state = { angle = 45.0 }

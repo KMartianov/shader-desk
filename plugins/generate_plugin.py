@@ -107,7 +107,7 @@ def find_shaders(shader_dir: Path) -> Tuple[Path | None, Path | None]:
             frag_shader = f
     
     if not vert_shader:
-        print("Info: No vertex shader (.vert, .glsl) found. Will use a default fullscreen quad vertex shader.")
+        print("Info: No vertex shader (.vert, .glsl) found. Will use a default fallback.")
     if not frag_shader:
         print("Error: Fragment shader (.frag) is required but not found.")
         return None, None
@@ -124,17 +124,16 @@ def generate_code_snippets(params: List[Dict[str, Any]], textures: List[Dict[str
     }
 
     # --- 1. Standard parameters ---
-    for i, p in enumerate(params):
+    for p in params:
         default = p['default_value']
         if p['type'] == 'bool': default = 'true' if default else 'false'
         
         snippets["MEMBER_DECLARATIONS"].append(f"    {p['type_info']['cpp_type']} {p['name']} = {default};")
         snippets["GET_PARAMETERS_IMPL"].append(f'        {{"{p["name"]}", "{p["description"]}", {p["name"]}}},')
         
-        # BUGFIX: First parameter is always 'if', subsequent are 'else if'
-        if_stmt = "if" if i == 0 else "else if"
+        # All conditions start with 'else if' because 'if (name == "shader_theme")' is guaranteed to be first
         snippets["SET_PARAMETER_IMPL"].append(
-            f'        {if_stmt} (name == "{p["name"]}") {{\n'
+            f'        else if (name == "{p["name"]}") {{\n'
             f'            {p["name"]} = std::get<{p["type_info"]["variant_type"]}>(value);\n'
             f'        }}'
         )
@@ -149,7 +148,7 @@ def generate_code_snippets(params: List[Dict[str, Any]], textures: List[Dict[str
             snippets["SET_UNIFORMS_IMPL"].append(f"    if (u_{p['name']} != -1) {p['type_info']['gl_uniform_func']}({args});")
 
     # --- 2. Textures ---
-    for i, t in enumerate(textures):
+    for t in textures:
         n = t['name']
         
         # Class member variables for the texture
@@ -168,13 +167,10 @@ def generate_code_snippets(params: List[Dict[str, Any]], textures: List[Dict[str
             f'    u_{n}_resolution = glGetUniformLocation(program, "{n}_resolution");'
         )
         
-        # Export to Lua as a string (file path)
         snippets["GET_PARAMETERS_IMPL"].append(f'        {{"{n}_path", "{t["description"]}", {n}_path}},')
         
-        # BUGFIX: First texture is 'if' ONLY if there were no standard params before it
-        if_stmt = "if" if (i == 0 and not params) else "else if"
         snippets["SET_PARAMETER_IMPL"].append(
-            f'        {if_stmt} (name == "{n}_path") {{\n'
+            f'        else if (name == "{n}_path") {{\n'
             f'            {n}_path = std::get<std::string>(value);\n'
             f'            {n}_pending = true;\n'
             f'        }}'
@@ -195,13 +191,6 @@ def generate_code_snippets(params: List[Dict[str, Any]], textures: List[Dict[str
     if textures:
         snippets["STB_INCLUDE"].append('#define STB_IMAGE_IMPLEMENTATION\n#include "stb_image.h"')
 
-    if snippets["SET_PARAMETER_IMPL"]:
-        snippets["SET_PARAMETER_IMPL"].append(
-            '        else {\n'
-            '             std::cerr << "Warning: Unknown parameter \'" << name << "\'." << std::endl;\n'
-            '        }'
-        )
-        
     return {key: '\n'.join(value) for key, value in snippets.items()}
 
 def fill_template(template_content: str, placeholders: Dict[str, str]) -> str:
@@ -225,7 +214,7 @@ def main():
     vert_shader_path, frag_shader_path = find_shaders(shader_dir)
 
     if not frag_shader_path:
-        return # error message already printed in find_shaders
+        return
 
     shader_content = ""
     try:
@@ -237,11 +226,15 @@ def main():
         print(f"Error reading shader files: {e}")
         return
         
-    # --- Handle --list-params ---
     if args.list_params:
         params_for_json = [{k: v for k, v in p.items() if k != 'type_info'} for p in params]
         print(json.dumps(params_for_json, indent=2, ensure_ascii=False))
         return
+
+    # --- Extract Shader Theme Names ---
+    frag_name = frag_shader_path.name
+    default_theme = frag_name.replace("_frag.glsl", "").replace(".frag", "").replace(".glsl", "")
+    default_vert_shader = vert_shader_path.name if vert_shader_path else "common_vert.glsl"
 
     # --- Define names and paths ---
     project_name = args.plugin_dir.name
@@ -255,8 +248,8 @@ def main():
         "HEADER_GUARD": f"{project_name.upper().replace('-', '_')}_HPP",
         "HEADER_FILENAME": f"{project_name}.hpp",
         "CPP_FILENAME": f"{project_name}.cpp",
-        "VERT_SHADER_FILENAME": vert_shader_path.name if vert_shader_path else "common_vert.glsl",
-        "FRAG_SHADER_FILENAME": frag_shader_path.name,
+        "DEFAULT_THEME": default_theme,
+        "DEFAULT_VERT_SHADER": default_vert_shader,
     }
     
     # --- Resolve Template Directory ---
@@ -293,7 +286,7 @@ def main():
         }}
         
         int w, h, c;
-        stbi_set_flip_vertically_on_load(true);
+        stbi_set_flip_vertically_on_load(false); 
         unsigned char* d = stbi_load(fp.c_str(), &w, &h, &c, 4); // Force RGBA
         
         if (d) {{
@@ -349,6 +342,8 @@ def main():
             with open(default_preset_file, 'w', encoding='utf-8') as f:
                 f.write(f"-- Default preset for {effect_name}\n")
                 f.write("return {\n")
+                f.write(f"    shader_theme = \"{default_theme}\", -- Which shader fragment to load\n")
+                
                 # Textures
                 for t in textures:
                     f.write(f"    {t['name']}_path = \"{t['default_path']}\", -- {t['description']}\n")

@@ -15,9 +15,11 @@ core = core or {}
 core.outputs = {
     --["*"] = core.load_scene("calm_floating_gallery")
     --["*"] = core.load_scene("cyber_horizon")
-    ["*"] = core.load_scene("macos_mesh")
+    --["*"] = core.load_scene("macos_mesh")
     --["*"] = core.load_scene("macos_mesh")
     --["*"] = core.load_scene("live_stream")
+    --["*"] = core.load_scene("glitch_demo")
+    ["*"] = core.load_scene("calm_floating_gallery")
     
     
     

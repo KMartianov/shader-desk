@@ -26,7 +26,8 @@ local M = {
                 scale = 1.00,
                 debug_mpv = true 
             }
-        }
+        },
+       
     },
     
     state = {

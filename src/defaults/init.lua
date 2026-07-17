@@ -19,7 +19,15 @@ core.outputs = {
     --["*"] = core.load_scene("macos_mesh")
     --["*"] = core.load_scene("live_stream")
     --["*"] = core.load_scene("glitch_demo")
-    ["*"] = core.load_scene("calm_floating_gallery")
+
+    --["*"] = core.load_scene("dither_gameboy_cube")
+    --["*"] = core.load_scene("dither_vga_mesh") -- большая нагрузка
+    --["*"] = core.load_scene("dither_virtual_boy") 
+
+    ["*"] = core.load_scene("orbital_harmonics") 
+     
+    
+    --["*"] = core.load_scene("calm_floating_gallery")
     
     
     
@@ -28,6 +36,7 @@ core.outputs = {
     -- ["HDMI-A-1"] = core.load_scene("default"),
     -- ["DP-2"]     = core.load_scene("liquid")
 }
+
 
 -- ==============================================================================
 -- 2. GLOBAL ANIMATION HOOK

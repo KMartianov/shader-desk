@@ -775,7 +775,7 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
                 
                 if (init_ok) {
                     // Pass tag to the LayerInstance constructor
-                    new_layers.emplace_back(layer_cfg.effect_name, layer_cfg.tag, std::move(eff), layer_cfg.is_postprocess);
+                    new_layers.emplace_back(layer_cfg.effect_name, layer_cfg.tag, std::move(eff), layer_cfg.is_postprocess, layer_cfg.clear_depth);
                 } else {
                     std::cerr << "\033[31m[Core] Dropping layer '" << layer_cfg.effect_name 
                               << "' due to initialization failure.\033[0m" << std::endl;
@@ -819,34 +819,43 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
 
 
 void InteractiveWallpaper::render_output(Output* output) {
-    // Ensure the output is fully initialized, has active visual layers, and an active EGL surface
+    // ==============================================================================
+    // 1. SAFETY CHEcks
+    // ==============================================================================
+    // Ensure the physical monitor is fully initialized by the Wayland compositor,
+    // has active visual layers assigned by Lua, and possesses a valid EGL surface.
     if (!output->configured || output->layers.empty() || output->egl_surface == EGL_NO_SURFACE) return;
 
     ZoneScoped; 
     ZoneText(output->name.c_str(), output->name.length()); 
 
-    // Calculate elapsed time since the LAST RENDERED frame
+    // ==============================================================================
+    // 2. DELTA TIME & HARDWARE FPS LIMITER
+    // ==============================================================================
+    // Calculate precise elapsed time since the LAST RENDERED frame.
     auto now = std::chrono::steady_clock::now();
     std::chrono::duration<float> delta_duration = now - output->last_frame_time;
     float dt_since_last_render = delta_duration.count();
 
-    // Hardware-accelerated FPS limiter logic via timerfd
+    // Zero-CPU-Overhead FPS limiter via Linux timerfd
     if (output->current_fps_limit > 0.0f) {
         float min_frame_time = 1.0f / output->current_fps_limit;
         
         if (dt_since_last_render < min_frame_time) {
-            // Calculate remaining time until the next frame is allowed
+            // Frame is too early. Calculate remaining time until the next frame is allowed.
             float delay_s = min_frame_time - dt_since_last_render;
             
-            // Arm the hardware timerfd. The main epoll loop will wake up when this expires.
+            // Arm the hardware timerfd. The main Wayland epoll loop will sleep 
+            // at 0% CPU usage and wake up exactly when this timer expires.
             if (output->fps_timer_fd >= 0) {
                 struct itimerspec ts{};
                 ts.it_value.tv_sec = static_cast<time_t>(delay_s);
                 ts.it_value.tv_nsec = static_cast<long>((delay_s - ts.it_value.tv_sec) * 1e9);
                 timerfd_settime(output->fps_timer_fd, 0, &ts, nullptr);
             }
-            // Early exit. Do NOT update last_frame_time here to prevent Delta Time Starvation,
-            // which would cause smooth math animations in Lua to stutter.
+            // EARLY EXIT: Do NOT update last_frame_time here!
+            // Updating it now would cause "Delta Time Starvation", resulting in 
+            // stuttering physics and broken mathematical animations in Lua.
             return; 
         }
     }
@@ -855,16 +864,21 @@ void InteractiveWallpaper::render_output(Output* output) {
     output->last_frame_time = now;
     float frame_dt = dt_since_last_render;
 
-    // Clamp delta time to prevent physics explosions after system suspend/resume cycles
+    // Clamp delta time to prevent physics explosions (e.g., objects flying to infinity)
+    // after the system wakes up from a long Suspend/Sleep cycle.
     if (frame_dt > 0.1f || frame_dt < 0.0f) {
         frame_dt = 0.0166f; // Fallback to a stable 60Hz delta
     }
 
+    // ==============================================================================
+    // 3. EGL CONTEXT ACTIVATION
+    // ==============================================================================
     if (eglMakeCurrent(egl_display, output->egl_surface, output->egl_surface, egl_context)) {
         
         {
             ZoneScopedN("Lua on_frame"); 
-            // Execute the Lua control-plane hook for smooth mathematical animation
+            // Execute the Lua Control-Plane hook for smooth mathematical animation.
+            // Lua handles camera positioning and logic, pushing results into the BlackBoard.
             lua_engine.on_frame(frame_dt, output->name); 
         }
 
@@ -872,7 +886,7 @@ void InteractiveWallpaper::render_output(Output* output) {
         uint32_t fbo_h = output->fbo_h;
         glViewport(0, 0, fbo_w, fbo_h);
         
-        // --- 1. Clear the starting FBO ---
+        // --- Prepare the starting FBO (Framebuffer Object) ---
         output->current_fbo = 0;
         glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -884,67 +898,109 @@ void InteractiveWallpaper::render_output(Output* output) {
 
         {
             ZoneScopedN("Layers Pipeline"); 
-            // --- 2. Orchestrate multi-layer rendering pipeline ---
+            // ========================================================================
+            // 4. MULTI-LAYER RENDERING PIPELINE
+            // ========================================================================
             for (size_t i = 0; i < output->layers.size(); ++i) {
                 auto& layer = output->layers[i];
                 if (!layer.effect) continue;
 
                 if (layer.is_postprocess && i > 0) {
-                    // PING-PONG SWAP: Send previous FBO as input to current layer
+                    // --- PING-PONG FBO SWAP (For Post-Processing) ---
+                    // Send the previously rendered FBO as an input texture to the current layer,
+                    // allowing it to distort/filter the entire screen (e.g., VHS glitch, blur).
                     int next_fbo = 1 - output->current_fbo;
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[next_fbo]);
                     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                     
                     glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, output->tex[output->current_fbo]); // U_prev_layer
+                    glBindTexture(GL_TEXTURE_2D, output->tex[output->current_fbo]); // Bind U_prev_layer
                     
                     output->current_fbo = next_fbo; 
                 } else {
+                    // --- STANDARD RENDERING ---
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
-                    if (i > 0) glClear(GL_DEPTH_BUFFER_BIT); // Protect 3D depth between standard layers
+                    
+                    // ====================================================================
+                    // Z-BUFFER MANAGEMENT (Shared 3D Space vs Isolated Layers)
+                    // If layer.clear_depth is true (default), we wipe the Z-Buffer. 
+                    // This forces the layer to be drawn entirely on top of the previous one.
+                    // If false, the GPU's Depth Test will correctly sort intersecting 
+                    // 3D meshes from different plugins in the same mathematical space.
+                    // ====================================================================
+                    if (i > 0 && layer.clear_depth) {
+                        glClear(GL_DEPTH_BUFFER_BIT); 
+                    }
                 }
 
-                // Provide previous frame's feedback texture (useful for liquid/trail effects)
+                // Provide previous frame's feedback texture (useful for liquid/trail/blur effects)
                 glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // U_feedback_layer
+                glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // Bind U_feedback_layer
                 glActiveTexture(GL_TEXTURE0);
 
-                // Execute C++ plugin logic
+                // Execute C++ plugin logic (Draw Calls)
                 layer.effect->render(fbo_w, fbo_h, frame_dt);
                 
-                // Defensive State Isolation: Prevent cross-plugin OpenGL contamination
+                // --- DEFENSIVE STATE ISOLATION ---
+                // We cannot trust 3rd-party plugins to clean up their OpenGL state.
+                // Reset critical state machines to prevent cross-plugin contamination.
                 glBindVertexArray(0);
                 glUseProgram(0);
                 glEnable(GL_BLEND);
-                glDepthMask(GL_TRUE);
+                glDepthMask(GL_TRUE); // Crucial! Ensure depth is writable for the next clear()
             }
         }
 
-        // --- 3. Save current frame for the next frame's feedback loop ---
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, output->fbo[output->current_fbo]);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, output->fbo_feedback);
-        glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        // ========================================================================
+        // 5. FEEDBACK LOOP PRESERVATION
+        // ========================================================================
+        // Save the fully composited frame into the feedback FBO. 
+        // This will be read by the plugins in the NEXT frame (e.g., for motion blur).
 
-        // --- 4. Final output to screen (Upscale to physical resolution) ---
+         bool needs_feedback = false;
+        for (const auto& layer : output->layers) {
+            if (layer.is_postprocess) {
+                needs_feedback = true;
+                break;
+            }
+        }
+
+        if (needs_feedback) {
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, output->fbo[output->current_fbo]);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, output->fbo_feedback);
+            glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+
+     
+
+        // ========================================================================
+        // 6. FINAL SCREEN OUTPUT (Upscaling)
+        // ========================================================================
         uint32_t phys_w = output->width * output->scale;
         uint32_t phys_h = output->height * output->scale;
         
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // EGL Backbuffer
+        // Target the actual Wayland EGL Backbuffer
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); 
+        // Blit (copy and scale) the internal FBO to the physical monitor resolution
         glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, phys_w, phys_h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
         // ========================================================================
-        // Wayland Transparency Optimization & Ghosting Prevention
+        // [WAYLAND OPTIMIZATION]: Ghosting Prevention
         // Some plugins might leave Alpha < 1.0 in the FBO. Since the wallpaper is 
         // the absolute bottom layer, we force the final EGL Backbuffer to be 100% 
         // opaque. This prevents Wayland from performing expensive hardware blending 
         // against the empty void behind the wallpaper, eliminating visual ghosting.
         // ========================================================================
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE); // Target only the Alpha channel
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);               // Set Alpha to 1.0
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);               // Set Alpha to 1.0 (Opaque)
         glClear(GL_COLOR_BUFFER_BIT);                       // glClear bypasses glViewport automatically
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);    // Restore standard color write mask
 
-        // Clean up and register new frame callback for precise Wayland synchronization
+        // ========================================================================
+        // 7. WAYLAND FRAME SYNCHRONIZATION
+        // ========================================================================
+        // Request the compositor to notify us exactly when this frame hits the display.
+        // This guarantees V-Sync and prevents tearing.
         if (output->frame_callback) {
             wl_callback_destroy(output->frame_callback);
             output->frame_callback = nullptr;
@@ -956,17 +1012,20 @@ void InteractiveWallpaper::render_output(Output* output) {
             ZoneScopedN("EGL Swap Buffers"); 
             EGLBoolean swap_result = eglSwapBuffers(egl_display, output->egl_surface);
             
-            // --- NATIVE EGL RECOVERY LOGIC ---
-            // Handles GPU suspend/resume cycles seamlessly without requiring a process restart
+            // ====================================================================
+            // 8. NATIVE EGL RECOVERY LOGIC (Suspend/Resume Handler)
+            // ====================================================================
+            // Handles GPU suspend/resume cycles seamlessly without requiring a daemon restart.
             if (swap_result == EGL_FALSE) {
                 EGLint error = eglGetError();
                 if (error == EGL_CONTEXT_LOST) {
                     std::cerr << "\n\033[33m[EGL] WARNING: EGL_CONTEXT_LOST detected. GPU woke from sleep?\033[0m" << std::endl;
                     
-                    // Trigger the native in-process recovery state machine
+                    // Trigger the native in-process recovery state machine.
+                    // This will rebuild the EGL driver, FBOs, and reload C++ plugins.
                     this->recover_egl_context();
                     
-                    // Abort rendering this frame. The next Wayland tick will use the newly revived context.
+                    // Abort rendering this frame. The next Wayland tick will use the revived context.
                     return; 
                     
                 } else {

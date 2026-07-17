@@ -21,42 +21,46 @@ out vec4 FragColor;
 
 void main()
 {
-    // Distance from the camera to the current pixel
-    float distance = length(viewPos - FragPos);
-
     // --- MAIN MODE: Wireframe ---
     if (is_wireframe_pass) {
-        // Depth Fading effect.
-        // The further the vertex is from the camera, the darker the color. 
-        // This prevents the front and back wireframe lines from blending into a visual mess.
-        float fogFactor = clamp(1.0 - (distance - 2.0) / 2.5, 0.15, 1.0);
-        
-        vec3 finalWireColor = wireframe_color * fogFactor;
-        FragColor = vec4(finalWireColor, 1.0);
+        // Render as pure emissive neon lines. Distance fading is removed.
+        FragColor = vec4(wireframe_color, 1.0);
         return;
     }
 
     // --- FALLBACK MODE: Solid Sphere ---
-    // Enabled if wireframe_mode = false. Looks like a Low-Poly crystal.
-
     // Hardware triangle normal calculation (Flat Shading)
     vec3 dx = dFdx(FragPos);
     vec3 dy = dFdy(FragPos);
     vec3 normal = normalize(cross(dx, dy));
 
     vec3 viewDir = normalize(viewPos - FragPos);
+    
+    // ========================================================================
+    // FBO Y-FLIP PROTECTION
+    // Ensures the normal always points outwards towards the camera, regardless
+    // of Wayland compositor or OpenGL driver framebuffer orientations.
+    // ========================================================================
+    if (dot(normal, viewDir) < 0.0) {
+        normal = -normal;
+    }
+
     vec3 lightDir = normalize(lightPos - FragPos);
 
-    // Base lighting (Ambient + Diffuse)
-    vec3 ambient = 0.2 * lightColor;
+    // Diffuse lighting
     float diff = max(dot(normal, lightDir), 0.0);
-    vec3 diffuse = diff * lightColor;
-
-    // Slight Fresnel effect (highlights polygon edges with the wireframe color)
-    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
-    vec3 rimLight = fresnel * wireframe_color * 0.6; 
-
-    vec3 result = (ambient + diffuse) * object_color + rimLight;
     
+    // 60% Ambient base so the sphere is always vibrant and visible
+    vec3 ambient = 0.6 * object_color;
+    // 40% Directional light for 3D volume
+    vec3 diffuse = diff * lightColor * 0.4 * object_color;
+
+    // Edge highlighting (Fresnel)
+    // Exponent lowered to 2.0 to make the glowing rim wider and softer
+    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 2.0);
+    vec3 rimLight = fresnel * wireframe_color * 1.2; 
+
+    // Final composition
+    vec3 result = ambient + diffuse + rimLight;
     FragColor = vec4(result, 1.0);
 }

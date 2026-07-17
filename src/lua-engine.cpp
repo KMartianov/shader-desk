@@ -500,9 +500,7 @@ struct LuaLayerProxy {
     }
 };
 
-// --- DEBUG API IMPLEMENTATION ---
 // Accepting ICoreContextABI*
-// Core API to Lua binding (Fixed Sol2 compilation error)
 // Core API to Lua binding
 void LuaEngine::bind_core_api(ICoreContextABI* core) {
     if (!core) return;
@@ -525,6 +523,31 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             for (size_t i = 0; i < size; ++i) {
                 ptr[i] = t.get_or(i + 1, 0.0f);
             }
+        }
+    };
+
+    // --- NEW: GLOBAL 3D CAMERA CONTROL ---
+    core_table["set_camera"] = [core](sol::table pos_tbl, sol::table tgt_tbl, sol::optional<float> fov_opt) {
+        float* p_pos = core->get_blackboard()->bind_float_array("scene.camera.pos", 3);
+        float* p_tgt = core->get_blackboard()->bind_float_array("scene.camera.target", 3);
+        float* p_fov = core->get_blackboard()->bind_float("scene.camera.fov");
+        float* p_active = core->get_blackboard()->bind_float("scene.camera.active");
+
+        if (p_pos) {
+            p_pos[0] = pos_tbl.get_or(1, 0.0f);
+            p_pos[1] = pos_tbl.get_or(2, 0.0f);
+            p_pos[2] = pos_tbl.get_or(3, 0.0f);
+        }
+        if (p_tgt) {
+            p_tgt[0] = tgt_tbl.get_or(1, 0.0f);
+            p_tgt[1] = tgt_tbl.get_or(2, 0.0f);
+            p_tgt[2] = tgt_tbl.get_or(3, 0.0f);
+        }
+        if (p_fov) {
+            *p_fov = fov_opt.value_or(45.0f);
+        }
+        if (p_active) {
+            *p_active = 1.0f; // Flag indicating the global camera is overriding defaults
         }
     };
 
@@ -564,7 +587,6 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     core_table["set_interval"] = [this](int ms, sol::protected_function callback) -> int {
         if (ms <= 0 || !callback.valid() || !current_core) return -1;
 
-        // PROTECTION: Limit of 32 active timers per Lua script
         if (active_timers.size() >= 32) {
             std::cerr << "[LuaEngine] ERROR: Maximum timer limit (32) reached. "
                     << "Are you calling set_interval inside on_frame?" << std::endl;
@@ -615,7 +637,6 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     };
 
     // --- 5. LAYER PROXY API (FLUENT DESIGN) ---
-    // Register the proxy object structure in Sol2
     lua.new_usertype<LuaLayerProxy>("LayerProxy",
         "set", &LuaLayerProxy::set,
         "set_vec2", &LuaLayerProxy::set_vec2,
@@ -624,8 +645,6 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         "get", &LuaLayerProxy::get
     );
 
-    // Factory function to generate and return proxy objects to Lua.
-    // Example usage in Lua: local bg = core.get_layer("DP-1", "bg_back")
     core_table["get_layer"] = [this](const std::string& output_name, const std::string& tag) {
         return LuaLayerProxy{output_name, tag, this};
     };
@@ -668,8 +687,6 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         std::cerr << "\033[33m[Lua] Scene '" << scene_name << "' not found.\033[0m\n";
         return sol::nil;
     };
-
-
 }
 
 // Per-frame hook implementation with error spam protection
@@ -730,6 +747,9 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 sol::table settings = layer_tbl["settings"].is<sol::table>() ? layer_tbl["settings"] : lua.create_table();
                 bool is_post = layer_tbl.get_or("postprocess", false);
 
+                bool clear_depth = layer_tbl.get_or("clear_depth", true);
+
+
                 std::string preset = layer_tbl.get_or("preset", std::string(""));
                 if (!preset.empty()) {
                     std::string applied = settings.get_or("_preset_applied", std::string(""));
@@ -743,16 +763,17 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 }
 
                 // Push the parsed configuration including the tag
-                res.layers.push_back({eff_name, tag, settings, is_post});
+                res.layers.push_back({eff_name, tag, settings, is_post, clear_depth});
+
             }
         } else {
             // Old format (1 effect)
             std::string eff_name = out_conf.get_or("effect", fallback_effect);
             if (!eff_name.empty()) {
                 sol::table settings = out_conf["settings"].is<sol::table>() ? out_conf["settings"] : lua.create_table();
-                res.layers.push_back({eff_name, eff_name, settings, false});
-
+                res.layers.push_back({eff_name, eff_name, settings, false, true});
             }
+
         }
     } else if (!fallback_effect.empty()) {
         res.layers.push_back({fallback_effect, fallback_effect, sol::nil, false});

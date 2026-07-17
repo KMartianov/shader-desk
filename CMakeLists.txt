@@ -340,6 +340,7 @@ set(SDK_HEADERS
     "${SRC_DIR}/plugin-abi.hpp"
     "${SRC_DIR}/core-context.hpp"
     "${SRC_DIR}/wallpaper-effect.hpp"
+    "${SRC_DIR}/kinematic-effect.hpp"
     "${SRC_DIR}/data-provider.hpp"
     "${SRC_DIR}/shader-utils.hpp"
     "${SRC_DIR}/ipc-utils.hpp"

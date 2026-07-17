@@ -1,32 +1,28 @@
-#define GLM_ENABLE_EXPERIMENTAL
-
-
 #include "hilbert-cube-effect.hpp"
-#include "shader-utils.hpp"
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/quaternion.hpp>
+#include <shader-desk/shader-utils.hpp>
 #include <iostream>
 #include <cmath>
 #include <algorithm>
 
-HilbertCubeEffect::HilbertCubeEffect() {
-    orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-    angular_velocity = glm::vec3(0.1f, 0.1f, 0.05f);
-}
+// ==============================================================================
+// CONSTRUCTOR & DESTRUCTOR
+// ==============================================================================
+HilbertCubeEffect::HilbertCubeEffect() {}
 
 HilbertCubeEffect::~HilbertCubeEffect() {
     cleanup();
 }
 
-// --- 3D Hilbert Curve Generation Algorithm (CORRECTED VERSION) ---
-
+// ==============================================================================
+// 3D HILBERT CURVE GENERATION ALGORITHM
+// ==============================================================================
+// This is a recursive algorithm that generates a continuous space-filling curve 
+// inside a 3D volume. It maps a 1D sequence of points into a 3D grid.
 void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
-                                 int order, std::vector<glm::vec3>& vertices)
+                                  int order, std::vector<glm::vec3>& vertices)
 {
-    // Base case for recursion: generate the base curve segment.
+    // Base case: The lowest level of recursion generates the 8 corners of a sub-cube.
     if (order <= 1) {
-        // Add 8 vertices in order, forming the base curve element.
-        // The path follows the edges of the cube.
         vertices.push_back(start);
         vertices.push_back(start + a);
         vertices.push_back(start + a + b);
@@ -36,16 +32,14 @@ void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, co
         vertices.push_back(start + a + c);
         vertices.push_back(start + c);
     } else {
-        // Recursive step: divide cube into 8 smaller sub-cubes and call hilbert3D for each,
-        // Transforming (translating, rotating, reflecting) their coordinate systems accordingly.
-
-        // This specific implementation uses a non-standard 1/3 scale factor,
-        // Which was chosen to achieve the desired visual result.
+        // Recursive step: Divide the current volume into 8 smaller sub-cubes.
+        // We use a 1/3 scale factor here (instead of standard 1/2) to create 
+        // a specific visual gap between the fractal segments.
         const glm::vec3 a_s = a / 3.0f;
         const glm::vec3 b_s = b / 3.0f;
         const glm::vec3 c_s = c / 3.0f;
 
-        // Pre-calculate starting points for the 8 recursive calls.
+        // Pre-calculate the starting coordinate for each of the 8 sub-octants.
         const glm::vec3 p0 = start;
         const glm::vec3 p1 = start + a * (2.0f / 3.0f);
         const glm::vec3 p2 = start + (a + b) * (2.0f / 3.0f);
@@ -55,7 +49,8 @@ void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, co
         const glm::vec3 p6 = start + c + b_s + a_s * 2.0f;
         const glm::vec3 p7 = start + c + a_s;
 
-        // 8 recursive calls with transformed axes
+        // Recursively call hilbert3D, transforming (rotating/reflecting) the axes 
+        // to ensure the curve remains continuous without intersecting itself.
         hilbert3D(p0,  b_s,  c_s,  a_s, order - 1, vertices);
         hilbert3D(p1,  c_s,  a_s,  b_s, order - 1, vertices);
         hilbert3D(p2,  c_s,  a_s,  b_s, order - 1, vertices);
@@ -67,18 +62,18 @@ void HilbertCubeEffect::hilbert3D(const glm::vec3& start, const glm::vec3& a, co
     }
 }
 
-
-
 void HilbertCubeEffect::generate_hilbert_curve() {
     std::vector<glm::vec3> vertices;
     float size = 1.0f;
     glm::vec3 start_pos(-size / 2.0f, -size / 2.0f, -size / 2.0f);
     glm::vec3 a(size, 0, 0), b(0, size, 0), c(0, 0, size);
     
+    // Execute the recursive generation
     hilbert3D(start_pos, a, b, c, hilbert_order, vertices);
 
-    curve_vertex_count = vertices.size();
+    curve_vertex_count = static_cast<GLsizei>(vertices.size());
 
+    // Upload geometry to the GPU
     glGenVertexArrays(1, &curve_vao);
     glGenBuffers(1, &curve_vbo);
 
@@ -88,145 +83,129 @@ void HilbertCubeEffect::generate_hilbert_curve() {
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
     glEnableVertexAttribArray(0);
+    
     glBindVertexArray(0);
-
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
 void HilbertCubeEffect::generate_cube_outline() {
-    float s = 0.6f;
+    float s = 0.6f; // Slightly larger than the curve to act as a bounding box
     std::vector<glm::vec3> vertices = {
         {-s, -s, -s}, {s, -s, -s}, {s, s, -s}, {-s, s, -s},
         {-s, -s,  s}, {s, -s,  s}, {s, s,  s}, {-s, s,  s}
     };
+    
+    // Line indices connecting the 8 corners of the cube
     std::vector<unsigned int> indices = {
         0, 1, 1, 2, 2, 3, 3, 0, // Bottom face
         4, 5, 5, 6, 6, 7, 7, 4, // Top face
         0, 4, 1, 5, 2, 6, 3, 7  // Side edges
     };
 
+    // Upload geometry to the GPU
     glGenVertexArrays(1, &cube_vao);
     glGenBuffers(1, &cube_vbo);
     glGenBuffers(1, &cube_ebo);
 
     glBindVertexArray(cube_vao);
+    
     glBindBuffer(GL_ARRAY_BUFFER, cube_vbo);
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), vertices.data(), GL_STATIC_DRAW);
+    
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube_ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
     glEnableVertexAttribArray(0);
+    
     glBindVertexArray(0);
-
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 }
 
-
+// ==============================================================================
+// PLUGIN INITIALIZATION
+// ==============================================================================
 bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t height) {
+    // Hot-reload protection: Do not re-initialize if the program is already valid.
     if (program) return true;
 
-    // BIND MEMORY
-    p_accum_x = core->get_blackboard()->bind_float("mouse.accum_x");
-    p_accum_y = core->get_blackboard()->bind_float("mouse.accum_y");
+    // 1. INITIALIZE KINEMATICS (From Base Class)
+    // This connects our plugin to the BlackBoard's Zero-Latency Global Camera 
+    // and sets up the internal physics state (inertia, velocities).
+    init_kinematics(core);
 
+    // 2. LOAD SHADERS
     std::string vert_src = shader_utils::load_shader_source(core, get_name(), "cube_vert.glsl");
     std::string frag_src = shader_utils::load_shader_source(core, get_name(), "cube_frag.glsl");
-    
     if (vert_src.empty() || frag_src.empty()) return false;
 
+    // 3. COMPILE SHADER PROGRAM
     program = shader_utils::create_shader_program(vert_src, frag_src);
     if (!program) return false;
 
+    // 4. CACHE UNIFORM LOCATIONS
     u_model = glGetUniformLocation(program, "model");
     u_view = glGetUniformLocation(program, "view");
     u_projection = glGetUniformLocation(program, "projection");
     u_line_color = glGetUniformLocation(program, "line_color");
 
-    // Remove `needs_regeneration = true;` from here.
-    // The constructor already sets it, ensuring geometry is created on the first frame.
     return true;
 }
 
-void HilbertCubeEffect::update_rotation(float dt) {
-    angular_velocity *= rotation_decay;
-    float speed = glm::length(angular_velocity);
-    if (speed > 1e-5f) {
-        glm::vec3 axis = glm::normalize(angular_velocity);
-        float angle = speed * dt;
-        glm::quat rotation_delta = glm::angleAxis(angle, axis);
-        orientation = glm::normalize(rotation_delta * orientation);
-    }
-}
-
+// ==============================================================================
+// RENDER PIPELINE (HOT PATH)
+// Executed at monitor refresh rate (e.g., 144Hz). Must be Zero-Allocation.
+// ==============================================================================
 void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
-    // === SAFE MOUSE READING LOGIC (Delta-calc) ===
-    if (p_accum_x && p_accum_y) {
-        if (first_frame_mouse) {
-            last_mouse_x = *p_accum_x;
-            last_mouse_y = *p_accum_y;
-            first_frame_mouse = false;
-        }
-
-        float current_x = *p_accum_x;
-        float current_y = *p_accum_y;
-        
-        float dx = current_x - last_mouse_x;
-        float dy = current_y - last_mouse_y;
-        
-        last_mouse_x = current_x;
-        last_mouse_y = current_y;
-        
-        angular_velocity += glm::vec3(dy, dx, 0.0f);
-    }
-
+    // 1. DEFERRED GEOMETRY REGENERATION
+    // Executed only if Lua changed `hilbert_order`. This prevents frame drops 
+    // unless the user explicitly requested a structural geometry change.
     if (needs_regeneration) {
-        // --- CORRECTED REGENERATION LOGIC ---
-        // 1. Clean up *only* the old geometry buffers.
         if (curve_vao) glDeleteVertexArrays(1, &curve_vao);
         if (curve_vbo) glDeleteBuffers(1, &curve_vbo);
         if (cube_vao) glDeleteVertexArrays(1, &cube_vao);
         if (cube_vbo) glDeleteBuffers(1, &cube_vbo);
         if (cube_ebo) glDeleteBuffers(1, &cube_ebo);
 
-        // 2. Regenerate the geometry.
         generate_hilbert_curve();
         generate_cube_outline();
         needs_regeneration = false;
     }
 
-    update_rotation(dt); 
-    time += dt;
+    // 2. KINEMATIC PHYSICS CALCULATION (From Base Class)
+    // Applies rotational momentum (from Audio impacts or Lua scripts),
+    // calculates inertia friction, processes the custom center of mass (pivot),
+    // and reads the Global Camera coordinates to compute the final MVP matrices.
+    float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
+    update_kinematics(dt, aspect); 
     
+    // 3. RENDER SETUP
     glEnable(GL_DEPTH_TEST);
-    glLineWidth(1.0f);
-    
-    // IMPORTANT: glViewport and glClear removed! The Core manages this now.
+    glLineWidth(1.0f); // Fallback if supported by the driver
     glUseProgram(program);
     
-    // Apply offset to the model
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), position_offset) * glm::toMat4(orientation);
-    glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 0.0f, 2.5f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
-
-    glUniformMatrix4fv(u_model, 1, GL_FALSE, &model[0][0]);
-    glUniformMatrix4fv(u_view, 1, GL_FALSE, &view[0][0]);
-    glUniformMatrix4fv(u_projection, 1, GL_FALSE, &projection[0][0]);
+    // 4. DISPATCH PRE-CALCULATED MATRICES
+    // The model_matrix, view_matrix, and proj_matrix were calculated in O(1) time
+    // inside the update_kinematics() method.
+    glUniformMatrix4fv(u_model, 1, GL_FALSE, &model_matrix[0][0]);
+    glUniformMatrix4fv(u_view, 1, GL_FALSE, &view_matrix[0][0]);
+    glUniformMatrix4fv(u_projection, 1, GL_FALSE, &proj_matrix[0][0]);
     
-    // 1. Draw Hilbert curve
+    // 5. DRAW THE HILBERT FRACTAL CURVE
     glUniform3fv(u_line_color, 1, &curve_color[0]);
     glBindVertexArray(curve_vao);
     glDrawArrays(GL_LINE_STRIP, 0, curve_vertex_count);
 
-    // 2. Draw cube outline (if enabled)
+    // 6. DRAW THE BOUNDING WIREFRAME BOX
     if (draw_cube_outline) {
         glUniform3fv(u_line_color, 1, &cube_color[0]);
         glBindVertexArray(cube_vao);
         glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
     }
     
+    // 7. ISOLATE STATE
+    // Crucial in modular engines: never trust the next plugin to reset your state.
     glBindVertexArray(0);
     glDisable(GL_DEPTH_TEST);
 }
@@ -241,60 +220,67 @@ void HilbertCubeEffect::cleanup() {
     program = curve_vao = curve_vbo = cube_vao = cube_vbo = cube_ebo = 0;
 }
 
+// ==============================================================================
+// PLUGIN API INTERFACE
+// ==============================================================================
 
-
-// --- Plugin Interface ---
-const char* HilbertCubeEffect::get_name() const {
-    return "Hilbert Cube";
+const char* HilbertCubeEffect::get_name() const { 
+    return "Hilbert Cube"; 
 }
 
 std::vector<EffectParameter> HilbertCubeEffect::get_parameters() const {
-    return {
-        {"hilbert_order", "Detail of the Hilbert curve (1-5)", hilbert_order},
-        {"offset", "The position of the object (X, Y, Z)", position_offset},
-        {"draw_cube_outline", "Draw the cube's wireframe", draw_cube_outline},
-        {"curve_color", "Color of the Hilbert curve", curve_color},
-        {"cube_color", "Color of the cube wireframe", cube_color},
-        {"rotation_decay", "Inertia decay (0.9-1.0)", rotation_decay}
-    };
+    // 1. Fetch the standard kinematics/physics parameters from the base class
+    auto params = get_kinematic_params();
+    
+    // 2. Append the visual parameters specific to this plugin
+    params.push_back({"hilbert_order", "Detail of the Hilbert curve (1-5)", hilbert_order});
+    params.push_back({"draw_cube_outline", "Draw the cube's wireframe", draw_cube_outline});
+    params.push_back({"curve_color", "Color of the Hilbert curve", curve_color});
+    params.push_back({"cube_color", "Color of the cube wireframe", cube_color});
+    
+    return params;
 }
 
 void HilbertCubeEffect::set_parameter(const std::string& name, const EffectParameterValue& value) {
+    // 1. Pass the parameter to the Kinematics handler first.
+    // If it matches a physics property (like "rotation_speed" or "offset"), 
+    // it will be processed and return true, skipping the rest of the function.
+    if (set_kinematic_param(name, value)) return;
+
+    // 2. Process local visual parameters
     try {
         if (name == "hilbert_order") {
             int new_order = std::clamp(std::get<int>(value), 1, 5);
             if (new_order != hilbert_order) {
                 hilbert_order = new_order;
-                needs_regeneration = true;
+                needs_regeneration = true; // Trigger deferred geometry update
             }
-        } else if (name == "offset") {
-            position_offset = std::get<glm::vec3>(value);
-        } else if (name == "draw_cube_outline") {
-            draw_cube_outline = std::get<bool>(value);
-        } else if (name == "curve_color") {
-            curve_color = std::get<glm::vec3>(value);
-        } else if (name == "cube_color") {
-            cube_color = std::get<glm::vec3>(value);
-        } else if (name == "rotation_decay") {
-            rotation_decay = std::get<float>(value);
-        } else {
-            std::cerr << "Warning: Unknown parameter '" << name << "'." << std::endl;
+        } 
+        else if (name == "draw_cube_outline") draw_cube_outline = std::get<bool>(value);
+        else if (name == "curve_color") curve_color = std::get<glm::vec3>(value);
+        else if (name == "cube_color") cube_color = std::get<glm::vec3>(value);
+        else {
+            std::cerr << "[HilbertCube] Warning: Unknown parameter '" << name << "'." << std::endl;
         }
     } catch (const std::bad_variant_access& e) {
-        std::cerr << "Warning: Type mismatch for parameter '" << name << "'. " << e.what() << std::endl;
+        std::cerr << "[HilbertCube] Warning: Type mismatch for parameter '" << name << "'. " << e.what() << std::endl;
     }
 }
 
-// --- Exported C-functions ---
+// ==============================================================================
+// C-ABI EXPORT FUNCTIONS
+// ==============================================================================
 extern "C" {
-
-    uint32_t get_abi_version() { return SHADER_DESK_ABI_VERSION; }
-
-    IWallpaperEffectABI* create_effect() {
+    uint32_t get_abi_version() { 
+        return SHADER_DESK_ABI_VERSION; 
+    }
+    
+    IWallpaperEffectABI* create_effect() { 
         return new HilbertCubeEffect(); 
     }
-    void destroy_effect(IWallpaperEffectABI* effect) {
-        delete static_cast<WallpaperEffect*>(effect);
+    
+    void destroy_effect(IWallpaperEffectABI* effect) { 
+        // Cast back to WallpaperEffect (or KinematicEffect) to ensure virtual destructor is called
+        delete static_cast<WallpaperEffect*>(effect); 
     }
 }
-

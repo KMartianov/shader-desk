@@ -671,7 +671,6 @@ void InteractiveWallpaper::Output::destroy_fbos() {
     if (fbo[0]) { glDeleteFramebuffers(2, fbo); fbo[0] = fbo[1] = 0; }
     if (tex[0]) { glDeleteTextures(2, tex); tex[0] = tex[1] = 0; }
     if (depth_rbo[0]) { glDeleteRenderbuffers(2, depth_rbo); depth_rbo[0] = depth_rbo[1] = 0; }
-    if (fbo_feedback) { glDeleteFramebuffers(1, &fbo_feedback); fbo_feedback = 0; }
     if (tex_feedback) { glDeleteTextures(1, &tex_feedback); tex_feedback = 0; }
 }
 
@@ -684,7 +683,8 @@ void InteractiveWallpaper::Output::allocate_fbos(uint32_t w, uint32_t h) {
     glGenFramebuffers(2, fbo);
     glGenTextures(2, tex);
     glGenRenderbuffers(2, depth_rbo);
-    glGenFramebuffers(1, &fbo_feedback);
+    
+    // Allocate only the texture for feedback history, no FBO needed
     glGenTextures(1, &tex_feedback);
 
     auto setup_fbo = [&](GLuint f, GLuint t, GLuint d) {
@@ -706,11 +706,15 @@ void InteractiveWallpaper::Output::allocate_fbos(uint32_t w, uint32_t h) {
 
     setup_fbo(fbo[0], tex[0], depth_rbo[0]);
     setup_fbo(fbo[1], tex[1], depth_rbo[1]);
-    setup_fbo(fbo_feedback, tex_feedback, 0);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo_feedback);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    // Initialize feedback texture with black pixels
+    glBindTexture(GL_TEXTURE_2D, tex_feedback);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -907,11 +911,14 @@ void InteractiveWallpaper::render_output(Output* output) {
 
                 if (layer.is_postprocess && i > 0) {
                     // --- PING-PONG FBO SWAP (For Post-Processing) ---
-                    // Send the previously rendered FBO as an input texture to the current layer,
-                    // allowing it to distort/filter the entire screen (e.g., VHS glitch, blur).
                     int next_fbo = 1 - output->current_fbo;
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[next_fbo]);
-                    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                    
+                    // POST-PROCESS OPTIMIZATION 1: ROP Bypass
+                    // Post-processing overwrites the entire screen. Disabling blending 
+                    // prevents the GPU from reading the destination pixel, saving huge bandwidth.
+                    glDisable(GL_BLEND);
+                    glDisable(GL_DEPTH_TEST);
                     
                     glActiveTexture(GL_TEXTURE0);
                     glBindTexture(GL_TEXTURE_2D, output->tex[output->current_fbo]); // Bind U_prev_layer
@@ -921,43 +928,39 @@ void InteractiveWallpaper::render_output(Output* output) {
                     // --- STANDARD RENDERING ---
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
                     
-                    // ====================================================================
-                    // Z-BUFFER MANAGEMENT (Shared 3D Space vs Isolated Layers)
-                    // If layer.clear_depth is true (default), we wipe the Z-Buffer. 
-                    // This forces the layer to be drawn entirely on top of the previous one.
-                    // If false, the GPU's Depth Test will correctly sort intersecting 
-                    // 3D meshes from different plugins in the same mathematical space.
-                    // ====================================================================
+                    // Restore standard 3D states
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glEnable(GL_DEPTH_TEST);
+                    
                     if (i > 0 && layer.clear_depth) {
                         glClear(GL_DEPTH_BUFFER_BIT); 
                     }
                 }
 
-                // Provide previous frame's feedback texture (useful for liquid/trail/blur effects)
+                // Provide previous frame's feedback texture (GL_TEXTURE1)
                 glActiveTexture(GL_TEXTURE1);
                 glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // Bind U_feedback_layer
-                glActiveTexture(GL_TEXTURE0);
+                glActiveTexture(GL_TEXTURE0); // Reset active texture unit
 
                 // Execute C++ plugin logic (Draw Calls)
                 layer.effect->render(fbo_w, fbo_h, frame_dt);
                 
                 // --- DEFENSIVE STATE ISOLATION ---
-                // We cannot trust 3rd-party plugins to clean up their OpenGL state.
-                // Reset critical state machines to prevent cross-plugin contamination.
                 glBindVertexArray(0);
                 glUseProgram(0);
-                glEnable(GL_BLEND);
-                glDepthMask(GL_TRUE); // Crucial! Ensure depth is writable for the next clear()
+                glDepthMask(GL_TRUE); 
             }
         }
 
         // ========================================================================
-        // 5. FEEDBACK LOOP PRESERVATION
+        // 5. FEEDBACK LOOP PRESERVATION (Zero-Copy Texture Swap)
         // ========================================================================
-        // Save the fully composited frame into the feedback FBO. 
-        // This will be read by the plugins in the NEXT frame (e.g., for motion blur).
-
-         bool needs_feedback = false;
+        // POST-PROCESS OPTIMIZATION 2: Memory Bandwidth Saver
+        // Instead of using glBlitFramebuffer (which physically copies millions of pixels),
+        // we perform a $O(1)$ Handle Swap. We detach the current rendered texture from 
+        // the FBO and swap its ID with the feedback texture.
+        bool needs_feedback = false;
         for (const auto& layer : output->layers) {
             if (layer.is_postprocess) {
                 needs_feedback = true;
@@ -966,12 +969,20 @@ void InteractiveWallpaper::render_output(Output* output) {
         }
 
         if (needs_feedback) {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, output->fbo[output->current_fbo]);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, output->fbo_feedback);
-            glBlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            GLuint current_tex = output->tex[output->current_fbo];
+            
+            // 1. Swap the OpenGL texture IDs
+            output->tex[output->current_fbo] = output->tex_feedback;
+            output->tex_feedback = current_tex;
+            
+            // 2. Re-attach the new (now recycled) texture to the current FBO
+            // The FBO remains perfectly valid, but now points to the recycled memory.
+            glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, output->tex[output->current_fbo], 0);
+            
+            // The texture that was attached to the FBO is now safely stored in output->tex_feedback
+            // and contains the exact final frame, ready for the next tick!
         }
-
-     
 
         // ========================================================================
         // 6. FINAL SCREEN OUTPUT (Upscaling)

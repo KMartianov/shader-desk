@@ -91,7 +91,7 @@ public:
         GLuint tex[2] = {0, 0};
         GLuint depth_rbo[2] = {0, 0};
         
-        GLuint fbo_feedback = 0;
+        
         GLuint tex_feedback = 0;
 
         int current_fbo = 0;

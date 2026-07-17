@@ -17,6 +17,7 @@ local M = {
     },
     
     fps_limit = 0.0, 
+    fbo_scale = 0.3,
     
     -- ==========================================================================
     -- USER SETTINGS
@@ -24,7 +25,7 @@ local M = {
     settings = {
         -- Camera Settings
         cam_radius = 5.5,         -- Distance of the camera from the center (0,0,0)
-        cam_sensitivity = 0.003,  -- Mouse rotation speed
+        cam_sensitivity = 0.5,  -- Mouse rotation speed
         
         -- Orbital Mechanics
         orbit_speed_moon = 0.8,
@@ -41,20 +42,19 @@ local M = {
     -- ==========================================================================
     layers = {
         -- 1. DEEP SPACE BACKGROUND (2D)
-        --{
-        --    effect = "Solid Bg",
-        --    tag = "space_bg",
-        --    clear_depth = true, -- Wipe the previous frame's depth
-        --    settings = {
-        --        gradient_type = 2,       -- Radial Offset
-        --        color_space = 1,         -- OKLab for perfect blending
-        --        radial_radius = 1.2,
-        --        radial_center = {0.5, 0.5},
-        --        color_1 = {0.05, 0.01, 0.08}, -- Dark Purple Core
-        --        color_2 = {0.00, 0.00, 0.00}, -- Pitch Black Edges
-        --    }
-        --},
-
+        {
+            effect = "Solid Bg",
+            tag = "space_bg",
+            clear_depth = true, -- Wipe the previous frame's depth
+            settings = {
+                gradient_type = 2,       -- Radial Offset
+                color_space = 1,         -- OKLab for perfect blending
+                radial_radius = 1.2,
+                radial_center = {0.5, 0.5},
+                color_1 = {0.05, 0.01, 0.08}, -- Dark Purple Core
+                color_2 = {0.00, 0.00, 0.00}, -- Pitch Black Edges
+            }
+        },
         -- 2. THE DYING STAR (Center Planet)
         {
             effect = "Icosahedron Sphere Old",
@@ -82,31 +82,31 @@ local M = {
             }
         },
 
-        --{
-        --     effect = "Postprocess Effect", -- Накидываем сверху глитч
-        --     tag = "glitch_filter",
-        --     postprocess = true,         -- КРИТИЧЕСКИ ВАЖНО! Включит Ping-Pong FBO
-        --     settings = {
-        --        shader_theme = "datamosh",
-        --        variant = 1,     -- Режим блочного датамоша
-        --        intensity = 0.1, -- Чем выше, тем больше экран разваливается на квадраты
-        --        scale = 100.0,    -- Плотность макро-блоков (размер квадратов)
-        --        speed = 2.0,     -- Частота "поломки" (зависит от BPM, если захочешь привязать к музыке)
-        --     }
-        -- },
---
-        -- {
-        --     effect = "Postprocess Effect", -- Накидываем сверху глитч
-        --     tag = "glitch_filter",
-        --     postprocess = true,         -- КРИТИЧЕСКИ ВАЖНО! Включит Ping-Pong FBO
-        --     settings = {
-        --        shader_theme = "postprocess",
-        --        variant = 2,     -- Режим блочного датамоша
-        --        intensity = 0.5,-- Чем выше, тем больше экран разваливается на квадраты
-        --        scale = 100.0,    -- Плотность макро-блоков (размер квадратов)
-        --        speed = 5.0,     -- Частота "поломки" (зависит от BPM, если захочешь привязать к музыке)
-        --     }
-        -- },
+       -- {
+       --      effect = "Postprocess Effect", -- Накидываем сверху глитч
+       --      tag = "glitch_filter",
+       --      postprocess = true,         -- КРИТИЧЕСКИ ВАЖНО! Включит Ping-Pong FBO
+       --      settings = {
+       --         shader_theme = "datamosh",
+       --         variant = 1,     -- Режим блочного датамоша
+       --         intensity = 0.1, -- Чем выше, тем больше экран разваливается на квадраты
+       --         scale = 100.0,    -- Плотность макро-блоков (размер квадратов)
+       --         speed = 2.0,     -- Частота "поломки" (зависит от BPM, если захочешь привязать к музыке)
+       --      }
+       --  },
+
+         {
+             effect = "Postprocess Effect", -- Накидываем сверху глитч
+             tag = "glitch_filter",
+             postprocess = true,         -- КРИТИЧЕСКИ ВАЖНО! Включит Ping-Pong FBO
+             settings = {
+                shader_theme = "postprocess",
+                variant = 2,     -- Режим блочного датамоша
+                intensity = 0.2,-- Чем выше, тем больше экран разваливается на квадраты
+                scale = 1.0,    -- Плотность макро-блоков (размер квадратов)
+                speed = 1.0,     -- Частота "поломки" (зависит от BPM, если захочешь привязать к музыке)
+             }
+         },
 
         -- 3. THE MOON
         {
@@ -116,7 +116,7 @@ local M = {
             clear_depth = true, 
             settings = {
                 shader_theme = "default",
-                wireframe_mode = true,
+                wireframe_mode = false,
                 subdivisions = 1,             -- Low poly
                 sphere_scale = 0.3,          
                 background_color = {1.0, 0.0, 0.5},
@@ -131,23 +131,23 @@ local M = {
             }
         },
 --
-      --  -- 4. THE ALIEN ARTIFACT (Cube)
-      --  {
-      --      effect = "Hilbert Cube",
-      --      tag = "orbit_cube",
-      --      clear_depth = false, -- Share 3D space with Planet and Moon
-      --      settings = {
-      --          hilbert_order = 3,
-      --          draw_cube_outline = true,
-      --          curve_color = {0.1, 1.0, 0.3},
-      --          cube_color = {1.0, 0.0, 0.00},
-      --          
-      --          -- KINEMATICS: Chaotic self-spin
-      --          rotation_axis = {1.0, 1.0, 1.0},
-      --          rotation_speed = -5.0,
-      --          rotation_decay = 0.98
-      --      }
-      --  },
+        -- 4. THE ALIEN ARTIFACT (Cube)
+        {
+            effect = "Hilbert Cube",
+            tag = "orbit_cube",
+            clear_depth = false, -- Share 3D space with Planet and Moon
+            settings = {
+                hilbert_order = 3,
+                draw_cube_outline = true,
+                curve_color = {0.1, 1.0, 0.3},
+                cube_color = {1.0, 0.0, 0.00},
+                
+                -- KINEMATICS: Chaotic self-spin
+                rotation_axis = {1.0, 1.0, 1.0},
+                rotation_speed = -5.0,
+                rotation_decay = 0.98
+            }
+        },
 
         
     },
@@ -172,8 +172,8 @@ M.on_frame = function(self, dt, output_name)
     -- 1. GLOBAL CAMERA (Spherical Orbit via Mouse)
     -- ==========================================================================
     -- Read infinite accumulated mouse deltas from the Wayland Evdev Daemon
-    local raw_mx = core.get_float("mouse.accum_x", 0.0) * 100.0
-    local raw_my = core.get_float("mouse.accum_y", 0.0) * 100.0
+    local raw_mx = core.get_float("mouse.accum_x", 0.0)  
+    local raw_my = core.get_float("mouse.accum_y", 0.0) 
     
     -- Smoothly interpolate current angles toward target angles (Cinematic drag)
     local target_phi = raw_mx * self.settings.cam_sensitivity

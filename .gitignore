@@ -53,4 +53,5 @@ build-tracy/
 
 utilities
 !utilities/shader-desk-ctl.cpp
+!utilities/shader-desk-run.sh
 .log

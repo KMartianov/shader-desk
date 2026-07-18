@@ -170,34 +170,31 @@ generate_wayland_protocol("${WP_STABLE_DIR}/xdg-shell/xdg-shell.xml"
 add_custom_target(wayland_protocols ALL DEPENDS ${PROTOCOL_SOURCES} ${GENERATED_PROTOCOL_HEADERS})
 
 # ==============================================================================
-# 5. EMBEDDED RESOURCES GENERATION (Text/Lua -> C++ Headers)
+# 5. EMBEDDED RESOURCES GENERATION (Virtual File System)
 # ==============================================================================
 set(GENERATED_DIR "${BIN_DIR}/generated")
 file(MAKE_DIRECTORY "${GENERATED_DIR}")
 
-# A generic macro to bake any text file into a C++ header at compile time
-macro(embed_text_resource FILE_NAME HEADER_NAME VAR_NAME)
-    set(HEADER_OUT "${GENERATED_DIR}/embedded_${HEADER_NAME}.hpp")
-    add_custom_command(
-        OUTPUT "${HEADER_OUT}"
-        COMMAND ${CMAKE_COMMAND} 
-            -DINPUT_FILE=${SRC_DIR}/defaults/${FILE_NAME}
-            -DOUTPUT_FILE=${HEADER_OUT}
-            -DVAR_NAME=${VAR_NAME}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
-        DEPENDS "${SRC_DIR}/defaults/${FILE_NAME}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_resource.cmake"
-        COMMENT "Baking ${FILE_NAME} into C++ header"
-        VERBATIM
-    )
-    list(APPEND EMBEDDED_HEADERS "${HEADER_OUT}")
-endmacro()
+set(EMBEDDED_FS_HEADER "${GENERATED_DIR}/embedded_fs.hpp")
 
-# Bake Lua configs and the CLI Help text
-embed_text_resource("ctl.lua" "ctl" "CTL_LUA")
-embed_text_resource("init.lua" "init" "INIT_LUA")
-embed_text_resource("help.txt" "help" "HELP_TEXT")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-add_custom_target(embedded_resources ALL DEPENDS ${EMBEDDED_HEADERS})
+# Collect all files in the directory and tell CMake to watch for new files
+file(GLOB_RECURSE VFS_SOURCE_FILES CONFIGURE_DEPENDS "${SRC_DIR}/defaults/*")
+
+add_custom_command(
+    OUTPUT "${EMBEDDED_FS_HEADER}"
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/utilities/embed_fs.py" 
+            "${SRC_DIR}/defaults" 
+            "${EMBEDDED_FS_HEADER}"
+    # Depend on the script itself AND all files inside the directory
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/utilities/embed_fs.py" ${VFS_SOURCE_FILES}
+    COMMENT "Baking ${SRC_DIR}/defaults into Virtual File System (VFS)"
+    VERBATIM
+)
+
+# Custom target to ensure VFS is built before the main executable
+add_custom_target(embedded_resources ALL DEPENDS "${EMBEDDED_FS_HEADER}")
 
 # ==============================================================================
 # 6. CORE & SDK LIBRARIES

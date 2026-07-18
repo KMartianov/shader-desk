@@ -20,7 +20,6 @@ private:
     static std::string sanitize_filename(std::string name);
     static std::string value_to_lua_string(const ParamValueABI& val);
     
-    static void generate_init_lua(const std::string& filepath, const std::string& default_effect);
-    static void generate_ctl_lua(const std::string& filepath);
+    
     static void update_plugin_config(const std::string& filepath, const std::string& plugin_name, IWallpaperEffectABI* effect);
 };

@@ -1,13 +1,14 @@
 // Src/lua-config-generator.cpp
 #include "lua-config-generator.hpp"
-#include "embedded_ctl.hpp"   
-#include "embedded_init.hpp"
+
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include "embedded_fs.hpp" 
+
 
 namespace fs = std::filesystem;
 
@@ -72,9 +73,15 @@ static std::string trim(const std::string& str) {
 void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& custom_dir) {
     std::string config_dir = get_config_dir(custom_dir);
     fs::path plugins_dir = fs::path(config_dir) / "plugins";
+    fs::path user_scenes_dir = fs::path(config_dir) / "scenes";
 
-    // Create directories if they do not exist
+    // ==============================================================================
+    // 1. WORKSPACE INITIALIZATION
+    // Guarantee that the foundational directory structure exists in ~/.config.
+    // fs::create_directories is safe and becomes a no-op if the folders already exist.
+    // ==============================================================================
     fs::create_directories(plugins_dir);
+    fs::create_directories(user_scenes_dir);
 
     auto available_effects = pm.get_available_effects();
     if (available_effects.empty()) {
@@ -84,51 +91,70 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& 
 
     std::cout << "Generating Lua configs in: " << config_dir << std::endl;
 
-    // 1. Create ctl.lua (if it doesn't exist)
-    fs::path ctl_lua_path = fs::path(config_dir) / "ctl.lua";
-    if (!fs::exists(ctl_lua_path)) {
-        generate_ctl_lua(ctl_lua_path.string());
-        std::cout << "  ✓ Generated auxiliary CLI module: ctl.lua" << std::endl;
+    // Helper lambda for Non-Destructive VFS Unpacking:
+    // It extracts a file from the compiled binary (.rodata) to the physical disk
+    // ONLY if the file does not already exist. This preserves user modifications.
+    auto write_vfs_file = [](const std::string& vfs_key, const std::string& disk_path) {
+        if (!fs::exists(disk_path)) {
+            auto content = EmbeddedFS::get_file(vfs_key);
+            if (content) {
+                std::ofstream out(disk_path);
+                out << *content;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // ==============================================================================
+    // 2. CORE CONFIGURATION & SCENES UNPACKING (From RAM to Disk)
+    // ==============================================================================
+    
+    if (write_vfs_file("ctl.lua", (fs::path(config_dir) / "ctl.lua").string())) {
+        std::cout << "  ✓ Unpacked auxiliary CLI module: ctl.lua" << std::endl;
+    }
+    
+    if (write_vfs_file("providers.lua", (fs::path(config_dir) / "providers.lua").string())) {
+        std::cout << "  ✓ Unpacked data-providers config: providers.lua" << std::endl;
+    }
+    
+    if (write_vfs_file("init.lua", (fs::path(config_dir) / "init.lua").string())) {
+        std::cout << "  ✓ Unpacked main config: init.lua" << std::endl;
     }
 
-    // 2. Create init.lua (if it doesn't exist)
-    fs::path init_lua_path = fs::path(config_dir) / "init.lua";
-    if (!fs::exists(init_lua_path)) {
-        generate_init_lua(init_lua_path.string(), available_effects[0]);
-        std::cout << "  ✓ Generated main config: init.lua" << std::endl;
-    }
-
-    // Initialization of user Scenes
-    fs::path user_scenes_dir = fs::path(config_dir) / "scenes";
-    fs::create_directories(user_scenes_dir);
-
-    fs::path src_scenes_dir;
-    #ifdef LOCAL_SCENES_DIR
-    if (fs::exists(LOCAL_SCENES_DIR)) src_scenes_dir = LOCAL_SCENES_DIR;
-    #endif
-    #ifdef SYSTEM_SCENES_DIR
-    if (src_scenes_dir.empty() && fs::exists(SYSTEM_SCENES_DIR)) src_scenes_dir = SYSTEM_SCENES_DIR;
-    #endif
-
-    // Fallback reserve
-    if (src_scenes_dir.empty() && fs::exists("./src/defaults/scenes")) src_scenes_dir = "./src/defaults/scenes";
-
-    if (!src_scenes_dir.empty()) {
-        std::error_code ec;
-        fs::copy(src_scenes_dir, user_scenes_dir, fs::copy_options::update_existing | fs::copy_options::recursive, ec);
-        if (!ec) {
-            std::cout << "  ✓ Copied default scenes to: " << user_scenes_dir.string() << std::endl;
+    // Iteratively unpack all scenes embedded in the VFS
+    int scenes_unpacked = 0;
+    for (const auto& file : EmbeddedFS::Files) {
+        std::string path_str(file.path);
+        
+        // Filter out everything except the "scenes/" directory contents
+        if (path_str.rfind("scenes/", 0) == 0) { 
+            std::string filename = path_str.substr(7); // Strip the "scenes/" prefix
+            if (write_vfs_file(path_str, (user_scenes_dir / filename).string())) {
+                scenes_unpacked++;
+            }
         }
     }
+    
+    if (scenes_unpacked > 0) {
+        std::cout << "  ✓ Unpacked " << scenes_unpacked << " default scenes to: " << user_scenes_dir.string() << std::endl;
+    }
 
-    // 2. Iterate through plugins to update/create their individual configs
+    // ==============================================================================
+    // 3. PLUGIN PARAMETER GENERATION (ABI Reflection)
+    // Instantiates each discovered C++ plugin temporarily to extract its default 
+    // parameters, types, and descriptions via the Safe C-ABI, then writes them to Lua.
+    // ==============================================================================
     for (const auto& effect_name : available_effects) {
         auto effect = pm.create_effect(effect_name);
         if (!effect) continue;
 
+        // Sanitize C++ class names into valid Lua filenames (e.g., "Ico Sphere" -> "ico_sphere.lua")
         std::string filename = sanitize_filename(effect_name) + ".lua";
         fs::path plugin_filepath = plugins_dir / filename;
 
+        // update_plugin_config handles the "Hybrid Config" pattern:
+        // It injects new C++ parameters while preserving the user's custom Lua logic at the bottom.
         update_plugin_config(plugin_filepath.string(), effect_name, effect.get());
         std::cout << "  ✓ Processed config for: " << effect_name << std::endl;
     }
@@ -136,18 +162,6 @@ void LuaConfigGenerator::generate_configs(PluginManager& pm, const std::string& 
     std::cout << "Config generation completed successfully!" << std::endl;
 }
 
-
-void LuaConfigGenerator::generate_ctl_lua(const std::string& filepath) {
-    std::ofstream out(filepath);
-    out << Embedded::CTL_LUA; 
-    out.close();
-}
-
-void LuaConfigGenerator::generate_init_lua(const std::string& filepath, const std::string& default_effect) {
-    std::ofstream out(filepath);
-    out << Embedded::INIT_LUA;
-    out.close();
-}
 
 void LuaConfigGenerator::update_plugin_config(const std::string& filepath, const std::string& plugin_name, IWallpaperEffectABI* effect) {
     std::map<std::string, std::string> user_values;

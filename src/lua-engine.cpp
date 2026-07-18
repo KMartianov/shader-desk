@@ -4,8 +4,7 @@
 #include <filesystem>
 #include <map>
 #include "data-provider.hpp" // Now includes the SDK wrapper (IProviderABI)
-#include "embedded_init.hpp" 
-#include "embedded_ctl.hpp" 
+#include "embedded_fs.hpp" 
 
 #ifdef TRACY_ENABLE
 #include <tracy/Tracy.hpp>
@@ -77,32 +76,34 @@ bool LuaEngine::load() {
     fs::path plugins_dir = fs::path(dir) / "plugins";
     fs::path init_lua_path = fs::path(dir) / "init.lua";
 
-    frame_callback = sol::nil; // Clear the hook from the previous script
+    frame_callback = sol::nil; // Clear the hook from any previous script execution
 
-    // 1. Completely clear the state (useful for hot-reload to prevent memory leaks)
+    // ==============================================================================
+    // 1. STATE INITIALIZATION & MEMORY MANAGEMENT
+    // Completely recreate the Lua state. This prevents memory leaks during hot-reloads
+    // and purges any dangling references from old scripts.
+    // ==============================================================================
     #ifdef TRACY_ENABLE
     lua = sol::state(nullptr, tracy_lua_alloc, nullptr);
     #else
     lua = sol::state();
     #endif
     
-    // 2. Load standard safe Lua libraries
     lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::os, 
                        sol::lib::string, sol::lib::table, sol::lib::package, sol::lib::io);
 
     // ==============================================================================
-    // SECURITY PATCH: Sandbox the 'os' library.
-    // We allow 'os.getenv' for themes (like Pywal), but strictly disable RCE 
-    // (Remote Code Execution) and file deletion to protect the user's system.
+    // 2. SECURITY SANDBOXING (RCE & I/O Protection)
+    // Prevent malicious themes/presets from executing shell commands or deleting 
+    // user files. 'os.getenv' is retained to allow fetching system theme colors (e.g., Pywal).
     // ==============================================================================
     lua["os"]["execute"] = sol::nil;
     lua["os"]["remove"]  = sol::nil;
     lua["os"]["rename"]  = sol::nil;
     lua["os"]["exit"]    = sol::nil;
+    lua["io"]["popen"]   = sol::nil;
 
-    lua["io"]["popen"]   = sol::nil; // Prevents shell command execution via pipes
-
-    // SECURITY PATCH: Restrict io.open to Read-Only mode
+    // Restrict io.open to Read-Only mode safely via a Lua override closure
     lua.safe_script(R"(
         local original_open = io.open
         io.open = function(filename, mode)
@@ -115,25 +116,33 @@ bool LuaEngine::load() {
         io.output = nil
         io.write = nil
     )", sol::script_pass_on_error);
-
-
     
     // ==============================================================================
-    // SMART MODULE RESOLUTION (package.path & package.preload)
+    // 3. MODULE RESOLUTION (Physical & Virtual File Systems)
     // ==============================================================================
-    // Lua will search for modules (like ctl.lua) in the user config dir first, 
-    // Then fallback to the local source tree (useful for development).
     std::string package_path = lua["package"]["path"];
     lua["package"]["path"] = package_path + ";" + dir + "/?.lua;./src/defaults/?.lua";
 
-    // If 'ctl.lua' cannot be found on the filesystem at all (e.g., system-wide install 
-    // With no user config generated yet), load it directly from the embedded C++ string!
+    // Route internal system modules strictly to the embedded Virtual File System (VFS).
+    // This guarantees they are always available, tamper-proof, and load instantly from RAM.
     lua["package"]["preload"]["ctl"] = [](sol::this_state s) {
         sol::state_view lua(s);
-        return lua.load(Embedded::CTL_LUA);
+        auto content = EmbeddedFS::get_file("ctl.lua");
+        if (content) return lua.load(std::string(*content));
+        return lua.load("error('CRITICAL: ctl.lua not found in VFS')");
     };
 
-    // 3. Create global tables to prevent script crashes on missing globals
+    lua["package"]["preload"]["providers"] = [](sol::this_state s) {
+        sol::state_view lua(s);
+        auto content = EmbeddedFS::get_file("providers.lua");
+        if (content) return lua.load(std::string(*content));
+        return lua.load("error('CRITICAL: providers.lua not found in VFS')");
+    };
+
+    // ==============================================================================
+    // 4. GLOBAL ENVIRONMENT SETUP
+    // Prepare the standardized table structure before evaluating any user scripts.
+    // ==============================================================================
     lua["config"] = lua.create_table();
     
     sol::table core = lua.create_table();
@@ -144,36 +153,32 @@ bool LuaEngine::load() {
     core["utils"] = utils;
     core["debug"] = debug;
 
-    // Rebind the C++ API to the newly created sol::state!
+    // Bind the C++ Microkernel native methods to the Lua 'core' table
     if (current_core) {
         bind_core_api(current_core);
     }
 
-    // --- PRESET SYSTEM REGISTRATION ---
+    // Dynamic Preset Loader: Resolves the physical path of the requested plugin 
+    // and recursively merges the preset data into the target configuration table.
     utils["apply_preset"] = [this](sol::table target, const std::string& plugin_name, const std::string& preset_name) {
         if (!current_core) return;
-
-        // Request bundle path from the Core via C-ABI
         std::string bundle_dir = current_core->get_bundle_path(plugin_name.c_str());
         if (bundle_dir.empty()) {
             std::cerr << "\033[33m[Warning] Bundle not found for: " << plugin_name << "\033[0m\n";
             return;
         }
 
-        // Preset path: .../effects/<bundle>/presets/<preset>.lua
         std::string preset_path = bundle_dir + "/presets/" + preset_name + ".lua";
-        
         if (!fs::exists(preset_path)) {
             std::cout << "\033[33m[Warning] Preset not found in bundle: " << preset_path << "\033[0m\n";
             return;
         }
         
-        // Safely load the preset without crashing the engine on syntax errors inside the preset
         auto result = lua.safe_script_file(preset_path, sol::script_pass_on_error);
         if (result.valid() && result.get_type() == sol::type::table) {
             sol::table preset_data = result;
             this->merge_preset_into_target(target, preset_data);
-            std::cout << "  -> Applied preset '" << preset_name << "' from bundle of '" << plugin_name << "'\n";
+            std::cout << "  -> Applied preset '" << preset_name << "' from '" << plugin_name << "'\n";
         } else {
             sol::error err = result;
             std::cerr << "\033[31m[Error] Failed to load preset '" << preset_name << "': " << err.what() << "\033[0m\n";
@@ -181,9 +186,9 @@ bool LuaEngine::load() {
     };
 
     // ==============================================================================
-    // 4. CASCADING CONFIGURATION BOOTSTRAP
-    // First, execute all auto-generated plugin configs (conf.d style from plugins/*.lua).
-    // Using safe_script_file to ensure a single corrupted plugin file doesn't halt the boot.
+    // 5. CASCADING CONFIGURATION BOOTSTRAP (Plugins)
+    // Auto-load all conf.d style plugin configurations from ~/.config/.../plugins/
+    // using safe_script_file to ensure a single corrupted file doesn't halt the boot.
     // ==============================================================================
     if (fs::exists(plugins_dir) && fs::is_directory(plugins_dir)) {
         for (const auto& entry : fs::directory_iterator(plugins_dir)) {
@@ -199,7 +204,8 @@ bool LuaEngine::load() {
     }
 
     // ==============================================================================
-    // 5. INTELLIGENT INIT.LUA LOADING (User -> Local Dev -> Embedded Fallback)
+    // 6. MAIN CONFIGURATION RESOLUTION (init.lua)
+    // Fallback Hierarchy: 1. User Disk -> 2. Local Workspace -> 3. Embedded RAM (VFS)
     // ==============================================================================
     std::string target_file = "";
     if (fs::exists(init_lua_path)) {
@@ -208,28 +214,34 @@ bool LuaEngine::load() {
         target_file = "./src/defaults/init.lua";
     }
 
+    auto vfs_init = EmbeddedFS::get_file("init.lua");
+
     if (!target_file.empty()) {
-        // Safe execution: If the user made a fatal logic error in init.lua, 
-        // We catch it gracefully and fallback to the embedded C++ string.
         auto result = lua.safe_script_file(target_file, sol::script_pass_on_error);
-        
         if (!result.valid()) {
             sol::error err = result;
             std::cerr << "\033[31m[LuaEngine] Runtime error in config:\n" << err.what() << "\033[0m\n";
-            std::cerr << "Falling back to embedded safe configuration." << std::endl;
-            lua.safe_script(Embedded::INIT_LUA, sol::script_pass_on_error);
+            std::cerr << "Falling back to embedded VFS configuration." << std::endl;
+            
+            if (vfs_init) {
+                lua.safe_script(std::string(*vfs_init), sol::script_pass_on_error);
+            }
         } else {
             std::cout << "[LuaEngine] Loaded config: " << target_file << std::endl;
         }
     } else {
-        // Pure portable/system mode. No files needed.
-        lua.safe_script(Embedded::INIT_LUA, sol::script_pass_on_error);
-        std::cout << "[LuaEngine] Loaded embedded fallback config." << std::endl;
+        // Pure Zero-Dependency System Mode. Boot directly from the binary's .rodata segment.
+        if (vfs_init) {
+            lua.safe_script(std::string(*vfs_init), sol::script_pass_on_error);
+            std::cout << "[LuaEngine] Loaded embedded VFS fallback config." << std::endl;
+        } else {
+            std::cerr << "\033[31m[LuaEngine] CRITICAL: init.lua missing from VFS!\033[0m\n";
+            return false;
+        }
     }
 
     return true;
 }
-
 
 // --- PROVIDER CONFIGURATION IMPLEMENTATION ---
 // Now accepting safe IDataProviderABI*
@@ -664,27 +676,31 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             "/usr/share/shader-desk/scenes/" + scene_name + ".lua"
         };
 
+        // 1. Try to load from physical disk (prioritizes user modifications)
         for (const auto& path : search_paths) {
             if (std::filesystem::exists(path)) {
                 auto result = lua.load_file(path);
                 if (result.valid()) {
                     sol::protected_function pf = result;
-                    auto exec_res = pf();
-                    if (exec_res.valid()) {
-                        return exec_res.get<sol::object>();
-                    } else {
-                        sol::error err = exec_res;
-                        std::cerr << "\033[31m[Lua] Runtime error in scene '" << scene_name << "':\n" << err.what() << "\033[0m\n";
-                        return sol::nil;
-                    }
-                } else {
-                    sol::error err = result;
-                    std::cerr << "\033[31m[Lua] Syntax error in scene '" << scene_name << "':\n" << err.what() << "\033[0m\n";
-                    return sol::nil;
+                    return pf().get<sol::object>();
                 }
             }
         }
-        std::cerr << "\033[33m[Lua] Scene '" << scene_name << "' not found.\033[0m\n";
+
+        // 2. Fallback to Virtual File System (RAM)
+        std::string vfs_key = "scenes/" + scene_name + ".lua";
+        auto vfs_content = EmbeddedFS::get_file(vfs_key);
+        
+        if (vfs_content) {
+            auto result = lua.load(std::string(*vfs_content));
+            if (result.valid()) {
+                sol::protected_function pf = result;
+                auto exec_res = pf();
+                if (exec_res.valid()) return exec_res.get<sol::object>();
+            }
+        }
+
+        std::cerr << "\033[33m[Lua] Scene '" << scene_name << "' not found on disk or in VFS.\033[0m\n";
         return sol::nil;
     };
 }

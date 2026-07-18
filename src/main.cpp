@@ -15,7 +15,7 @@
 #include "lua-config-generator.hpp"
 
 // Include the compile-time embedded help text
-#include "embedded_help.hpp"
+#include "embedded_fs.hpp"
 
 namespace fs = std::filesystem;
 
@@ -126,9 +126,14 @@ int main(int argc, char** argv) {
         
         // --- HELP FLAG ---
         if (arg == "-h" || arg == "--help") {
-            std::cout << Embedded::HELP_TEXT << std::endl;
-            return 0; // Print embedded help and exit cleanly
-        } 
+            auto help_content = EmbeddedFS::get_file("help.txt");
+            if (help_content) {
+                std::cout << *help_content << std::endl;
+            } else {
+                std::cout << "Shader Desk CLI - Interactive Wayland Wallpaper Engine" << std::endl;
+            }
+            return 0; 
+        }
         else if (arg == "--config" && i + 1 < argc) {
             // CRITICAL: Convert to absolute path immediately.
             // If run via Hyprland/Sway "exec-once", relative paths will point to $HOME.
@@ -149,7 +154,12 @@ int main(int argc, char** argv) {
             // --- UNKNOWN ARGUMENT PROTECTION ---
             // Catch typos (e.g. "--h"), garbage strings, or missing values
             std::cerr << "\033[31m[Error] Unknown command or argument: '" << arg << "'\033[0m\n\n";
-            std::cout << Embedded::HELP_TEXT << std::endl;
+            auto help_content = EmbeddedFS::get_file("help.txt");
+            if (help_content) {
+                std::cout << *help_content << std::endl;
+            } else {
+                std::cout << "Shader Desk CLI - Interactive Wayland Wallpaper Engine" << std::endl;
+            }
             return 1; // Exit with error code
         }
     }

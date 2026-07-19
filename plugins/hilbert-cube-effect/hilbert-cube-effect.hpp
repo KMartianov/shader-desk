@@ -42,7 +42,7 @@ public:
     void render(uint32_t width, uint32_t height, float dt) override;
     
     // Safely releases GPU memory to prevent leaks during hot-reloads.
-    void cleanup() override;
+    void on_cleanup() override;
 
 private:
     // ==========================================================================

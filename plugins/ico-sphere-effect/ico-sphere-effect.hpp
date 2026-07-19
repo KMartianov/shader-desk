@@ -43,7 +43,7 @@ public:
 
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height, float dt) override;
-    void cleanup() override;
+    void on_cleanup() override;
     
     // --- SETTINGS API ---
     void set_wireframe_mode(bool enabled) { wireframe_mode = enabled; }

@@ -80,12 +80,17 @@ InteractiveWallpaper::InteractiveWallpaper(const WallpaperConfig& cfg, LuaEngine
     // Completely eliminating the risk of dangling pointers during hot-reloads.
     lua_engine.get_layer_by_tag = [this](const std::string& output_name, const std::string& tag) -> IWallpaperEffectABI* {
         for (auto& pair : outputs) {
-            // Match the specific physical monitor, or fallback to the first matching 
-            // Instance if the wildcard "*" is used.
             if (pair.second->name == output_name || output_name == "*") {
                 for (auto& layer : pair.second->layers) {
+                    // Check the parent layer
                     if (layer.tag == tag && layer.effect) {
                         return layer.effect.get();
+                    }
+                    // Check nested filters attached to this layer
+                    for (auto& filter : layer.filters) {
+                        if (filter.tag == tag && filter.effect) {
+                            return filter.effect.get();
+                        }
                     }
                 }
             }
@@ -166,7 +171,16 @@ void InteractiveWallpaper::apply_config_to_effect(Output* output) {
     for (size_t i = 0; i < output->layers.size() && i < out_cfg.layers.size(); ++i) {
         auto& layer = output->layers[i];
         if (layer.effect) {
+            // Apply settings to the main layer
             lua_engine.apply_effect_settings(layer.effect.get(), layer.name, out_cfg.layers[i].custom_settings);
+            
+            // Apply settings to its nested filters
+            for (size_t f = 0; f < layer.filters.size() && f < out_cfg.layers[i].filters.size(); ++f) {
+                auto& filter = layer.filters[f];
+                if (filter.effect) {
+                    lua_engine.apply_effect_settings(filter.effect.get(), filter.name, out_cfg.layers[i].filters[f].custom_settings);
+                }
+            }
         }
     }
 }
@@ -748,43 +762,71 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
     new_layers.reserve(out_cfg.layers.size());
 
     for (const auto& layer_cfg : out_cfg.layers) {
+        LayerInstance current_layer("", "", nullptr, false);
         bool reused = false;
         
-        // Search for the layer not only by effect name, but also by a unique TAG.
-        // This allows using the same plugin multiple times (e.g., 2 background layers).
         auto it = std::find_if(output->layers.begin(), output->layers.end(), [&](const LayerInstance& l) {
-            return l.effect != nullptr && 
-                   l.name == layer_cfg.effect_name && 
-                   l.tag == layer_cfg.tag && // <--- Tag check
-                   l.is_postprocess == layer_cfg.is_postprocess;
+            return l.effect != nullptr && l.name == layer_cfg.effect_name && 
+                   l.tag == layer_cfg.tag && l.is_postprocess == layer_cfg.is_postprocess;
         });
 
         if (it != output->layers.end()) {
-            new_layers.push_back(std::move(*it));
+            current_layer = std::move(*it);
             reused = true;
-        }
-
-        // 4. Instantiation (If no reusable instance was found)
-        if (!reused) {
+        } else {
+            // 4. Instantiation (If no reusable parent layer was found)
             std::cout << "[Core] Loading layer '" << layer_cfg.effect_name 
                       << "' (Tag: '" << layer_cfg.tag << "') onto '" << output->name << "'" << std::endl;
                       
             WallpaperEffectPtr eff = plugin_manager_->create_effect(layer_cfg.effect_name);
-            
             if (eff) {
-                bool init_ok = true;
-                if (egl_ready && output->configured) {
-                    init_ok = eff->initialize(this, output->fbo_w, output->fbo_h);
-                }
+                if (egl_ready && output->configured) eff->initialize(this, output->fbo_w, output->fbo_h);
+                current_layer = LayerInstance(layer_cfg.effect_name, layer_cfg.tag, std::move(eff), layer_cfg.is_postprocess, layer_cfg.clear_depth);
+            } else {
+                std::cerr << "\033[31m[Core] Dropping layer '" << layer_cfg.effect_name << "' due to initialization failure.\033[0m" << std::endl;
+            }
+        }
+
+        // --- NEW: Filter Instantiation & Reuse Loop ---
+        if (current_layer.effect) {
+            std::vector<LayerInstance> new_filters;
+            new_filters.reserve(layer_cfg.filters.size());
+
+            for (const auto& filter_cfg : layer_cfg.filters) {
+                bool f_reused = false;
                 
-                if (init_ok) {
-                    // Pass tag to the LayerInstance constructor
-                    new_layers.emplace_back(layer_cfg.effect_name, layer_cfg.tag, std::move(eff), layer_cfg.is_postprocess, layer_cfg.clear_depth);
+                // Search in the old filters of the current layer
+                auto f_it = std::find_if(current_layer.filters.begin(), current_layer.filters.end(), [&](const LayerInstance& f) {
+                    return f.effect != nullptr && f.name == filter_cfg.effect_name && f.tag == filter_cfg.tag;
+                });
+
+                if (f_it != current_layer.filters.end()) {
+                    new_filters.push_back(std::move(*f_it));
+                    f_reused = true;
                 } else {
-                    std::cerr << "\033[31m[Core] Dropping layer '" << layer_cfg.effect_name 
-                              << "' due to initialization failure.\033[0m" << std::endl;
+                    std::cout << "  -> Stacking filter '" << filter_cfg.effect_name 
+                              << "' (Tag: '" << filter_cfg.tag << "')" << std::endl;
+                    
+                    WallpaperEffectPtr f_eff = plugin_manager_->create_effect(filter_cfg.effect_name);
+                    if (f_eff) {
+                        bool init_ok = true;
+                        if (egl_ready && output->configured) {
+                            // CHECK INITIALIZATION RESULT!
+                            init_ok = f_eff->initialize(this, output->fbo_w, output->fbo_h);
+                        }
+                        
+                        if (init_ok) {
+                            new_filters.emplace_back(filter_cfg.effect_name, filter_cfg.tag, std::move(f_eff), true, false);
+                        } else {
+                            std::cerr << "\033[31m[Core] Dropping filter '" << filter_cfg.effect_name 
+                                      << "' due to initialization failure.\033[0m" << std::endl;
+                        }
+                    }
                 }
             }
+            // Swap the old dead filters out and insert the new valid ones
+            current_layer.filters = std::move(new_filters);
+            new_layers.push_back(std::move(current_layer));
         }
     }
 
@@ -799,9 +841,17 @@ void InteractiveWallpaper::apply_effect_to_output(Output* output) {
         for (size_t i = 0; i < output->layers.size(); ++i) {
             auto& layer = output->layers[i];
             if (layer.effect) {
-                // Apply settings read from the configuration
                 lua_engine.apply_effect_settings(layer.effect.get(), layer.name, out_cfg.layers[i].custom_settings);
                 layer.effect->resize(output->fbo_w, output->fbo_h);
+                
+                // Trigger resize and settings for the filters too
+                for (size_t j = 0; j < layer.filters.size(); ++j) {
+                    auto& filter = layer.filters[j];
+                    if (filter.effect) {
+                        lua_engine.apply_effect_settings(filter.effect.get(), filter.name, out_cfg.layers[i].filters[j].custom_settings);
+                        filter.effect->resize(output->fbo_w, output->fbo_h);
+                    }
+                }
             }
         }
     }
@@ -824,7 +874,7 @@ void InteractiveWallpaper::frame_handle_done(void* data, wl_callback* callback, 
 
 void InteractiveWallpaper::render_output(Output* output) {
     // ==============================================================================
-    // 1. SAFETY CHEcks
+    // 1. SAFETY CHECKS
     // ==============================================================================
     // Ensure the physical monitor is fully initialized by the Wayland compositor,
     // has active visual layers assigned by Lua, and possesses a valid EGL surface.
@@ -910,7 +960,7 @@ void InteractiveWallpaper::render_output(Output* output) {
                 if (!layer.effect) continue;
 
                 if (layer.is_postprocess && i > 0) {
-                    // --- PING-PONG FBO SWAP (For Post-Processing) ---
+                    // --- GLOBAL PING-PONG FBO SWAP (For Screen-Space Post-Processing) ---
                     int next_fbo = 1 - output->current_fbo;
                     glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[next_fbo]);
                     
@@ -943,10 +993,28 @@ void InteractiveWallpaper::render_output(Output* output) {
                 glBindTexture(GL_TEXTURE_2D, output->tex_feedback); // Bind U_feedback_layer
                 glActiveTexture(GL_TEXTURE0); // Reset active texture unit
 
-                // Execute C++ plugin logic (Draw Calls)
+                // ====================================================================
+                // --- INJECT NESTED FILTERS (Node-Based Rendering) ---
+                // We pass the instantiated filter plugins into the base effect via C-ABI.
+                // The base effect plugin will handle its own internal Ping-Pong FBO 
+                // isolation, executing these filters seamlessly if the array is not empty.
+                // ====================================================================
+                if (!layer.filters.empty()) {
+                    std::vector<IWallpaperEffectABI*> raw_filters;
+                    raw_filters.reserve(layer.filters.size());
+                    for (auto& f : layer.filters) {
+                        if (f.effect) raw_filters.push_back(f.effect.get());
+                    }
+                    layer.effect->set_filters_abi(raw_filters.data(), raw_filters.size());
+                } else {
+                    layer.effect->set_filters_abi(nullptr, 0); // Clear active filters
+                }
+
+                // Execute the main C++ plugin logic (Draw Calls)
                 layer.effect->render(fbo_w, fbo_h, frame_dt);
                 
                 // --- DEFENSIVE STATE ISOLATION ---
+                // Crucial in modular engines: never trust the plugin to reset its state.
                 glBindVertexArray(0);
                 glUseProgram(0);
                 glDepthMask(GL_TRUE); 
@@ -958,7 +1026,7 @@ void InteractiveWallpaper::render_output(Output* output) {
         // ========================================================================
         // POST-PROCESS OPTIMIZATION 2: Memory Bandwidth Saver
         // Instead of using glBlitFramebuffer (which physically copies millions of pixels),
-        // we perform a $O(1)$ Handle Swap. We detach the current rendered texture from 
+        // we perform an O(1) Handle Swap. We detach the current rendered texture from 
         // the FBO and swap its ID with the feedback texture.
         bool needs_feedback = false;
         for (const auto& layer : output->layers) {
@@ -979,9 +1047,6 @@ void InteractiveWallpaper::render_output(Output* output) {
             // The FBO remains perfectly valid, but now points to the recycled memory.
             glBindFramebuffer(GL_FRAMEBUFFER, output->fbo[output->current_fbo]);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, output->tex[output->current_fbo], 0);
-            
-            // The texture that was attached to the FBO is now safely stored in output->tex_feedback
-            // and contains the exact final frame, ready for the next tick!
         }
 
         // ========================================================================
@@ -1170,6 +1235,15 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
                         if (!layer.effect->initialize(output->parent, target_fbo_w, target_fbo_h)) {
                             layer.effect.reset();
                         }
+                        
+                        // --- ИСПРАВЛЕНИЕ: ИНИЦИАЛИЗАЦИЯ ВЛОЖЕННЫХ ФИЛЬТРОВ ---
+                        for (auto& filter : layer.filters) {
+                            if (filter.effect) {
+                                if (!filter.effect->initialize(output->parent, target_fbo_w, target_fbo_h)) {
+                                    filter.effect.reset(); // Отбрасываем фильтр, если он сломался
+                                }
+                            }
+                        }
                     }
                 }
                 // Apply Lua settings immediately after EGL context initialization
@@ -1197,7 +1271,14 @@ void InteractiveWallpaper::layer_surface_configure(void* data, zwlr_layer_surfac
             if (eglMakeCurrent(output->parent->egl_display, output->egl_surface, output->egl_surface, output->parent->egl_context)) {
                 output->allocate_fbos(target_fbo_w, target_fbo_h);
                 for (auto& layer : output->layers) {
-                    if (layer.effect) layer.effect->resize(target_fbo_w, target_fbo_h);
+                    if (layer.effect) {
+                        layer.effect->resize(target_fbo_w, target_fbo_h);
+                        
+                        // --- ИСПРАВЛЕНИЕ: РЕСАЙЗ ВЛОЖЕННЫХ ФИЛЬТРОВ ---
+                        for (auto& filter : layer.filters) {
+                            if (filter.effect) filter.effect->resize(target_fbo_w, target_fbo_h);
+                        }
+                    }
                 }
             }
         }

@@ -43,9 +43,12 @@ struct LayerInstance {
     bool is_postprocess;
     bool clear_depth; // Z-Buffer management flag
     
-    //  Constructor
-    LayerInstance(std::string n, std::string t, WallpaperEffectPtr eff, bool post, bool c_depth = true) 
-        : name(std::move(n)), tag(std::move(t)), effect(std::move(eff)), is_postprocess(post), clear_depth(c_depth) {}
+    // Instantiated C++ plugins acting as filters for this object
+    std::vector<LayerInstance> filters;
+    
+    // Constructor
+    LayerInstance(std::string n, std::string t, WallpaperEffectPtr eff, bool post, bool c_depth = true, std::vector<LayerInstance> child_filters = {}) 
+        : name(std::move(n)), tag(std::move(t)), effect(std::move(eff)), is_postprocess(post), clear_depth(c_depth), filters(std::move(child_filters)) {}
 };
 
 

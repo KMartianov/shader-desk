@@ -756,16 +756,12 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                 std::string eff_name = layer_tbl.get_or("effect", std::string(""));
                 if (eff_name.empty()) continue;
 
-                // Extract the semantic tag. If the user didn't specify one, 
-                // Default to the effect name itself for backward compatibility.
                 std::string tag = layer_tbl.get_or("tag", eff_name); 
-                
                 sol::table settings = layer_tbl["settings"].is<sol::table>() ? layer_tbl["settings"] : lua.create_table();
                 bool is_post = layer_tbl.get_or("postprocess", false);
-
                 bool clear_depth = layer_tbl.get_or("clear_depth", true);
 
-
+                // --- Base Layer Preset ---
                 std::string preset = layer_tbl.get_or("preset", std::string(""));
                 if (!preset.empty()) {
                     std::string applied = settings.get_or("_preset_applied", std::string(""));
@@ -778,9 +774,40 @@ OutputConfig LuaEngine::get_output_config(const std::string& output_name, const 
                     }
                 }
 
-                // Push the parsed configuration including the tag
-                res.layers.push_back({eff_name, tag, settings, is_post, clear_depth});
+                // Parse Nested Filters ---
+                std::vector<LayerConfig> parsed_filters;
+                if (layer_tbl["filters"].is<sol::table>()) {
+                    sol::table filters_tbl = layer_tbl["filters"];
+                    for (auto& f_kv : filters_tbl) {
+                        if (!f_kv.second.is<sol::table>()) continue;
+                        sol::table f_tbl = f_kv.second.as<sol::table>();
+                        
+                        std::string f_eff_name = f_tbl.get_or("effect", std::string(""));
+                        if (f_eff_name.empty()) continue;
+                        
+                        std::string f_tag = f_tbl.get_or("tag", f_eff_name);
+                        sol::table f_settings = f_tbl["settings"].is<sol::table>() ? f_tbl["settings"] : lua.create_table();
+                        
+                        // Filter Preset
+                        std::string f_preset = f_tbl.get_or("preset", std::string(""));
+                        if (!f_preset.empty()) {
+                            std::string f_applied = f_settings.get_or("_preset_applied", std::string(""));
+                            if (f_applied != f_preset) {
+                                sol::function apply_preset = core["utils"]["apply_preset"];
+                                if (apply_preset.valid()) {
+                                    apply_preset(f_settings, f_eff_name, f_preset);
+                                    f_settings["_preset_applied"] = f_preset;
+                                }
+                            }
+                        }
+                        
+                        // Filters are inherently post-processing and don't manage scene depth
+                        parsed_filters.push_back({f_eff_name, f_tag, f_settings, true, false, {}});
+                    }
+                }
 
+                // Push the parsed configuration including the nested filters
+                res.layers.push_back({eff_name, tag, settings, is_post, clear_depth, parsed_filters});
             }
         } else {
             // Old format (1 effect)

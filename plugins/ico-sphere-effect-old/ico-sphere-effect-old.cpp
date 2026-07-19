@@ -44,7 +44,7 @@ IcoSphereEffect::IcoSphereEffect() {
 }
 
 IcoSphereEffect::~IcoSphereEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 // ==============================================================================
@@ -267,11 +267,17 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
         needs_regeneration = false;
     }
 
-    // 2. KINEMATIC PHYSICS & GLOBAL CAMERA (Base Class)
+    // 2. KINEMATIC PHYSICS & GLOBAL CAMERA
     float aspect = (height > 0) ? (float)width / (float)height : 1.0f;
     update_kinematics(dt, aspect); 
     
-    // 3. OPENGL PIPELINE SETUP
+    // ========================================================================
+    // 3. OBJECT ISOLATION
+    // Divert rendering into the local FBO if nested filters are attached
+    // ========================================================================
+    auto [target_w, target_h] = begin_scaled_pass(width, height);
+
+    // 4. OPENGL PIPELINE SETUP
     glEnable(GL_DEPTH_TEST);
     glUseProgram(program);
     
@@ -279,7 +285,6 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     glUniformMatrix4fv(u_view, 1, GL_FALSE, &view_matrix[0][0]);
     glUniformMatrix4fv(u_projection, 1, GL_FALSE, &proj_matrix[0][0]);
 
-    // 4. LIGHTING & VISUAL UNIFORMS
     glUniform3f(u_lightColor, 1.0f, 1.0f, 1.0f); 
     glUniform3f(u_lightPos, 5.0f, 5.0f, 5.0f);   
     glUniform3f(u_viewPos, current_view_pos.x, current_view_pos.y, current_view_pos.z);    
@@ -296,13 +301,11 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
     glUniform1f(u_noise_amp, scaled_noise_amp);
     glUniform1f(u_sphere_scale, sphere_scale);
 
-    // 5. AUDIO TELEMETRY UNIFORMS
     glUniform1f(u_audio_bass, p_audio_bass ? *p_audio_bass : 0.0f);
     glUniform1f(u_audio_mid, p_audio_mid ? *p_audio_mid : 0.0f);
     glUniform1f(u_audio_treble, p_audio_treble ? *p_audio_treble : 0.0f);
     if (p_audio_bands) glUniform1fv(u_audio_bands, 64, p_audio_bands);
 
-    // 6. HARDWARE DRAW CALL
     glBindVertexArray(vao);
     
     if (wireframe_mode) {
@@ -312,18 +315,24 @@ void IcoSphereEffect::render(uint32_t width, uint32_t height, float dt) {
         glDrawElements(GL_LINES, line_indices.size(), GL_UNSIGNED_INT, 0);
     } else {
         glUniform3f(u_object_color, background_color.r, background_color.g, background_color.b);
-        glUniform3f(u_wireframe_color, wireframe_color.r, wireframe_color.g, wireframe_color.b); // Used for rim light
+        glUniform3f(u_wireframe_color, wireframe_color.r, wireframe_color.g, wireframe_color.b);
         glUniform1i(u_is_wireframe_pass, 0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
     }
     
-    // 7. STATE ISOLATION
     glBindVertexArray(0);
     glDisable(GL_DEPTH_TEST);
+
+    // ========================================================================
+    // 5. APPLY NESTED FILTERS AND COMPOSITE BACK TO SCREEN
+    // Passes the local texture through the attached filters and blits the 
+    // Z-Buffer into the global Wayland scene.
+    // ========================================================================
+    end_scaled_pass(dt);
 }
 
-void IcoSphereEffect::cleanup() {
+void IcoSphereEffect::on_cleanup() {
     if (program) glDeleteProgram(program);
     if (vao) glDeleteVertexArrays(1, &vao);
     if (vbo) glDeleteBuffers(1, &vbo);

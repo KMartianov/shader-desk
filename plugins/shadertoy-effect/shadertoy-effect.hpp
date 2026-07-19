@@ -41,7 +41,7 @@ struct DynamicParam {
 class ShaderToyEffect : public WallpaperEffect {
 public:
     ShaderToyEffect() = default;
-    ~ShaderToyEffect() override { cleanup(); }
+    ~ShaderToyEffect() override { on_cleanup(); }
 
     const char* get_name() const override { return "ShaderToy Sandbox"; }
     
@@ -52,7 +52,7 @@ public:
     // --- Core Lifecycle ---
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
     void render(uint32_t width, uint32_t height, float dt) override;
-    void cleanup() override;
+    void on_cleanup() override;
 
 private:
     // --- OpenGL State ---

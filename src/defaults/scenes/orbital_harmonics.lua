@@ -17,7 +17,7 @@ local M = {
     },
     
     fps_limit = 0.0, 
-    fbo_scale = 0.3,
+    fbo_scale = 0.5,
     
     -- ==========================================================================
     -- USER SETTINGS
@@ -47,14 +47,15 @@ local M = {
             tag = "space_bg",
             clear_depth = true, -- Wipe the previous frame's depth
             settings = {
-                gradient_type = 2,       -- Radial Offset
-                color_space = 1,         -- OKLab for perfect blending
+                gradient_type = 2,
+                color_space = 1,
                 radial_radius = 1.2,
                 radial_center = {0.5, 0.5},
-                color_1 = {0.05, 0.01, 0.08}, -- Dark Purple Core
-                color_2 = {0.00, 0.00, 0.00}, -- Pitch Black Edges
+                color_1 = {0.05, 0.01, 0.08},
+                color_2 = {0.00, 0.00, 0.00},
             }
         },
+        
         -- 2. THE DYING STAR (Center Planet)
         {
             effect = "Icosahedron Sphere Old",
@@ -62,67 +63,55 @@ local M = {
             clear_depth = true, -- Clears background depth to start the 3D scene
             settings = {
                 shader_theme = "harmonics",
-                wireframe_mode = false,
-                subdivisions = 6,             
+                wireframe_mode = true,
+                subdivisions = 2,             
                 sphere_scale = 1.2,
                 background_color = {1.02, 1.00, 0.02}, 
                 wireframe_color = {2.0, 0.2, 0.5},
                 offset = {0.0, 0.0, 0.0},
                 
-                -- KINEMATICS (Base Physics)
-                rotation_axis = {0.0, 1.0, 0.2}, -- Tilted Y axis
-                rotation_speed = 2.0,            -- Base continuous rotation force
-                rotation_decay = 0.95,           -- Friction (used when impulses hit)
+                rotation_axis = {0.0, 1.0, 0.2},
+                rotation_speed = 2.0,
+                rotation_decay = 0.95,
                 
-                -- Visual Audio Reactivity (Handled in Shader)
-                oscill_freq = 0.5,
-                twist_amp = 0.3,              
-                wave_amp = 0.1,
-                noise_amp = 0.15
+                oscill_freq = 0.5, twist_amp = 0.3, wave_amp = 0.1, noise_amp = 0.15
+            },
+            
+            -- ==================================================================
+            -- НОВАЯ АРХИТЕКТУРА: ВЛОЖЕННЫЕ ФИЛЬТРЫ!
+            -- Глитч применится только к планете, а её Z-Buffer (рельеф) 
+            -- пробросится в основную сцену благодаря Depth Blitting.
+            -- ==================================================================
+            filters = {
+                {
+                    effect = "Postprocess Effect",
+                    tag = "planet_glitch", -- Уникальный тег, если захочешь анимировать глитч из on_frame
+                    settings = {
+                        shader_theme = "postprocess",
+                        variant = 2,
+                        intensity = 0.2,
+                        scale = 1.0,
+                        speed = 1.0,
+                    }
+                }
             }
         },
-
-       -- {
-       --      effect = "Postprocess Effect", -- Накидываем сверху глитч
-       --      tag = "glitch_filter",
-       --      postprocess = true,         -- КРИТИЧЕСКИ ВАЖНО! Включит Ping-Pong FBO
-       --      settings = {
-       --         shader_theme = "datamosh",
-       --         variant = 1,     -- Режим блочного датамоша
-       --         intensity = 0.1, -- Чем выше, тем больше экран разваливается на квадраты
-       --         scale = 100.0,    -- Плотность макро-блоков (размер квадратов)
-       --         speed = 2.0,     -- Частота "поломки" (зависит от BPM, если захочешь привязать к музыке)
-       --      }
-       --  },
-
-         {
-             effect = "Postprocess Effect", -- Накидываем сверху глитч
-             tag = "glitch_filter",
-             postprocess = true,         -- КРИТИЧЕСКИ ВАЖНО! Включит Ping-Pong FBO
-             settings = {
-                shader_theme = "postprocess",
-                variant = 2,     -- Режим блочного датамоша
-                intensity = 0.2,-- Чем выше, тем больше экран разваливается на квадраты
-                scale = 1.0,    -- Плотность макро-блоков (размер квадратов)
-                speed = 1.0,     -- Частота "поломки" (зависит от BPM, если захочешь привязать к музыке)
-             }
-         },
 
         -- 3. THE MOON
         {
             effect = "Icosahedron Sphere Old",
             tag = "orbit_moon",
-            -- CRITICAL: False! This allows the moon to physically go behind the planet!
-            clear_depth = true, 
+            -- CRITICAL FIX: Теперь FALSE! Z-Buffer от планеты сохранен, 
+            -- поэтому Луна будет честно прятаться ЗА планету при вращении.
+            clear_depth = false, 
             settings = {
                 shader_theme = "default",
                 wireframe_mode = false,
-                subdivisions = 1,             -- Low poly
+                subdivisions = 1,
                 sphere_scale = 0.3,          
                 background_color = {1.0, 0.0, 0.5},
                 wireframe_color = {0.2, 0.8, 1.0},
                 
-                -- KINEMATICS: Fast self-spin
                 rotation_axis = {0.5, 1.0, 0.0},
                 rotation_speed = 10.0,
                 rotation_decay = 0.95,
@@ -130,7 +119,7 @@ local M = {
                 oscill_amp = 0.0, wave_amp = 0.0, noise_amp = 0.0
             }
         },
---
+
         -- 4. THE ALIEN ARTIFACT (Cube)
         {
             effect = "Hilbert Cube",
@@ -142,14 +131,11 @@ local M = {
                 curve_color = {0.1, 1.0, 0.3},
                 cube_color = {1.0, 0.0, 0.00},
                 
-                -- KINEMATICS: Chaotic self-spin
                 rotation_axis = {1.0, 1.0, 1.0},
                 rotation_speed = -5.0,
                 rotation_decay = 0.98
             }
         },
-
-        
     },
     
     state = { 

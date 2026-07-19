@@ -20,7 +20,7 @@ Text3DEffect::~Text3DEffect() {
     if (worker_thread.joinable()) {
         worker_thread.join();
     }
-    cleanup();
+    on_cleanup();
 }
 
 std::vector<EffectParameter> Text3DEffect::get_parameters() const {
@@ -316,7 +316,7 @@ void Text3DEffect::render(uint32_t width, uint32_t height, float dt) {
     glBindVertexArray(0);
 }
 
-void Text3DEffect::cleanup() {
+void Text3DEffect::on_cleanup() {
     if (program) glDeleteProgram(program);
     if (vao) glDeleteVertexArrays(1, &vao);
     if (sdf_texture) glDeleteTextures(1, &sdf_texture);

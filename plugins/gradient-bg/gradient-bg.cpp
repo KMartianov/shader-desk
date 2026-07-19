@@ -23,7 +23,7 @@
 GradientBgEffect::GradientBgEffect() = default;
 
 GradientBgEffect::~GradientBgEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 const char* GradientBgEffect::get_name() const {
@@ -186,7 +186,7 @@ void GradientBgEffect::render(uint32_t width, uint32_t height, float dt) {
 // ------------------------------------------------------------------------------
 // RESOURCE CLEANUP
 // ------------------------------------------------------------------------------
-void GradientBgEffect::cleanup() {
+void GradientBgEffect::on_cleanup() {
     if (program) {
         glDeleteProgram(program);
         program = 0;

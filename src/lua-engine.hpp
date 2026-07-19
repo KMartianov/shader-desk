@@ -22,6 +22,9 @@ struct LayerConfig {
     sol::table custom_settings;
     bool is_postprocess = false; // Post-processing flag
     bool clear_depth = true;
+
+    std::vector<LayerConfig> filters; 
+
 };
 
 // Structure describing the configuration for a specific monitor

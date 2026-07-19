@@ -24,7 +24,7 @@
 PostprocessEffectEffect::PostprocessEffectEffect() = default;
 
 PostprocessEffectEffect::~PostprocessEffectEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 const char* PostprocessEffectEffect::get_name() const {
@@ -178,7 +178,7 @@ void PostprocessEffectEffect::render(uint32_t width, uint32_t height, float dt) 
 // ------------------------------------------------------------------------------
 // RESOURCE CLEANUP
 // ------------------------------------------------------------------------------
-void PostprocessEffectEffect::cleanup() {
+void PostprocessEffectEffect::on_cleanup() {
     if (program) {
         glDeleteProgram(program);
         program = 0;

@@ -16,7 +16,7 @@
 VideoBgEffect::VideoBgEffect() = default;
 
 VideoBgEffect::~VideoBgEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 const char* VideoBgEffect::get_name() const {
@@ -362,7 +362,7 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
     glEnable(GL_DEPTH_TEST);
 }
 
-void VideoBgEffect::cleanup() {
+void VideoBgEffect::on_cleanup() {
     bool is_gl_alive = (eglGetCurrentContext() != EGL_NO_CONTEXT);
 
     if (mpv_gl) {

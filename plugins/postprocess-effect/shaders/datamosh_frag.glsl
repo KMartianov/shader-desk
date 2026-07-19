@@ -90,5 +90,11 @@ void main() {
     // Защита от выхода за пределы текстуры
     uv = clamp(uv, 0.0, 1.0);
     
-    FragColor = texture(u_prev_layer, uv);
+    vec4 col = texture(u_prev_layer, uv);
+
+    if (col.a < 0.01) {
+        discard;
+    }
+    
+    FragColor = col;
 }

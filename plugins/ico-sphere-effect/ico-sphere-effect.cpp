@@ -67,7 +67,7 @@ IcoSphereEffect::IcoSphereEffect() {
 }
 
 IcoSphereEffect::~IcoSphereEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 // ==============================================================================
@@ -204,7 +204,7 @@ bool IcoSphereEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
     return true;
 }
 
-void IcoSphereEffect::cleanup() {
+void IcoSphereEffect::on_cleanup() {
     if (program) glDeleteProgram(program);
     if (bloom_blur_program) glDeleteProgram(bloom_blur_program);
     if (bloom_final_program) glDeleteProgram(bloom_final_program);

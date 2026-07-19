@@ -29,7 +29,7 @@ ImageBgEffect::~ImageBgEffect() {
     if (worker_thread.joinable()) {
         worker_thread.join();
     }
-    cleanup();
+    on_cleanup();
 }
 
 const char* ImageBgEffect::get_name() const { return "Image Bg"; }
@@ -344,7 +344,7 @@ void ImageBgEffect::render(uint32_t width, uint32_t height, float dt) {
     glEnable(GL_DEPTH_TEST);
 }
 
-void ImageBgEffect::cleanup() {
+void ImageBgEffect::on_cleanup() {
     if (program) { glDeleteProgram(program); program = 0; }
     if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
     release_current_texture(); 

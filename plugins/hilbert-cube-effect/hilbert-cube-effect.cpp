@@ -10,7 +10,7 @@
 HilbertCubeEffect::HilbertCubeEffect() {}
 
 HilbertCubeEffect::~HilbertCubeEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 // ==============================================================================
@@ -159,8 +159,8 @@ bool HilbertCubeEffect::initialize(ICoreContext* core, uint32_t width, uint32_t 
 // ==============================================================================
 void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
     // 1. DEFERRED GEOMETRY REGENERATION
-    // Executed only if Lua changed `hilbert_order`. This prevents frame drops 
-    // unless the user explicitly requested a structural geometry change.
+    // CPU geometry generation is computationally heavy. We only rebuild the VBOs 
+    // when Lua explicitly changes the `hilbert_order`. This prevents frame drops.
     if (needs_regeneration) {
         if (curve_vao) glDeleteVertexArrays(1, &curve_vao);
         if (curve_vbo) glDeleteBuffers(1, &curve_vbo);
@@ -173,44 +173,57 @@ void HilbertCubeEffect::render(uint32_t width, uint32_t height, float dt) {
         needs_regeneration = false;
     }
 
-    // 2. KINEMATIC PHYSICS CALCULATION (From Base Class)
-    // Applies rotational momentum (from Audio impacts or Lua scripts),
-    // calculates inertia friction, processes the custom center of mass (pivot),
-    // and reads the Global Camera coordinates to compute the final MVP matrices.
+    // 2. KINEMATIC PHYSICS & GLOBAL CAMERA
+    // Computes rotational momentum, inertia friction, and transforms the 
+    // object based on the global Wayland scene camera coordinates.
     float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
     update_kinematics(dt, aspect); 
     
-    // 3. RENDER SETUP
+    // ========================================================================
+    // 3. OBJECT ISOLATION (For Nested Filters & Resolution Scaling)
+    // Diverts rendering from the main screen into a local Ping-Pong FBO.
+    // If no filters are attached and scale == 1.0, this safely acts as a passthrough.
+    // ========================================================================
+    auto [target_w, target_h] = begin_scaled_pass(width, height);
+
+    // 4. OPENGL PIPELINE SETUP
     glEnable(GL_DEPTH_TEST);
-    glLineWidth(1.0f); // Fallback if supported by the driver
+    glLineWidth(1.0f); // Fallback line thickness (driver dependent)
     glUseProgram(program);
     
-    // 4. DISPATCH PRE-CALCULATED MATRICES
-    // The model_matrix, view_matrix, and proj_matrix were calculated in O(1) time
-    // inside the update_kinematics() method.
+    // 5. DISPATCH PRE-CALCULATED MATRICES
+    // The MVP matrices were calculated in O(1) time inside update_kinematics()
     glUniformMatrix4fv(u_model, 1, GL_FALSE, &model_matrix[0][0]);
     glUniformMatrix4fv(u_view, 1, GL_FALSE, &view_matrix[0][0]);
     glUniformMatrix4fv(u_projection, 1, GL_FALSE, &proj_matrix[0][0]);
     
-    // 5. DRAW THE HILBERT FRACTAL CURVE
+    // 6. DRAW THE HILBERT FRACTAL CURVE
     glUniform3fv(u_line_color, 1, &curve_color[0]);
     glBindVertexArray(curve_vao);
     glDrawArrays(GL_LINE_STRIP, 0, curve_vertex_count);
 
-    // 6. DRAW THE BOUNDING WIREFRAME BOX
+    // 7. DRAW THE BOUNDING WIREFRAME BOX
     if (draw_cube_outline) {
         glUniform3fv(u_line_color, 1, &cube_color[0]);
         glBindVertexArray(cube_vao);
         glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
     }
     
-    // 7. ISOLATE STATE
-    // Crucial in modular engines: never trust the next plugin to reset your state.
+    // 8. DEFENSIVE STATE ISOLATION
+    // Never trust the compositor or subsequent plugins to reset your OpenGL state.
     glBindVertexArray(0);
     glDisable(GL_DEPTH_TEST);
+
+    // ========================================================================
+    // 9. APPLY FILTERS AND COMPOSITE BACK TO SCREEN
+    // Passes the local texture through the attached post-processing plugins (filters).
+    // Performs hardware Depth Blitting to copy the 3D relief of the cube into 
+    // the global Wayland scene, ensuring it occludes other objects correctly.
+    // ========================================================================
+    end_scaled_pass(dt);
 }
 
-void HilbertCubeEffect::cleanup() {
+void HilbertCubeEffect::on_cleanup() {
     if (program) glDeleteProgram(program);
     if (curve_vao) glDeleteVertexArrays(1, &curve_vao);
     if (curve_vbo) glDeleteBuffers(1, &curve_vbo);

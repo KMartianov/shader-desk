@@ -24,7 +24,7 @@
 SolidBgEffect::SolidBgEffect() = default;
 
 SolidBgEffect::~SolidBgEffect() {
-    cleanup();
+    on_cleanup();
 }
 
 const char* SolidBgEffect::get_name() const {
@@ -186,7 +186,7 @@ void SolidBgEffect::render(uint32_t width, uint32_t height, float dt) {
 // ------------------------------------------------------------------------------
 // RESOURCE CLEANUP
 // ------------------------------------------------------------------------------
-void SolidBgEffect::cleanup() {
+void SolidBgEffect::on_cleanup() {
     if (program) {
         glDeleteProgram(program);
         program = 0;

@@ -1,4 +1,3 @@
-// Src/wallpaper-effect.hpp
 #pragma once
 
 #include "plugin-abi.hpp"
@@ -14,6 +13,7 @@
 #include <iostream>
 
 #include <GLES3/gl3.h>
+#include <EGL/egl.h>        // Required for context safety checks during cleanup
 #include <glm/glm.hpp>
 
 // Alias for backward compatibility. Plugins can use ICoreContext as before.
@@ -40,9 +40,9 @@ struct EffectParameter {
 class WallpaperEffect : public IWallpaperEffectABI {
 public:
     virtual ~WallpaperEffect() {
-        // Safely destroy OpenGL resources upon plugin unloading to prevent memory leaks
-        destroy_internal_fbo();
-        destroy_standard_pipeline();
+        // Fallback: Guarantee resource destruction if the host core unloads the 
+        // plugin abruptly or skips the explicit cleanup() call.
+        execute_standard_cleanup();
     }
 
     // --- Core Developer API (Must be implemented by the child plugin) ---
@@ -50,7 +50,20 @@ public:
     virtual std::vector<EffectParameter> get_parameters() const = 0;
     virtual void set_parameter(const std::string& name, const EffectParameterValue& value) = 0;
     virtual bool initialize(ICoreContext* core, uint32_t width, uint32_t height) = 0;
-    virtual void cleanup() = 0;
+
+    // ==========================================================================
+    // STANDARD CLEANUP PIPELINE (Template Method Pattern)
+    // ==========================================================================
+    // The 'final' keyword guarantees that child plugins cannot accidentally 
+    // bypass the FBO/Shader destruction logic or the EGL Context safety checks.
+    void cleanup() final {
+        execute_standard_cleanup();
+        on_cleanup(); // Delegate to the child class for custom resource destruction
+    }
+
+    // Hook for child plugins. Override this ONLY if you need to delete custom 
+    // allocated VBOs, EBOs, or Textures (e.g., in 3D effects).
+    virtual void on_cleanup() {}
 
     // Optional hooks for advanced plugins
     virtual void resize(uint32_t width, uint32_t height) override {}
@@ -100,7 +113,7 @@ public:
         }
 
         // 5. Composite the scaled internal texture back to the Wayland Microkernel
-        end_scaled_pass();
+        end_scaled_pass(dt);
     }
 
     // ==========================================================================
@@ -213,6 +226,16 @@ public:
         return false;
     }
 
+    // ==========================================================================
+    // ABI IMPLEMENTATION: NESTED FILTERS
+    // ==========================================================================
+    void set_filters_abi(IWallpaperEffectABI** filters, uint32_t count) final {
+        m_active_filters.clear();
+        if (filters && count > 0) {
+            m_active_filters.assign(filters, filters + count);
+        }
+    }
+
 protected:
     ICoreContext* m_core_ptr = nullptr; // Retained internally for delayed operations (like hot-reloading)
 
@@ -320,60 +343,94 @@ protected:
     // Hijacks the Core FBO and redirects all GL rendering to an isolated, scaled texture.
     // This allows demanding shaders to render at a fraction of the screen resolution.
     ScaledPassInfo begin_scaled_pass(uint32_t core_w, uint32_t core_h) {
-        // Fast-Path: If scaling is native (1.0), bypass all FBO overhead
-        if (layer_fbo_scale >= 0.99f && layer_fbo_scale <= 1.01f) {
+        // Fast-Path: Bypass if scaling is 1.0 AND no filters are attached
+        if (layer_fbo_scale >= 0.99f && layer_fbo_scale <= 1.01f && m_active_filters.empty()) {
             return {core_w, core_h}; 
         }
 
         uint32_t target_w = std::max<uint32_t>(1, static_cast<uint32_t>(core_w * layer_fbo_scale));
         uint32_t target_h = std::max<uint32_t>(1, static_cast<uint32_t>(core_h * layer_fbo_scale));
 
-        // Reallocate internal textures only when the resolution physically changes
         if (target_w != m_internal_w || target_h != m_internal_h) {
             allocate_internal_fbo(target_w, target_h);
         }
 
-        // Save Wayland Microkernel's OpenGL state to restore it seamlessly later
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_core_fbo);
         glGetIntegerv(GL_VIEWPORT, m_core_viewport);
 
-        // Bind our isolated FBO sandbox
-        glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo);
+        // Always render the initial 3D object into FBO[0]
+        glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo[0]);
         glViewport(0, 0, target_w, target_h);
 
-        // Crucial: Clear with zero alpha so Wayland transparency and multi-layer composition works correctly
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         return {target_w, target_h};
     }
 
+
     // Projects the scaled internal texture back to the Wayland Microkernel's Ping-Pong FBO.
-    void end_scaled_pass() {
-        if (layer_fbo_scale >= 0.99f && layer_fbo_scale <= 1.01f) return;
+    void end_scaled_pass(float dt) {
+        if (layer_fbo_scale >= 0.99f && layer_fbo_scale <= 1.01f && m_active_filters.empty()) return;
 
-        // Restore Wayland Microkernel's OpenGL state
-        glBindFramebuffer(GL_FRAMEBUFFER, m_core_fbo);
-        glViewport(m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3]);
+        // 1. DEPTH BLITTING
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_internal_fbo[0]);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_core_fbo);
+        glBlitFramebuffer(0, 0, m_internal_w, m_internal_h, 
+                          m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3], 
+                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 
-        if (!m_blit_program) compile_blit_shader();
-
-        glUseProgram(m_blit_program);
-        
-        // Emulate Alpha Blending. The internal texture might have transparent areas
-        // that need to blend with the layers previously drawn by the Microkernel.
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // 2. ZERO-ALLOCATION FILTER PING-PONG LOOP
+        int current_src_idx = 0; 
         glDisable(GL_DEPTH_TEST);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_internal_tex);
+        if (!m_active_filters.empty()) {
+            for (size_t i = 0; i < m_active_filters.size(); ++i) {
+                int dest_idx = 1 - current_src_idx; 
+                
+                if (i == m_active_filters.size() - 1) {
+                    glBindFramebuffer(GL_FRAMEBUFFER, m_core_fbo);
+                    glViewport(m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3]);
+                    
+                    glEnable(GL_BLEND);
+                    // ИСПРАВЛЕНИЕ: Использовать Alpha источника без изменения цвета (Straight Alpha)
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                } else {
+                    glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo[dest_idx]);
+                    glViewport(0, 0, m_internal_w, m_internal_h);
+                    glDisable(GL_BLEND); 
+                }
 
-        if (!m_blit_vao) glGenVertexArrays(1, &m_blit_vao);
-        glBindVertexArray(m_blit_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        
-        // Isolate state to prevent corruption of the next plugin in the chain
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, m_internal_tex[current_src_idx]);
+
+                m_active_filters[i]->render(
+                    (i == m_active_filters.size() - 1) ? m_core_viewport[2] : m_internal_w,
+                    (i == m_active_filters.size() - 1) ? m_core_viewport[3] : m_internal_h, 
+                    dt
+                );
+
+                current_src_idx = dest_idx; 
+            }
+        } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_core_fbo);
+            glViewport(m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3]);
+            
+            if (!m_blit_program) compile_blit_shader();
+            glUseProgram(m_blit_program);
+            
+            glEnable(GL_BLEND);
+            // ИСПРАВЛЕНИЕ: То же самое для базового масштабирования
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, m_internal_tex[0]);
+
+            if (!m_blit_vao) glGenVertexArrays(1, &m_blit_vao);
+            glBindVertexArray(m_blit_vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
     }
@@ -381,6 +438,7 @@ protected:
 private:
     mutable std::vector<EffectParameter> param_cache;
     mutable bool cache_valid = false;
+    bool m_is_cleaned_up = false;
 
     // --- Standard Pipeline State ---
     GLuint m_std_program = 0;
@@ -397,10 +455,12 @@ private:
     std::string m_pending_frag_file = "";
     std::string m_pending_vert_file = "";
 
-    // --- FBO Scaling State ---
-    GLuint m_internal_fbo = 0;
-    GLuint m_internal_tex = 0;
-    GLuint m_internal_rbo = 0;
+    // --- FBO Scaling & Nested Filters Ping-Pong State ---
+    std::vector<IWallpaperEffectABI*> m_active_filters;
+    
+    GLuint m_internal_fbo[2] = {0, 0};
+    GLuint m_internal_tex[2] = {0, 0};
+    GLuint m_internal_rbo = 0; // Depth is only needed for the initial 3D pass
     uint32_t m_internal_w = 0;
     uint32_t m_internal_h = 0;
     
@@ -444,33 +504,37 @@ private:
         destroy_internal_fbo();
         m_internal_w = w; m_internal_h = h;
 
-        glGenFramebuffers(1, &m_internal_fbo);
-        glGenTextures(1, &m_internal_tex);
+        glGenFramebuffers(2, m_internal_fbo);
+        glGenTextures(2, m_internal_tex);
         glGenRenderbuffers(1, &m_internal_rbo);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo);
+        // Helper lambda to set up the two Ping-Pong targets
+        auto setup_fbo = [&](int idx, bool use_depth) {
+            glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo[idx]);
+            glBindTexture(GL_TEXTURE_2D, m_internal_tex[idx]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_internal_tex[idx], 0);
 
-        glBindTexture(GL_TEXTURE_2D, m_internal_tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        
-        // Linear scaling is preferred for universal downsampling/upsampling
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_internal_tex, 0);
+            if (use_depth) {
+                glBindRenderbuffer(GL_RENDERBUFFER, m_internal_rbo);
+                glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_internal_rbo);
+            }
+        };
 
-        // 3D Depth support is mandatory for plugins like Hilbert Cube or Raymarched Text
-        glBindRenderbuffer(GL_RENDERBUFFER, m_internal_rbo);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_internal_rbo);
+        setup_fbo(0, true);  // FBO 0: Main 3D render target (Requires Z-Buffer)
+        setup_fbo(1, false); // FBO 1: 2D Filter target (No depth needed)
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     void destroy_internal_fbo() {
-        if (m_internal_fbo) { glDeleteFramebuffers(1, &m_internal_fbo); m_internal_fbo = 0; }
-        if (m_internal_tex) { glDeleteTextures(1, &m_internal_tex); m_internal_tex = 0; }
+        if (m_internal_fbo[0]) { glDeleteFramebuffers(2, m_internal_fbo); m_internal_fbo[0] = m_internal_fbo[1] = 0; }
+        if (m_internal_tex[0]) { glDeleteTextures(2, m_internal_tex); m_internal_tex[0] = m_internal_tex[1] = 0; }
         if (m_internal_rbo) { glDeleteRenderbuffers(1, &m_internal_rbo); m_internal_rbo = 0; }
         if (m_blit_program) { glDeleteProgram(m_blit_program); m_blit_program = 0; }
         if (m_blit_vao) { glDeleteVertexArrays(1, &m_blit_vao); m_blit_vao = 0; }
@@ -514,5 +578,31 @@ private:
 
         glDeleteShader(vs);
         glDeleteShader(fs);
+    }
+
+
+    // ==========================================================================
+    // SEGFAULT PROTECTION (EGL Context Loss)
+    // ==========================================================================
+    void execute_standard_cleanup() {
+        if (m_is_cleaned_up) return;
+        m_is_cleaned_up = true;
+
+        // If the EGL context is physically dead, we cannot call glDelete* 
+        // (it will crash the NVIDIA/Mesa driver). We just drop the handles.
+        if (eglGetCurrentContext() == nullptr || eglGetCurrentContext() == EGL_NO_CONTEXT) { 
+            m_std_program = m_std_vao = 0;
+            
+            m_internal_fbo[0] = m_internal_fbo[1] = 0;
+            m_internal_tex[0] = m_internal_tex[1] = 0;
+            m_internal_rbo = 0;
+            
+            m_blit_program = m_blit_vao = 0;
+            return;
+        }
+
+        // Otherwise, cleanly release VRAM
+        destroy_internal_fbo();
+        destroy_standard_pipeline();
     }
 };

@@ -311,7 +311,7 @@ void ShaderToyEffect::render(uint32_t width, uint32_t height, float dt) {
     glActiveTexture(GL_TEXTURE0); 
 }
 
-void ShaderToyEffect::cleanup() {
+void ShaderToyEffect::on_cleanup() {
     if (program) glDeleteProgram(program);
     if (vao) glDeleteVertexArrays(1, &vao);
     

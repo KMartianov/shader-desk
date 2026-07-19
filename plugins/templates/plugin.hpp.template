@@ -8,30 +8,46 @@
 #include <string>
 #include <vector>
 
+// ==============================================================================
+// {{CLASS_NAME}}
+// 
+// ARCHITECTURE NOTE (Standard Pipeline):
+// This plugin inherits from WallpaperEffect, which provides a Zero-Boilerplate 
+// render pipeline. You do NOT need to manually create VAOs, compile shaders, 
+// track delta time, or handle FBO resolution scaling (fbo_scale).
+// All of this is handled seamlessly by the base class.
+// ==============================================================================
 class {{CLASS_NAME}} : public WallpaperEffect {
 public:
-    {{CLASS_NAME}}();
-    ~{{CLASS_NAME}}() override;
+    {{CLASS_NAME}}() = default;
+    
+    // Virtual destructor gracefully handled by the base class (destroys FBOs/Shaders)
+    ~{{CLASS_NAME}}() override = default;
 
-    // --- WallpaperEffect Interface ---
+    // --- Core ABI Implementation ---
     const char* get_name() const override;
     std::vector<EffectParameter> get_parameters() const override;
     void set_parameter(const std::string& name, const EffectParameterValue& value) override;
 
     bool initialize(ICoreContext* core, uint32_t width, uint32_t height) override;
-    void render(uint32_t width, uint32_t height, float dt) override;
-    void cleanup() override;
+    
+    // Destroys custom resources (Textures, custom VBOs). 
+    // Base class shaders and FBOs are cleaned up automatically.
+    void on_cleanup() override;
+
+protected:
+    // ==========================================================================
+    // STANDARD PIPELINE HOOK (Inversion of Control)
+    // ==========================================================================
+    // Automatically called inside the base class render() loop.
+    // Used to dispatch custom uniforms to the GPU right before the draw call.
+    void bind_custom_uniforms() override;
 
 private:
-    GLuint program = 0;
-    GLuint vao = 0;
-    float time = 0.0f;
-    ICoreContext* m_core = nullptr;
+    ICoreContext* m_core = nullptr; // Compatibility alias for the auto-generator
 
     // --- Shader Theme Management ---
     std::string active_shader = "{{DEFAULT_THEME}}";
-    bool needs_shader_reload = true;
-    bool reload_shader_program();
     void fetch_uniform_locations();
 
     // --- Parameter Member Variables ---
@@ -41,8 +57,6 @@ private:
 {{TEX_MEMBERS}}
 
     // --- Uniform Locations ---
-    GLuint u_time = 0;
-    GLuint u_resolution = 0;
 {{UNIFORM_DECLARATIONS}}
 
 {{TEX_PROCESS_DECL}}

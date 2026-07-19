@@ -125,18 +125,66 @@ bool LuaEngine::load() {
 
     // Route internal system modules strictly to the embedded Virtual File System (VFS).
     // This guarantees they are always available, tamper-proof, and load instantly from RAM.
-    lua["package"]["preload"]["ctl"] = [](sol::this_state s) {
+    lua["package"]["preload"]["ctl"] = [](sol::this_state s) -> sol::object {
         sol::state_view lua(s);
         auto content = EmbeddedFS::get_file("ctl.lua");
-        if (content) return lua.load(std::string(*content));
-        return lua.load("error('CRITICAL: ctl.lua not found in VFS')");
+        sol::load_result chunk = content ? lua.load(std::string(*content))
+                                        : lua.load("error('CRITICAL: ctl.lua not found in VFS')");
+        if (!chunk.valid()) {
+            sol::error err = chunk;
+            std::cerr << "\033[31m[LuaEngine] ctl.lua compile error: " << err.what() << "\033[0m\n";
+            return sol::make_object(lua, sol::lua_nil);
+        }
+        sol::protected_function pf = chunk;
+        sol::protected_function_result result = pf();
+        if (!result.valid()) {
+            sol::error err = result;
+            std::cerr << "\033[31m[LuaEngine] ctl.lua runtime error: " << err.what() << "\033[0m\n";
+            return sol::make_object(lua, sol::lua_nil);
+        }
+        return result;
     };
 
-    lua["package"]["preload"]["providers"] = [](sol::this_state s) {
+    lua["package"]["preload"]["providers"] = [dir](sol::this_state s) -> sol::object {
         sol::state_view lua(s);
-        auto content = EmbeddedFS::get_file("providers.lua");
-        if (content) return lua.load(std::string(*content));
-        return lua.load("error('CRITICAL: providers.lua not found in VFS')");
+
+        fs::path user_path  = fs::path(dir) / "providers.lua";
+        fs::path local_path  = "./src/defaults/providers.lua";
+
+        sol::load_result chunk;
+        std::string source_label;
+
+        if (fs::exists(user_path)) {
+            chunk = lua.load_file(user_path.string());
+            source_label = "USER DISK: " + user_path.string();
+        } else if (fs::exists(local_path)) {
+            chunk = lua.load_file(local_path.string());
+            source_label = "LOCAL WORKSPACE: " + local_path.string();
+        } else {
+            auto content = EmbeddedFS::get_file("providers.lua");
+            chunk = content ? lua.load(std::string(*content))
+                            : lua.load("error('CRITICAL: providers.lua not found in VFS')");
+            source_label = "EMBEDDED VFS";
+        }
+
+        if (!chunk.valid()) {
+            sol::error err = chunk;
+            std::cerr << "\033[31m[LuaEngine] providers.lua compile error: " << err.what() << "\033[0m\n";
+            return sol::make_object(lua, sol::lua_nil);
+        }
+
+        std::cout << "\033[35m[LuaEngine] providers <- " << source_label << "\033[0m\n";
+
+        // КРИТИЧНО: load()/load_file() только компилируют chunk.
+        // Чтобы тело файла реально выполнилось — chunk нужно ВЫЗВАТЬ.
+        sol::protected_function pf = chunk;
+        sol::protected_function_result result = pf();
+        if (!result.valid()) {
+            sol::error err = result;
+            std::cerr << "\033[31m[LuaEngine] providers.lua runtime error: " << err.what() << "\033[0m\n";
+            return sol::make_object(lua, sol::lua_nil);
+        }
+        return result;
     };
 
     // ==============================================================================

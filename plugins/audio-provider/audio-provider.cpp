@@ -84,6 +84,13 @@ public:
         // until the Control Plane wakes up, adhering to the Data-Driven design.
         p_eq_curve = core->get_blackboard()->bind_float_array("audio.eq_curve", 64);
 
+        // Границы полос должны совпадать с daemons/audio-daemon/main.cpp:
+        // SAMPLE_RATE=44100, NUM_BANDS=64, диапазон 20 Гц .. SAMPLE_RATE/2
+        constexpr double SAMPLE_RATE = 44100.0;
+        constexpr int NUM_BANDS = 64;
+        bass_band_end_ = freq_to_band_index(250.0,  20.0, SAMPLE_RATE / 2.0, NUM_BANDS); // ≈ 23
+        mid_band_end_  = freq_to_band_index(4000.0, 20.0, SAMPLE_RATE / 2.0, NUM_BANDS); // ≈ 48
+
         // 2. Create the non-blocking IPC Datagram socket
         sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (sockfd < 0) return false;
@@ -141,12 +148,17 @@ public:
 
         // Apply processing strictly to the freshest packet in O(1) time
         if (has_new_data) {
+            // Сначала считаем bass/mid/treble ИЗ сырых полос, применяя EQ,
+            // а не берём готовые агрегаты демона (которые EQ не видят).
+            float eq_bass   = eq_weighted_average(latest_datagram.bands, p_eq_curve, 0, bass_band_end_);
+            float eq_mid    = eq_weighted_average(latest_datagram.bands, p_eq_curve, bass_band_end_, mid_band_end_);
+            float eq_treble = eq_weighted_average(latest_datagram.bands, p_eq_curve, mid_band_end_, 64);
+
             apply_dynamic_smoothing(*p_volume, latest_datagram.volume, volume_multiplier);
-            apply_dynamic_smoothing(*p_bass,   latest_datagram.bass,   bass_multiplier);
-            apply_dynamic_smoothing(*p_mid,    latest_datagram.mid,    mid_multiplier);
-            apply_dynamic_smoothing(*p_treble, latest_datagram.treble, treble_multiplier);
+            apply_dynamic_smoothing(*p_bass,   eq_bass,   bass_multiplier);
+            apply_dynamic_smoothing(*p_mid,    eq_mid,    mid_multiplier);
+            apply_dynamic_smoothing(*p_treble, eq_treble, treble_multiplier);
             
-            // Apply Lua-driven EQ curve dynamically without any string parsing or allocations
             for (int i = 0; i < 64; ++i) {
                 float eq_multiplier = volume_multiplier * p_eq_curve[i];
                 apply_dynamic_smoothing(p_bands[i], latest_datagram.bands[i], eq_multiplier);
@@ -164,6 +176,29 @@ public:
     }
 
 private:
+
+    // Индексы-границы полос, разделяющие спектр на bass/mid/treble.
+    // Считаются один раз в initialize() — должны соответствовать 
+    // логике make_log_frequencies() в audio-daemon (20 Гц .. Nyquist, 64 полосы).
+    int bass_band_end_ = 0;
+    int mid_band_end_  = 0;
+
+    static int freq_to_band_index(double freq, double f_min, double f_max, int num_bands) {
+        double t = std::log(freq / f_min) / std::log(f_max / f_min);
+        return std::clamp(static_cast<int>(std::lround(t * num_bands)), 0, num_bands);
+    }
+
+    // Усредняет raw_bands[lo..hi) с весом eq_curve[lo..hi) — 
+    // применяет эквалайзер ДО агрегации в bass/mid/treble.
+    static float eq_weighted_average(const float* raw_bands, const float* eq_curve, int lo, int hi) {
+        if (hi <= lo) return 0.0f;
+        float sum = 0.0f;
+        for (int i = lo; i < hi; ++i) {
+            sum += raw_bands[i] * std::max(0.0f, eq_curve[i]); // отрицательный EQ = полное подавление, не инверсия фазы
+        }
+        return sum / static_cast<float>(hi - lo);
+    }
+
     // ==============================================================================
     // ASYMMETRIC SIGNAL SMOOTHING
     // Ensures explosive visual reaction to beats (Fast Attack), while providing

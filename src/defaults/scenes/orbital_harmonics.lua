@@ -63,8 +63,8 @@ local M = {
             clear_depth = true, -- Clears background depth to start the 3D scene
             settings = {
                 shader_theme = "harmonics",
-                wireframe_mode = true,
-                subdivisions = 2,             
+                wireframe_mode = false,
+                subdivisions = 6,             
                 sphere_scale = 1.2,
                 background_color = {1.02, 1.00, 0.02}, 
                 wireframe_color = {2.0, 0.2, 1.5},
@@ -240,19 +240,19 @@ M.on_frame = function(self, dt, output_name)
     -- ==========================================================================
     -- 2. PHYSICS IMPULSES (Audio Reactivity)
     -- ==========================================================================
-    local bass = core.get_float("audio.bass", 0.0)
+    -- local bass = core.get_float("audio.bass", 0.0)
     
     -- The C++ Kinematic engine constantly degrades speed back to 0 using `rotation_decay`.
     -- If we add a base force + a massive spike on beat, the planet will "kick" and 
     -- smoothly slow down to its base rotational speed.
-    local base_force = 2.0
-    local impulse = 0.0
-    if bass > 0.6 then
-        impulse = bass * 40.0 -- Explosive rotational force
-    end
+    -- local base_force = 2.0
+    -- local impulse = 0.0
+    -- if bass > 0.6 then
+    --     impulse = bass * 40.0 -- Explosive rotational force
+    -- end
     
-    core.get_layer(output_name, "center_planet")
-        :set("rotation_speed", base_force + impulse)
+    -- core.get_layer(output_name, "center_planet")
+    --   :set("rotation_speed", base_force + impulse)
 
     -- ==========================================================================
     -- 3. ORBITAL MECHANICS (Calculating World Space Offsets)

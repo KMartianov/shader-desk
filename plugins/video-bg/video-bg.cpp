@@ -27,7 +27,7 @@ const char* VideoBgEffect::get_name() const {
 // PARAMETER MANAGEMENT
 // ------------------------------------------------------------------------------
 std::vector<EffectParameter> VideoBgEffect::get_parameters() const {
-    return {
+    std::vector<EffectParameter> params = {
         {"video_path", "Path to video file or URL", video_path},
         {"fill_mode", "0: Cover, 1: Contain", fill_mode},
         {"border_radius", "Rounded corners (0.0 - 0.5)", border_radius},
@@ -46,9 +46,16 @@ std::vector<EffectParameter> VideoBgEffect::get_parameters() const {
         {"is_paused", "Pause playback", is_paused},
         {"debug_mpv", "Enable verbose MPV console output", debug_mpv}
     };
+    
+    // Inject standard parameters (layer_fbo_scale) into the Lua Control Plane
+    register_standard_params(params);
+    return params;
 }
 
 void VideoBgEffect::set_parameter(const std::string& name, const EffectParameterValue& value) {
+    // Intercept standard pipeline parameters (e.g., layer_fbo_scale)
+    if (apply_standard_param(name, value)) return;
+
     try {
         if (name == "video_path") {
             std::string new_path = std::get<std::string>(value);
@@ -250,6 +257,7 @@ void VideoBgEffect::reallocate_fbo(int w, int h) {
 void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
     if (!mpv_gl) return;
 
+    // 1. Process pending media files
     if (video_path_pending && !video_path.empty()) {
         video_path_pending = false;
         
@@ -263,12 +271,12 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
 
         if (fp.length() > 2) {
             std::cout << "\033[36m[" << get_name() << "] Loading media: '" << fp << "'\033[0m" << std::endl;
-            // Единственный вызов загрузки (без сломанного append)
             const char* cmd[] = {"loadfile", fp.c_str(), "replace", nullptr};
             mpv_command_async(mpv, 0, cmd);
         }
     }
 
+    // 2. Pump MPV events
     while (mpv_event* event = mpv_wait_event(mpv, 0.0)) {
         if (event->event_id == MPV_EVENT_NONE) break;
         if (event->event_id == MPV_EVENT_LOG_MESSAGE && debug_mpv) {
@@ -277,9 +285,10 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
         }
     }
 
+    // 3. Hardware Video Decoding & FBO Update
     uint64_t update_flags = mpv_render_context_update(mpv_gl);
     
-    // MPV_RENDER_UPDATE_FRAME сигнализирует, что драйвер декодировал новый кадр
+    // MPV_RENDER_UPDATE_FRAME signals that the driver has decoded a new frame
     if (update_flags & MPV_RENDER_UPDATE_FRAME) {
         int64_t w = width, h = height;
         mpv_get_property(mpv, "video-params/dw", MPV_FORMAT_INT64, &w);
@@ -300,8 +309,7 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
                 GL_RGBA8 
             };
 
-            // 0 - Нативный FBO маппинг. Шейдер перевернет его как надо.
-            int flip_y = 0; 
+            int flip_y = 0; // 0 - Native FBO mapping. The shader will flip it appropriately.
 
             mpv_render_param render_params[] = {
                 {MPV_RENDER_PARAM_OPENGL_FBO, &fbo_ctx},
@@ -310,24 +318,30 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
             };
 
             mpv_render_context_render(mpv_gl, render_params);
-
             glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
         }
     }
 
+    // ========================================================================
+    // 4. FBO HIJACKING (Resolution Scaling & Nested Filters)
+    // Redirects all drawing from the physical screen to a scalable internal texture.
+    // ========================================================================
+    auto [target_w, target_h] = begin_scaled_pass(width, height);
+
     glUseProgram(program);
     time += dt; 
     
+    // Calculate aspect ratios based on the SCALED targets, not physical ones
     float s_aspect = 1.0f;
-    if (height > 0) s_aspect = static_cast<float>(width) / static_cast<float>(height);
+    if (target_h > 0) s_aspect = static_cast<float>(target_w) / static_cast<float>(target_h);
     
     float t_aspect = 1.0f;
     if (video_h > 0) t_aspect = static_cast<float>(video_w) / static_cast<float>(video_h);
     
     if (u_time != -1) glUniform1f(u_time, time);
-    if (u_resolution != -1) glUniform2f(u_resolution, static_cast<float>(width), static_cast<float>(height));
+    if (u_resolution != -1) glUniform2f(u_resolution, static_cast<float>(target_w), static_cast<float>(target_h));
     
-    if (u_pixel_size != -1) glUniform2f(u_pixel_size, 2.0f / width, 2.0f / height);
+    if (u_pixel_size != -1) glUniform2f(u_pixel_size, 2.0f / target_w, 2.0f / target_h);
     if (u_screen_aspect != -1) glUniform1f(u_screen_aspect, s_aspect);
     if (u_tex_aspect != -1) glUniform1f(u_tex_aspect, t_aspect);
 
@@ -345,6 +359,7 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
     
     if (u_blur_radius != -1) glUniform1f(u_blur_radius, blur_radius);
 
+    // 5. Submit Draw Call (Render video texture onto the FBO Quad)
     if (video_tex) {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, video_tex);
@@ -360,6 +375,13 @@ void VideoBgEffect::render(uint32_t width, uint32_t height, float dt) {
     
     glActiveTexture(GL_TEXTURE0);
     glEnable(GL_DEPTH_TEST);
+
+    // ========================================================================
+    // 6. COMPOSITING AND BLITTING
+    // Projects the scaled texture back to the Wayland Microkernel's FBO,
+    // applying any attached post-processing filters on the way.
+    // ========================================================================
+    end_scaled_pass(dt);
 }
 
 void VideoBgEffect::on_cleanup() {

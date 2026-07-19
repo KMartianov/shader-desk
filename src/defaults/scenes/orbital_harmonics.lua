@@ -24,7 +24,7 @@ local M = {
     -- ==========================================================================
     settings = {
         -- Camera Settings
-        cam_radius = 5.5,         -- Distance of the camera from the center (0,0,0)
+        cam_radius = 8.5,         -- Distance of the camera from the center (0,0,0)
         cam_sensitivity = 0.5,  -- Mouse rotation speed
         
         -- Orbital Mechanics
@@ -67,7 +67,7 @@ local M = {
                 subdivisions = 2,             
                 sphere_scale = 1.2,
                 background_color = {1.02, 1.00, 0.02}, 
-                wireframe_color = {2.0, 0.2, 0.5},
+                wireframe_color = {2.0, 0.2, 1.5},
                 offset = {0.0, 0.0, 0.0},
                 
                 rotation_axis = {0.0, 1.0, 0.2},
@@ -82,19 +82,20 @@ local M = {
             -- Глитч применится только к планете, а её Z-Buffer (рельеф) 
             -- пробросится в основную сцену благодаря Depth Blitting.
             -- ==================================================================
-            filters = {
-                {
-                    effect = "Postprocess Effect",
-                    tag = "planet_glitch", -- Уникальный тег, если захочешь анимировать глитч из on_frame
-                    settings = {
-                        shader_theme = "postprocess",
-                        variant = 2,
-                        intensity = 0.2,
-                        scale = 1.0,
-                        speed = 1.0,
-                    }
-                }
-            }
+            --filters = {
+            --    {
+            --        effect = "Postprocess Effect",
+            --        tag = "planet_kaleidoscope",
+            --        settings = {
+            --            shader_theme = "kaleidoscope",
+            --            variant = 1,
+            --            intensity = 0.0,
+            --            scale = 8.0, -- 8 граней
+            --            speed = 0.5,
+            --        }
+            --    }
+            --}
+
         },
 
         -- 3. THE MOON
@@ -107,7 +108,7 @@ local M = {
             settings = {
                 shader_theme = "default",
                 wireframe_mode = false,
-                subdivisions = 1,
+                subdivisions = 4,
                 sphere_scale = 0.3,          
                 background_color = {1.0, 0.0, 0.5},
                 wireframe_color = {0.2, 0.8, 1.0},
@@ -117,6 +118,31 @@ local M = {
                 rotation_decay = 0.95,
                 
                 oscill_amp = 0.0, wave_amp = 0.0, noise_amp = 0.0
+            },
+            filters = {
+                {
+                    effect = "Postprocess Effect",
+                    tag = "planet_glitch2", -- Уникальный тег, если захочешь анимировать глитч из on_frame
+                    settings = {
+                        shader_theme = "datamosh",
+                        variant = 1,
+                        intensity = 0.3,
+                        scale = 10.0,
+                        speed = 1.0,
+                    }
+                },
+                {
+                    effect = "Postprocess Effect",
+                    tag = "planet_glitch", -- Уникальный тег, если захочешь анимировать глитч из on_frame
+                    settings = {
+                        shader_theme = "postprocess",
+                        variant = 2,
+                        intensity = 0.2,
+                        scale = 100.0,
+                        speed = 1.0,
+                    }
+                }
+                
             }
         },
 
@@ -134,6 +160,32 @@ local M = {
                 rotation_axis = {1.0, 1.0, 1.0},
                 rotation_speed = -5.0,
                 rotation_decay = 0.98
+            },
+
+            filters = {
+                {
+                    effect = "Postprocess Effect",
+                    tag = "planet_glitch2", -- Уникальный тег, если захочешь анимировать глитч из on_frame
+                    settings = {
+                        shader_theme = "datamosh",
+                        variant = 1,
+                        intensity = 0.3,
+                        scale = 10.0,
+                        speed = 1.0,
+                    }
+                },
+                {
+                    effect = "Postprocess Effect",
+                    tag = "planet_glitch", -- Уникальный тег, если захочешь анимировать глитч из on_frame
+                    settings = {
+                        shader_theme = "postprocess",
+                        variant = 2,
+                        intensity = 0.2,
+                        scale = 100.0,
+                        speed = 1.0,
+                    }
+                }
+                
             }
         },
     },

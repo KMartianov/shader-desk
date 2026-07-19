@@ -240,44 +240,51 @@ bool ShaderToyEffect::initialize(ICoreContext* core, uint32_t width, uint32_t he
 }
 
 void ShaderToyEffect::render(uint32_t width, uint32_t height, float dt) {
-    // 1. Process IO and Texture Generation. 
-    // Called here because the Microkernel guarantees the EGL context is active.
-
+    // 1. Process IO and Shader Generation
     if (pending_recompile) {
         pending_recompile = false;
-        GLuint old_program = program; // Сохраняем старый шейдер на случай ошибки синтаксиса
+        GLuint old_program = program; // Save old shader in case of syntax error
         
         if (parse_and_compile(m_core)) {
             if (old_program) glDeleteProgram(old_program);
-            std::cout << "[ShaderToy] Successfully hot-swapped shader to: " << target_shader_file << "\n";
+            std::cout << "\033[32m[ShaderToy] Successfully hot-swapped shader to: " << target_shader_file << "\033[0m\n";
         } else {
-            program = old_program; // Откат к рабочему шейдеру
-            std::cerr << "[ShaderToy] Failed to compile new shader. Keeping previous.\n";
+            program = old_program; // Rollback to working shader
+            std::cerr << "\033[31m[ShaderToy] Failed to compile new shader. Keeping previous.\033[0m\n";
         }
     }
 
-
     process_pending_textures();
 
+    // ========================================================================
+    // 2. FBO HIJACKING (Resolution Scaling & Nested Filters)
+    // Redirects all drawing from the screen to a scalable internal texture.
+    // ========================================================================
+    auto [target_w, target_h] = begin_scaled_pass(width, height);
+
     glUseProgram(program);
-    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_DEPTH_TEST); // ShaderToy is strictly 2D/Raymarched
 
     time_accum += dt;
     frame_count++;
 
-    // 2. Dispatch Standard ShaderToy Uniforms
-    if (u_iResolution != -1) glUniform3f(u_iResolution, static_cast<float>(width), static_cast<float>(height), 1.0f);
+    // 3. Dispatch Standard ShaderToy Uniforms
+    // CRITICAL: We pass the target FBO dimensions, NOT the physical screen dimensions!
+    if (u_iResolution != -1) {
+        glUniform3f(u_iResolution, static_cast<float>(target_w), static_cast<float>(target_h), 1.0f);
+    }
     if (u_iTime != -1) glUniform1f(u_iTime, time_accum);
     if (u_iTimeDelta != -1) glUniform1f(u_iTimeDelta, dt);
     if (u_iFrame != -1) glUniform1i(u_iFrame, frame_count);
     
     if (u_iMouse != -1) {
+        // Read mouse telemetry from the Wayland Evdev zero-latency bus
         float mx = p_mouse_x ? *p_mouse_x : 0.0f;
         float my = p_mouse_y ? *p_mouse_y : 0.0f;
         glUniform4f(u_iMouse, mx, my, 0.0f, 0.0f);
     }
 
-    // 3. Dispatch Dynamic User Uniforms
+    // 4. Dispatch Dynamic User Uniforms
     for (const auto& p : dynamic_params) {
         if (p.uniform_location == -1) continue;
 
@@ -293,22 +300,31 @@ void ShaderToyEffect::render(uint32_t width, uint32_t height, float dt) {
         }
     }
 
-    // 4. Bind Textures to corresponding Texture Units
+    // 5. Bind Textures to corresponding Texture Units
     for (int i = 0; i < 4; ++i) {
         if (channels[i].type == ChannelType::TEXTURE && channels[i].texture_id) {
             glActiveTexture(GL_TEXTURE0 + i);
             glBindTexture(GL_TEXTURE_2D, channels[i].texture_id);
-            glUniform1i(channels[i].uniform_location, i); // Inform the sampler about the unit
+            // Inform the sampler about the active texture unit
+            glUniform1i(channels[i].uniform_location, i); 
         }
     }
 
-    // 5. Submit Draw Call
+    // 6. Submit Draw Call (Zero-VBO Fullscreen Triangle)
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     
-    // 6. State Isolation: Reset the pipeline so subsequent layers aren't affected
+    // 7. State Isolation: Reset the pipeline so subsequent layers aren't affected
     glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0); 
+    glEnable(GL_DEPTH_TEST);
+
+    // ========================================================================
+    // 8. COMPOSITING AND BLITTING
+    // Projects the scaled texture back to the Wayland Microkernel's FBO,
+    // applying any attached post-processing filters on the way.
+    // ========================================================================
+    end_scaled_pass(dt);
 }
 
 void ShaderToyEffect::on_cleanup() {
@@ -348,19 +364,27 @@ std::vector<EffectParameter> ShaderToyEffect::get_parameters() const {
             exports.push_back({name, desc, channels[i].source_file});
         }
     }
+    
+    // Inject standard parameters (like 'layer_fbo_scale') 
+    // into the Lua Control Plane seamlessly.
+    register_standard_params(exports);
+    
     return exports;
 }
 
 void ShaderToyEffect::set_parameter(const std::string& name, const EffectParameterValue& value) {
+    // Intercept standard pipeline parameters (e.g., layer_fbo_scale)
+    // If the base class recognizes the parameter, it handles it and we exit early.
+    if (apply_standard_param(name, value)) return;
+
     if (name == "shader_file") {
         std::string new_file = std::get<std::string>(value);
         if (target_shader_file != new_file) {
             target_shader_file = new_file;
-            pending_recompile = true; // <--- Запрашиваем перекомпиляцию в следующем кадре
+            pending_recompile = true; // Request recompilation on the next frame
         }
         return;
     }
-
 
     // Wait-Free Texture Hot-Swapping:
     // If Lua modifies a channel parameter, we only update the string and flag it.

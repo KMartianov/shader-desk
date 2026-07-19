@@ -362,8 +362,23 @@ protected:
         glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo[0]);
         glViewport(0, 0, target_w, target_h);
 
+        // Clear ONLY the color buffer. The background must be fully transparent 
+        // for subsequent alpha compositing in end_scaled_pass.
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // CRITICAL FIX: Inherit the Z-Buffer state from the Wayland Core FBO.
+        // This perfectly respects the Lua 'clear_depth' configuration handled by the microkernel.
+        // It allows independent plugins (e.g., Moon) to correctly occlude behind previously
+        // rendered 3D objects (e.g., Planet) even when wrapped inside an isolated FBO.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_core_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_internal_fbo[0]);
+        glBlitFramebuffer(m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3], 
+                          0, 0, target_w, target_h, 
+                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+        // Restore target FBO binding for the plugin's draw calls
+        glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo[0]);
 
         return {target_w, target_h};
     }
@@ -374,6 +389,7 @@ protected:
         if (layer_fbo_scale >= 0.99f && layer_fbo_scale <= 1.01f && m_active_filters.empty()) return;
 
         // 1. DEPTH BLITTING
+        // Copy the Z-Buffer from the internal 3D pass back to the global scene.
         glBindFramebuffer(GL_READ_FRAMEBUFFER, m_internal_fbo[0]);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_core_fbo);
         glBlitFramebuffer(0, 0, m_internal_w, m_internal_h, 
@@ -389,16 +405,24 @@ protected:
                 int dest_idx = 1 - current_src_idx; 
                 
                 if (i == m_active_filters.size() - 1) {
+                    // Final filter writes directly to the Wayland Microkernel FBO
                     glBindFramebuffer(GL_FRAMEBUFFER, m_core_fbo);
                     glViewport(m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3]);
                     
                     glEnable(GL_BLEND);
-                    // ИСПРАВЛЕНИЕ: Использовать Alpha источника без изменения цвета (Straight Alpha)
+                    // Use Straight Alpha blending for proper compositing over background layers
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                 } else {
+                    // Intermediate filters write to the Ping-Pong FBO
                     glBindFramebuffer(GL_FRAMEBUFFER, m_internal_fbo[dest_idx]);
                     glViewport(0, 0, m_internal_w, m_internal_h);
                     glDisable(GL_BLEND); 
+                    
+                    // CRITICAL FIX: Clear the intermediate buffer before rendering.
+                    // Without this, shaders using 'discard' or UV shifts (Kaleidoscope/Datamosh)
+                    // will accumulate visual garbage from previous frames.
+                    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
                 }
 
                 glActiveTexture(GL_TEXTURE0);
@@ -413,6 +437,7 @@ protected:
                 current_src_idx = dest_idx; 
             }
         } else {
+            // Direct blit logic when no filters are attached but resolution scaling is active
             glBindFramebuffer(GL_FRAMEBUFFER, m_core_fbo);
             glViewport(m_core_viewport[0], m_core_viewport[1], m_core_viewport[2], m_core_viewport[3]);
             
@@ -420,7 +445,6 @@ protected:
             glUseProgram(m_blit_program);
             
             glEnable(GL_BLEND);
-            // ИСПРАВЛЕНИЕ: То же самое для базового масштабирования
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
             glActiveTexture(GL_TEXTURE0);
@@ -431,6 +455,7 @@ protected:
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
 
+        // Restore state to prevent leaking into subsequent layers
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
     }

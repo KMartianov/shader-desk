@@ -529,16 +529,29 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     };
 
     core_table["set_float_array"] = [core](const std::string& key, sol::table t) {
-        size_t size = std::min(t.size(), size_t(256));
-        float* ptr = core->get_blackboard()->bind_float_array(key.c_str(), size);
+        float* ptr = core->get_blackboard()->bind_float_array(key.c_str(), 256);
         if (ptr) {
-            for (size_t i = 0; i < size; ++i) {
-                ptr[i] = t.get_or(i + 1, 0.0f);
+            std::cout << "\033[36m[LuaEngine] Writing array '" << key << "' to BlackBoard. First values: [";
+            
+            // Lua tables are 1-indexed. We safely iterate up to 256.
+            for (size_t i = 0; i < 256; ++i) {
+                sol::object obj = t[i + 1];
+                
+                // BUGFIX: Lua numbers are strictly 'double'. We must extract them as double 
+                // first, then explicitly cast to C++ 'float'. sol::optional<float> fails silently.
+                if (obj.valid() && obj.is<double>()) {
+                    ptr[i] = static_cast<float>(obj.as<double>());
+                } else {
+                    ptr[i] = 0.0f; // Default missing elements to 0.0 (Flat EQ)
+                }
+                
+                if (i < 5) std::cout << ptr[i] << (i == 4 ? "" : ", ");
             }
+            std::cout << "...]\033[0m" << std::endl;
         }
     };
 
-    // --- NEW: GLOBAL 3D CAMERA CONTROL ---
+    // --- GLOBAL 3D CAMERA CONTROL ---
     core_table["set_camera"] = [core](sol::table pos_tbl, sol::table tgt_tbl, sol::optional<float> fov_opt) {
         float* p_pos = core->get_blackboard()->bind_float_array("scene.camera.pos", 3);
         float* p_tgt = core->get_blackboard()->bind_float_array("scene.camera.target", 3);

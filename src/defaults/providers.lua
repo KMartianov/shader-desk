@@ -21,11 +21,11 @@ core.providers = {
     },
     ["Native FFTW Audio Provider"] = {
         enabled = true,
-        smoothing = 0.85,            -- Audio decay inertia (0.0 = instant, 0.99 = smooth)
-        volume_multiplier = 100.0,   -- Master gain for all audio reactivity
-        bass_multiplier = 1.5,       -- Global bass boost (20Hz - 250Hz)
-        mid_multiplier = 1.0,        -- Global mid boost (250Hz - 4000Hz)
-        treble_multiplier = 2.0      -- Global treble boost (4000Hz - 20000Hz)
+        smoothing = 0.85,            
+        volume_multiplier = 1.0,     
+        bass_multiplier = 1.5,       
+        mid_multiplier = 1.0,        
+        treble_multiplier = 2.0      
     }
 }
 
@@ -76,16 +76,16 @@ end
 
 -- A 10-Band Graphic EQ setup
 local eq_10_band_preset = {
-    1.8,  -- Sub-Bass (Punch)
-    1.8,  -- Bass
-    1.0,  -- Low-Mid
-    0.8,  -- Mid (Reduced mud)
-    1.0,  -- High-Mid
-    1.3,  -- Presence (Snares/Claps)
-    1.1,  -- Brilliance
-    0.8,  -- Highs
-    0.5,  -- Air
-    0.0   -- Extreme Highs (Cut white noise/hiss)
+    -1.0,  -- Sub-Bass (Punch)
+    -1.0,  -- Bass
+    -1.0,  -- Low-Mid
+    -1.0,  -- Mid (Reduced mud)
+    -1.0,  -- High-Mid
+    -1.0,  -- Presence (Snares/Claps)
+    -1.0,  -- Brilliance
+    -1.0,  -- Highs
+    -1.0,  -- Air
+    -1.0  -- Extreme Highs (Cut white noise/hiss)
 }
 
 -- Inject the generated 64-band array directly into the C++ Microkernel's memory bus.

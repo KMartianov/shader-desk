@@ -367,11 +367,18 @@ std::vector<EffectParameter> IcoSphereEffect::get_parameters() const {
     params.push_back({"noise_amp", "Noise Amplitude", noise_amp});
     params.push_back({"background_color", "Solid surface color", background_color});
     params.push_back({"wireframe_color", "Color of the wireframe lines", wireframe_color});
+
+    register_standard_params(params); 
+
     
     return params;
 }
 
 void IcoSphereEffect::set_parameter(const std::string& name, const EffectParameterValue& value) {
+
+    if (apply_standard_param(name, value)) return;
+
+
     // 1. Intercept legacy parameters to prevent breaking old presets
     if (name == "constant_rotation_speed") {
         try { rotation_speed = std::get<float>(value); } catch (...) {}

@@ -17,8 +17,8 @@ core.providers = {
         enabled = true,
         mouse_sensitivity = 10.0,     -- Multiplier for relative mouse movements
         touchpad_sensitivity = 3.0,  -- Multiplier for absolute touchpad coordinates
-        invert_x = false,
-        invert_y = false
+        invert_x = true,
+        invert_y = true
     },
     ["Native FFTW Audio Provider"] = {
         enabled = true,

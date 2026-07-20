@@ -640,9 +640,10 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
     };
 
     // --- GLOBAL 3D CAMERA CONTROL ---
-    core_table["set_camera"] = [core](sol::table pos_tbl, sol::table tgt_tbl, sol::optional<float> fov_opt) {
+    core_table["set_camera"] = [core](sol::table pos_tbl, sol::table tgt_tbl, sol::table up_tbl, sol::optional<float> fov_opt) {
         float* p_pos = core->get_blackboard()->bind_float_array("scene.camera.pos", 3);
         float* p_tgt = core->get_blackboard()->bind_float_array("scene.camera.target", 3);
+        float* p_up  = core->get_blackboard()->bind_float_array("scene.camera.up", 3);
         float* p_fov = core->get_blackboard()->bind_float("scene.camera.fov");
         float* p_active = core->get_blackboard()->bind_float("scene.camera.active");
 
@@ -655,6 +656,11 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
             p_tgt[0] = tgt_tbl.get_or(1, 0.0f);
             p_tgt[1] = tgt_tbl.get_or(2, 0.0f);
             p_tgt[2] = tgt_tbl.get_or(3, 0.0f);
+        }
+        if (p_up) {
+            p_up[0] = up_tbl.get_or(1, 0.0f);
+            p_up[1] = up_tbl.get_or(2, 1.0f);
+            p_up[2] = up_tbl.get_or(3, 0.0f);
         }
         if (p_fov) {
             *p_fov = fov_opt.value_or(45.0f);

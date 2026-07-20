@@ -591,6 +591,9 @@ public:
         params.push_back({"use_instancing", "Draw inner core and outer cage in 1 call", use_instancing});
         params.push_back({"inner_scale", "Scale of the inner instanced core", inner_scale});
         params.push_back({"outer_scale", "Scale of the outer instanced cage", outer_scale});
+
+        register_standard_params(params); 
+
         
         return params;
     }
@@ -598,6 +601,8 @@ public:
     void set_parameter(const std::string& name, const EffectParameterValue& value) override {
         // Compatibility stubs for legacy Lua presets 
         // (Prevent error spam when loading old scenes)
+        if (apply_standard_param(name, value)) return;
+
         if (name == "constant_rotation_speed" || name == "rotation_decay" || 
             name == "min_rotation_speed" || name == "max_rotation_speed") return;
 

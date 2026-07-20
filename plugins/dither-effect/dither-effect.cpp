@@ -101,16 +101,20 @@ bool DitherEffectEffect::initialize(ICoreContext* core, uint32_t width, uint32_t
 // RENDER HOOK: CUSTOM UNIFORMS
 // ------------------------------------------------------------------------------
 void DitherEffectEffect::bind_custom_uniforms() {
-    // The base class has already called glUseProgram(), updated u_time, u_resolution, 
-    // and scaled the FBO if requested by the user. 
-    // We only need to inject our specific business-logic variables here.
-
     GLint prog;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
 
-    // Note: Modern OpenGL drivers (Mesa/NVIDIA) utilize highly optimized internal 
-    // hash maps for glGetUniformLocation. For a small number of uniforms, 
-    // fetching them dynamically is completely fine and keeps the code incredibly clean.
+    // ==============================================================================
+    // FBO PIPELINE ROUTING
+    // ==============================================================================
+    // Explicitly bind the sampler to GL_TEXTURE0. This guarantees that when this 
+    // plugin operates as a Post-Process Blit Shader or a Nested Ping-Pong Filter, 
+    // it correctly reads the rendered scene/object from the Wayland Microkernel.
+    glUniform1i(glGetUniformLocation(prog, "u_prev_layer"), 0);
+
+    // ==============================================================================
+    // DYNAMIC UNIFORMS
+    // ==============================================================================
     glUniform1f(glGetUniformLocation(prog, "dither_spread"), dither_spread);
     glUniform1f(glGetUniformLocation(prog, "downsample_scale"), downsample_scale);
     glUniform1i(glGetUniformLocation(prog, "bayer_size"), bayer_size);

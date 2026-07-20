@@ -55,14 +55,33 @@ const float bayer8[64] = float[](
 );
 
 void main() {
+    // ========================================================================
+    // 1. VIRTUAL RESOLUTION DOWNSAMPLING
+    // ========================================================================
     float p_size = max(1.0, floor(downsample_scale));
     vec2 frag_coord = v_uv * resolution;
     vec2 pix_coord = floor(frag_coord / p_size);
     vec2 pix_uv = (pix_coord * p_size + (p_size * 0.5)) / resolution;
     
-    vec3 col = texture(u_prev_layer, pix_uv).rgb;
-    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    vec4 source_texel = texture(u_prev_layer, pix_uv);
+    
+    // ========================================================================
+    // 2. GPU PIPELINE OPTIMIZATION (COMPOSITING SAFETY)
+    // ========================================================================
+    // If the pixel is fully transparent (e.g., the empty space around a 3D object),
+    // we abort the fragment shader execution immediately. This saves memory bandwidth 
+    // and ensures that the original Z-Buffer depth and background layers remain 
+    // perfectly intact during Wayland Alpha Compositing.
+    if (source_texel.a < 0.01) {
+        discard;
+    }
 
+    // Extract perceptual luminance from the source pixel
+    float lum = dot(source_texel.rgb, vec3(0.299, 0.587, 0.114));
+
+    // ========================================================================
+    // 3. BAYER MATRIX DITHERING
+    // ========================================================================
     float bayer_val = 0.0;
     if (bayer_size == 0) {
         int bx = int(mod(pix_coord.x, 2.0));
@@ -82,7 +101,7 @@ void main() {
     float dithered_lum = clamp(lum + dither_offset, 0.0, 1.0);
 
     // ========================================================================
-    // O(1) PALETTE MAPPING (NO IF-ELSE BRANCHING)
+    // 4. O(1) PALETTE MAPPING
     // ========================================================================
     int active_colors = clamp(colors_count, 2, 16);
     float scaled_lum = dithered_lum * float(active_colors - 1);
@@ -90,5 +109,6 @@ void main() {
     // Map luminance directly to an array index
     int final_idx = clamp(int(floor(scaled_lum + 0.5)), 0, active_colors - 1);
 
-    FragColor = vec4(palette[final_idx], 1.0);
+    // Output the mapped color while preserving the original alpha channel
+    FragColor = vec4(palette[final_idx], source_texel.a);
 }

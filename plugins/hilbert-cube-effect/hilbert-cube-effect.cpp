@@ -250,11 +250,16 @@ std::vector<EffectParameter> HilbertCubeEffect::get_parameters() const {
     params.push_back({"draw_cube_outline", "Draw the cube's wireframe", draw_cube_outline});
     params.push_back({"curve_color", "Color of the Hilbert curve", curve_color});
     params.push_back({"cube_color", "Color of the cube wireframe", cube_color});
+    register_standard_params(params); 
+
     
     return params;
 }
 
 void HilbertCubeEffect::set_parameter(const std::string& name, const EffectParameterValue& value) {
+
+    if (apply_standard_param(name, value)) return;
+
     // 1. Pass the parameter to the Kinematics handler first.
     // If it matches a physics property (like "rotation_speed" or "offset"), 
     // it will be processed and return true, skipping the rest of the function.

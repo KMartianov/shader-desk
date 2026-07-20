@@ -1,169 +1,249 @@
-Ниже представлен подробный и технически строгий раздел **05-sdk-data-providers.md**. Он описывает архитектуру Data Pipeline, основанную на изоляции процессов, неблокирующих сокетах и интеграции с `epoll` микроядра.
-
----
-
 # Разработка провайдеров данных (Data Pipeline)
 
-Для создания по-настоящему интерактивных обоев графическому ядру необходимы данные из внешнего мира: системный звук, движения мыши, погода, статус батареи или метаданные текущего трека (MPRIS).
+Провайдеры данных (Data Providers) — это специализированные C++‑плагины, работающие внутри микроядра Shader Desk. Их задача — принимать потоковые данные от внешних процессов (демонов) и записывать их в разделяемую память BlackBoard с нулевой задержкой. Благодаря этому визуальные плагины получают доступ к системным метрикам (аудиоспектр, положение мыши, температура GPU и т.д.) за $O(1)$ без блокировок и парсинга.
 
-Однако системные API ОС (такие как `libpulse`, `libevdev` или D-Bus) часто бывают блокирующими, медленными или нестабильными. Если вызывать их напрямую в цикле рендеринга композитора (до 144 раз в секунду), любое зависание звукового сервера приведет к зависанию Wayland-сеанса.
-
-Архитектура Shader Desk решает эту проблему строгим разделением на два компонента:
-1. **Standalone-демон (Процесс ОС):** Автономный процесс, который "общается" с ОС, выполняет тяжелую математику (например, Быстрое преобразование Фурье) и спамит готовыми пакетами в UNIX-сокет.
-2. **In-Process Провайдер (C++ Плагин):** Легковесная `.so` библиотека внутри ядра, которая интегрирована в `epoll`, читает сокет с нулевой задержкой и пишет данные в шину `BlackBoard` для шейдеров.
+В этом разделе описан полный жизненный цикл создания собственного источника данных: от проектирования бинарного контракта до интеграции с Lua‑конфигурацией.
 
 ---
 
-## 1. Бинарный контракт (Datagram)
+## 1. Архитектура конвейера данных
 
-Первый шаг в создании нового источника данных — определить структуру пакета, который демон будет отправлять провайдеру. Эта структура должна быть идентичной в коде демона и коде плагина.
+Конвейер состоит из трёх независимых компонентов:
 
-**Правила проектирования контракта:**
-* Используйте `stdint.h` (например, `uint32_t`, `float`).
-* Оберните структуру в `#pragma pack(push, 1)` для отключения выравнивания компилятором.
-* Добавьте "магическое число" для примитивной валидации пакета.
-* Зафиксируйте размер через `static_assert`.
+1. **Внешний демон** (отдельный процесс) — взаимодействует с системными API (PulseAudio, libevdev, D‑Bus), выполняет тяжёлые вычисления (БПФ) и отправляет подготовленные пакеты в UNIX‑сокет.
+2. **Провайдер** (C++‑плагин внутри ядра) — слушает тот же сокет, зарегистрирован в `epoll`, читает пакеты и пишет в BlackBoard.
+3. **Потребители** (визуальные плагины или Lua) — читают данные из BlackBoard через прямые указатели.
 
-*Пример `my-data.hpp`:*
+```mermaid
+flowchart LR
+    subgraph OS["Операционная система"]
+        API["Системное API\n(PulseAudio, evdev, ...)"]
+    end
+
+    subgraph Daemon["Внешний демон"]
+        D["Цикл сбора данных"]
+        Sock1["UNIX‑сокет (DGRAM)"]
+    end
+
+    subgraph Core["Микроядро"]
+        Provider["Провайдер (C++ .so)"]
+        EP["epoll"]
+        BB["BlackBoard\n(разделяемая память)"]
+    end
+
+    subgraph Plugins["Визуальные плагины"]
+        VP["Шейдеры / C++ эффекты"]
+    end
+
+    API -->|"блокирующий вызов"| D
+    D -->|"sendto(MSG_DONTWAIT)"| Sock1
+    Sock1 -->|"событие"| EP
+    EP -->|"колбэк"| Provider
+    Provider -->|"recv() в цикле"| Sock1
+    Provider -->|"запись O(1)"| BB
+    BB -->|"чтение O(1)"| VP
+```
+
+---
+
+## 2. Бинарный контракт (Datagram)
+
+Демон и провайдер обмениваются структурами фиксированного размера через дейтаграммный сокет (`SOCK_DGRAM`). Это гарантирует атомарность сообщений и отсутствие необходимости в фрейминге.
+
+**Правила проектирования структуры:**
+
+- Используйте только типы с фиксированным размером из `<cstdint>` (`uint32_t`, `float` и т.д.).
+- Упакуйте структуру с помощью `#pragma pack(push, 1)` для отключения выравнивания компилятором.
+- Добавьте поле `magic` (уникальное 32‑битное число) для проверки целостности пакета.
+- Зафиксируйте размер через `static_assert`.
+
+**Пример контракта (из `audio-data.hpp`):**
+
 ```cpp
 #pragma once
 #include <cstdint>
 
 #pragma pack(push, 1)
-struct MyDatagram {
-    uint32_t magic = 0x4D594454; // "MYDT"
-    float value_x;
-    float value_y;
-    uint8_t status_flag;
-    uint8_t padding[3] = {0,0,0}; // Явное выравнивание вручную
+struct AudioDatagram {
+    uint32_t magic = 0x41554431;  // "AUD1"
+    float volume = 0.0f;
+    float bass = 0.0f;
+    float mid = 0.0f;
+    float treble = 0.0f;
+    float bands[64] = {0.0f};
 };
 #pragma pack(pop)
 
-static_assert(sizeof(MyDatagram) == 16, "MyDatagram alignment failed");
+static_assert(sizeof(AudioDatagram) == 276, "AudioDatagram alignment failed");
 ```
+
+**Важно:** оба компонента (демон и провайдер) должны использовать **одинаковое** определение структуры. Рекомендуется выносить контракт в общий заголовочный файл, доступный обоим проектам.
 
 ---
 
-## 2. Разработка Standalone-демона
+## 3. Разработка внешнего демона
 
-Демон — это независимый исполняемый файл (Executable). Он может быть написан на любом языке, но обычно пишется на C++.
+Демон — это независимый исполняемый файл, который может быть написан на любом языке. В официальном SDK примеры реализованы на C++.
 
-Его задача — читать API системы и отправлять структуру в абстрактный UNIX-сокет типа `SOCK_DGRAM` (датаграммы). Соединение работает без установки сессии (connectionless).
+**Основные требования:**
 
-**Ключевой момент:** При отправке данных (`sendto`) **категорически обязательно** использовать флаг `MSG_DONTWAIT`. Если ядро Shader Desk закрыто или не успевает читать буфер сокета, демон не должен заблокироваться — он должен просто отбросить пакет (Drop) и продолжить работу.
+- Использовать датаграммный сокет (`SOCK_DGRAM | SOCK_NONBLOCK`).
+- Отправлять пакеты с флагом `MSG_DONTWAIT` — если ядро не успевает читать, пакет отбрасывается без блокировки.
+- Путь к сокету формировать с помощью `shader_desk::get_ipc_socket_path()`.
 
-*Пример минимального демона:*
+**Типовой цикл демона (псевдокод):**
+
 ```cpp
-#include "my-data.hpp"
 #include <shader-desk/ipc-utils.hpp>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <unistd.h>
-#include <iostream>
 
 int main() {
-    int sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
-    
+    int sock = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-myplugin");
-    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
-    socklen_t addr_len = sizeof(sa_family_t) + socket_path.length() + 1;
-
+    std::string path = shader_desk::get_ipc_socket_path("shader-desk-myprovider");
+    strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path)-1);
+    // Если провайдер уже создал сокет, демон отправляет в него, не создавая свой.
+    // В данном случае демон выступает клиентом, поэтому bind() не требуется.
+    
+    MyDatagram data;
     while (true) {
-        // 1. Получение данных от ОС (блокирующий вызов разрешен)
-        // float x = os_api_get_x();
+        // 1. Блокирующее чтение из системного API
+        // float value = read_sensor();
         
-        // 2. Формирование пакета
-        MyDatagram data{}; // {} зануляет паддинг
-        data.value_x = 1.0f; // Данные от ОС
+        // 2. Заполнение структуры
+        data.value = value;
+        data.magic = MY_MAGIC;
         
-        // 3. Отправка с MSG_DONTWAIT (Zero-latency Fire-and-Forget)
-        sendto(sockfd, &data, sizeof(data), MSG_DONTWAIT, (struct sockaddr*)&addr, addr_len);
+        // 3. Отправка без ожидания
+        sendto(sock, &data, sizeof(data), MSG_DONTWAIT,
+               (struct sockaddr*)&addr, sizeof(addr));
         
-        usleep(16000); // ~60 FPS
+        usleep(10000); // ~100 Гц
     }
-    return 0;
 }
 ```
 
 ---
 
-## 3. Разработка плагина-провайдера (.so)
+## 4. Разработка провайдера (внутренний плагин)
 
-Провайдер — это C++ класс, наследующий `IDataProvider` (обертка над `IDataProviderABI`). Он загружается графическим ядром, биндит сокет и регистрирует его в главном цикле `epoll`.
+Провайдер — это C++‑класс, наследующий `IDataProvider` (или напрямую `IDataProviderABI`). SDK предоставляет удобную обёртку `IDataProvider`, которая автоматически преобразует STL‑параметры в ABI‑совместимые структуры.
 
-### Шаг 1: Инициализация и регистрация в `epoll`
-В методе `initialize()` необходимо создать сокет, забиндить его на тот же путь и передать дескриптор ядру. Также здесь запрашиваются указатели на ячейки `BlackBoard` для записи результатов.
+### 4.1. Объявление класса и параметры
 
 ```cpp
-bool MyProvider::initialize(ICoreContext* core) override {
-    if (sockfd >= 0) return true; // Защита при Hot-Reload
+#include <shader-desk/data-provider.hpp>
+
+class MyProvider : public IDataProvider {
+public:
+    const char* get_name() const override { return "My Sensor Provider"; }
+
+    std::vector<EffectParameter> get_parameters() const override {
+        return {
+            {"sensitivity", "Коэффициент усиления", sensitivity},
+            {"invert", "Инвертировать ось", invert}
+        };
+    }
+
+    void set_parameter(const std::string& name, const EffectParameterValue& value) override {
+        if (name == "sensitivity") sensitivity = std::get<float>(value);
+        else if (name == "invert") invert = std::get<bool>(value);
+    }
+
+    // ... остальные методы
+private:
+    float sensitivity = 1.0f;
+    bool invert = false;
+    // ...
+};
+```
+
+Эти параметры автоматически появятся в Lua‑конфигурации после вызова `interactive-wallpaper --init-config`.
+
+### 4.2. Инициализация и создание сокета
+
+В методе `initialize()` необходимо:
+
+- Сохранить указатель на `ICoreContext` для последующего доступа к BlackBoard и epoll.
+- Выделить память в BlackBoard через `core->get_blackboard()->bind_*()`.
+- Создать дейтаграммный сокет и привязать его к тому же пути, который использует демон.
+- Зарегистрировать файловый дескриптор в epoll через `core->register_epoll_fd()`.
+
+```cpp
+bool MyProvider::initialize(ICoreContext* core) {
+    if (sockfd >= 0) return true; // Защита от повторной инициализации
     m_core = core;
 
-    // Резервируем память в BlackBoard (визуальные плагины будут читать отсюда)
-    p_x = core->get_blackboard()->bind_float("myplugin.x");
-    p_y = core->get_blackboard()->bind_float("myplugin.y");
+    // 1. Выделение памяти в BlackBoard
+    p_value = core->get_blackboard()->bind_float("myprovider.value");
 
-    // Создаем сокет для ЧТЕНИЯ
-    sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0);
-    
+    // 2. Создание сокета
+    sockfd = socket(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (sockfd < 0) return false;
+
     struct sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    std::string socket_path = shader_desk::get_ipc_socket_path("shader-desk-myplugin");
-    strncpy(addr.sun_path, socket_path.c_str(), sizeof(addr.sun_path) - 1);
+    std::string path = shader_desk::get_ipc_socket_path("shader-desk-myprovider");
+    strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path)-1);
     
-    unlink(socket_path.c_str()); // Обязательно удаляем "мертвый" файл прошлого сеанса
-    bind(sockfd, (struct sockaddr*)&addr, sizeof(addr));
+    // Удаляем старый сокет (если остался от предыдущего запуска)
+    unlink(path.c_str());
+    if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sockfd);
+        sockfd = -1;
+        return false;
+    }
 
-    // Интеграция в Wayland Epoll
-    core->register_epoll_fd(sockfd, [](uint32_t events, void* user_data) {
-        static_cast<MyProvider*>(user_data)->on_data_ready();
+    // 3. Регистрация в epoll
+    core->register_epoll_fd(sockfd, [](uint32_t, void* user) {
+        static_cast<MyProvider*>(user)->on_data_ready();
     }, this);
-    
+
     return true;
 }
 ```
 
-### Шаг 2: Чтение данных (Zero-Latency Drain Pattern)
-Метод `on_data_ready` вызывается ядром Linux только тогда, когда в буфере сокета появляются новые байты. 
+### 4.3. Обработка данных (Drain Pattern)
 
-**Критическое правило архитектуры:** Вы обязаны "осушить" (drain) сокет в цикле `while`, читая данные до тех пор, пока `recv` не вернет `EWOULDBLOCK` или `EAGAIN`. Если демон спамит пакетами быстрее, чем композитор успевает их читать, в сокете скопится очередь. Цикл гарантирует, что мы отбросим устаревшие пакеты и применим к шейдерам только **самый последний, актуальный пакет**.
+Колбэк `on_data_ready()` вызывается ядром при появлении данных в сокете. **Обязательно** реализовать цикл чтения до `EAGAIN`/`EWOULDBLOCK`, чтобы обработать все накопившиеся пакеты и сохранить только самый свежий.
 
 ```cpp
 void MyProvider::on_data_ready() {
-    MyDatagram datagram;
-    MyDatagram latest_datagram;
-    bool has_new_data = false;
+    MyDatagram latest;
+    bool has_new = false;
 
-    // Цикл "осушения" сокета
     while (true) {
-        ssize_t bytes_read = recv(sockfd, &datagram, sizeof(datagram), MSG_DONTWAIT);
-        
-        if (bytes_read < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) break; // Сокет пуст, мы догнали реальное время
+        MyDatagram tmp;
+        ssize_t n = recv(sockfd, &tmp, sizeof(tmp), MSG_DONTWAIT);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             if (errno == EINTR) continue;
             break;
         }
-
-        // Если пакет цел, перезаписываем старый свежим
-        if (bytes_read == sizeof(MyDatagram) && datagram.magic == 0x4D594454) {
-            latest_datagram = datagram;
-            has_new_data = true;
+        if (n == sizeof(MyDatagram) && tmp.magic == MY_MAGIC) {
+            latest = tmp;
+            has_new = true;
         }
     }
 
-    // Применяем математику (например, сглаживание) только к финальному пакету
-    if (has_new_data) {
-        // Прямая запись в BlackBoard (данные мгновенно доступны всем визуальным плагинам)
-        *p_x = latest_datagram.value_x * user_multiplier;
-        *p_y = latest_datagram.value_y * user_multiplier;
+    if (has_new) {
+        // Применяем пользовательские настройки (sensitivity, invert)
+        float val = latest.value * sensitivity;
+        if (invert) val = -val;
+        *p_value = val;
     }
 }
 ```
 
-### Шаг 3: Корректная очистка (Cleanup)
-Если пользователь отключит провайдер в `init.lua`, ядро вызовет `cleanup()`. Вы **обязаны** удалить файловый дескриптор из `epoll`, иначе ядро продолжит вызывать коллбэк для закрытого сокета, что приведет к крашу (Use-After-Free).
+### 4.4. Запись в BlackBoard
+
+Запись происходит непосредственно в ячейку памяти, полученную в `initialize()`. Это операция за $O(1)$, не требующая системных вызовов или блокировок.
+
+### 4.5. Cleanup
+
+При отключении провайдера (через Lua или при завершении работы) вызывается `cleanup()`. **Необходимо** отменить регистрацию сокета в epoll, иначе ядро будет вызывать колбэк для закрытого дескриптора, что приведёт к крашу.
 
 ```cpp
 void MyProvider::cleanup() override {
@@ -175,30 +255,74 @@ void MyProvider::cleanup() override {
 }
 ```
 
----
+### 4.6. C‑ABI экспорт
 
-## 4. Конфигурация провайдера из Lua
-
-Так же, как и визуальные плагины, провайдеры данных могут экспортировать параметры в Lua. Это позволяет пользователям настраивать чувствительность мыши, множители басов или инерцию сглаживания "на лету".
-
-Реализуйте методы интерфейса `IDataProvider`:
+Провайдер экспортируется через те же функции, что и визуальные плагины, но с префиксом `provider`:
 
 ```cpp
-std::vector<EffectParameter> MyProvider::get_parameters() const override {
-    return {
-        {"multiplier", "Множитель входящих данных", user_multiplier},
-        {"invert_axis", "Инвертировать ось X", user_invert}
-    };
-}
-
-void MyProvider::set_parameter(const std::string& name, const EffectParameterValue& value) override {
-    try {
-        if (name == "multiplier") user_multiplier = std::get<float>(value);
-        else if (name == "invert_axis") user_invert = std::get<bool>(value);
-    } catch (...) {}
+extern "C" {
+    uint32_t get_abi_version() { return SHADER_DESK_ABI_VERSION; }
+    IDataProviderABI* create_provider() { return new MyProvider(); }
+    void destroy_provider(IDataProviderABI* p) { delete static_cast<MyProvider*>(p); }
 }
 ```
-Эти параметры автоматически сгенерируются в конфигурационных файлах `plugins/` при вызове `interactive-wallpaper --init-config`.
 
-### Итог
-Разделение сбора данных и их рендеринга обеспечивает микроядерную надежность Shader Desk. Разрабатывая новые провайдеры (например, для парсинга конфигурации `Hyprland`, чтения температуры GPU или получения текста играющей песни по D-Bus), придерживайтесь паттерна *Fire-and-Forget* в демоне и *Zero-Latency Drain* в плагине.
+---
+
+## 5. Примеры
+
+### 5.1. Audio Provider (FFTW)
+
+Стандартный провайдер для аудиоспектра. Демон (`audio-daemon`) захватывает звук через PulseAudio/PipeWire, вычисляет БПФ и отправляет 64 полосы частот. Провайдер (`audio-provider`) принимает пакеты, применяет сглаживание (smoothing) и эквалайзер из Lua, записывает в BlackBoard ключи: `audio.volume`, `audio.bass`, `audio.mid`, `audio.treble`, `audio.bands`.
+
+**Особенность:** провайдер не просто копирует сырые данные, а применяет **асимметричное сглаживание** — быстрый атаку (85% нового значения) и медленный спад (управляется параметром `smoothing`). Это даёт отзывчивую на биты анимацию без резких скачков.
+
+### 5.2. Pointer Provider (evdev)
+
+Провайдер для мыши и тачпада. Демон (`evdev-pointer-daemon`) сканирует устройства `/dev/input/event*` и отправляет относительные дельты (`rel_dx`, `rel_dy`) и абсолютные координаты (`abs_x`, `abs_y`) в нормированном виде [0..1]. Провайдер накапливает дельты в BlackBoard по ключам `mouse.accum_x`, `mouse.accum_y`, а абсолютные координаты — в `mouse.x`, `mouse.y`.
+
+**Важно:** провайдер учитывает чувствительность (`mouse_sensitivity`) и инверсию осей, заданные в Lua.
+
+---
+
+## 6. Отладка и диагностика
+
+### 6.1. Проверка работы демона
+
+Убедитесь, что демон запущен и отправляет данные. Можно использовать `socat` или `nc` для прослушивания сокета:
+
+```bash
+socat -u UNIX-RECV:/run/user/1000/shader-desk-myprovider.sock -
+```
+
+Если данные приходят — демон работает.
+
+### 6.2. Проверка провайдера
+
+В Lua можно прочитать значение из BlackBoard:
+
+```lua
+local val = core.get_float("myprovider.value", 0.0)
+print("Current value:", val)
+```
+
+Если значение обновляется, провайдер корректен.
+
+### 6.3. Логирование
+
+Провайдер может использовать `core->log_message()` для вывода диагностических сообщений в терминал, где запущено ядро.
+
+### 6.4. Частые ошибки
+
+- **EADDRINUSE** при `bind()` — старый сокет не удалён. Используйте `unlink()` перед `bind()`.
+- **ECONNREFUSED** при `sendto()` — провайдер не создал сокет (не инициализирован или отключён). Демон должен корректно обрабатывать эту ошибку (игнорировать).
+- **Segfault в провайдере** — скорее всего, разыменование нулевого указателя BlackBoard (проверьте, что `bind_*()` вернул ненулевой указатель).
+
+---
+
+## 7. Связанные разделы
+
+- **[Архитектура: Конвейер данных](07-architecture-overview.md#3-конвейер-данных-data-pipeline-и-zero-latency-ipc)** — общая схема и паттерны Fire‑and‑Forget / Socket Drain.
+- **[Архитектура: BlackBoard и Trash Buffer](07-architecture-overview.md#4-blackboard-шина-памяти-и-trash-buffer)** — устройство разделяемой памяти.
+- **[Lua API: Управление провайдерами](06-lua-api-reference.md#управление-провайдерами)** — как включать/отключать провайдеры из Lua.
+- **[Примеры провайдеров](../plugins/audio-provider/)** и **[../plugins/pointer-provider/]** — полные исходные коды.

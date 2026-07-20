@@ -15,18 +15,18 @@ _G.core = _G.core or {}
 core.providers = {
     ["Evdev Pointer Provider"] = {
         enabled = true,
-        mouse_sensitivity = 1.0,     -- Multiplier for relative mouse movements
-        touchpad_sensitivity = 30.0,  -- Multiplier for absolute touchpad coordinates
+        mouse_sensitivity = 10.0,     -- Multiplier for relative mouse movements
+        touchpad_sensitivity = 3.0,  -- Multiplier for absolute touchpad coordinates
         invert_x = false,
         invert_y = false
     },
     ["Native FFTW Audio Provider"] = {
         enabled = true,
         smoothing = 0.85,            
-        volume_multiplier = 1.0,     
+        volume_multiplier = 0.0,     
         bass_multiplier = 1.0,       
         mid_multiplier = 1.0,        
-        treble_multiplier = 20.0      
+        treble_multiplier = 100.0      
     }
 }
 
@@ -78,7 +78,7 @@ end
 -- A 10-Band Graphic EQ setup
 local eq_10_band_preset = {
     1.0,  -- Sub-Bass (Punch)
-    5.0,  -- Bass
+    1.0,  -- Bass
     1.0,  -- Low-Mid
     1.0,  -- Mid (Reduced mud)
     1.0,  -- High-Mid

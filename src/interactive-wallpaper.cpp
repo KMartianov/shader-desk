@@ -203,66 +203,53 @@ void InteractiveWallpaper::setup_inotify() {
     inotify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (inotify_fd < 0) return;
     
-    // React only to write finalization or atomic replacement
+    // React to file modifications and atomic saves (Vim/Nano)
     uint32_t mask = IN_CLOSE_WRITE | IN_MOVED_TO;
 
-    const char* xdg_config = std::getenv("XDG_CONFIG_HOME");
-    std::string config_dir = xdg_config ? std::string(xdg_config) + "/interactive-wallpaper" 
-                                        : std::string(std::getenv("HOME")) + "/.config/interactive-wallpaper";
+    // Resolves the absolute path configured by the LuaEngine (supports the --config CLI flag)
+    std::string config_dir = lua_engine.get_config_dir();
 
-    // 1. Base user directories
-    inotify_add_watch(inotify_fd, config_dir.c_str(), mask);
-    inotify_add_watch(inotify_fd, (config_dir + "/plugins").c_str(), mask);
-
-    // 2. Helper lambda for recursively adding folders
     std::error_code ec;
-    auto options = std::filesystem::directory_options::follow_directory_symlink | std::filesystem::directory_options::skip_permission_denied;
+    auto options = std::filesystem::directory_options::follow_directory_symlink | 
+                   std::filesystem::directory_options::skip_permission_denied;
     
     auto watch_dir_tree = [&](const std::string& root_path) {
         if (!std::filesystem::exists(root_path, ec)) return;
 
-        // 1. First add the root folder itself to inotify
         inotify_add_watch(inotify_fd, root_path.c_str(), mask);
 
-        // 2. Create explicit iterators
         auto it = std::filesystem::recursive_directory_iterator(root_path, options, ec);
         auto end = std::filesystem::recursive_directory_iterator();
 
-        // 3. Traverse the tree
         while (it != end) {
             if (it->is_directory(ec)) {
                 std::string path_str = it->path().string();
 
-                // Check if this folder should be ignored
+                // Prevents inotify FD exhaustion and Wayland loop blocking by skipping heavy caches
                 if (path_str.find("/.git") != std::string::npos || 
                     path_str.find("/build") != std::string::npos ||
-                    path_str.find("/node_modules") != std::string::npos) {
+                    path_str.find("/node_modules") != std::string::npos ||
+                    path_str.find("/.cache") != std::string::npos) {
                     
-                    // Call the ITERATOR method: it will skip entering this directory
                     it.disable_recursion_pending(); 
                 } else {
-                    // If the folder is useful, subscribe to it
                     inotify_add_watch(inotify_fd, path_str.c_str(), mask);
                 }
             }
-            
-            // Safely advance to the next element
             it.increment(ec);
         }
     };
 
-    // 3. Add all possible plugin and config locations to the watch list
-    watch_dir_tree(config_dir + "/effects");           // Scenario 3 (Modder's Sandbox)
-    watch_dir_tree("./src/defaults");                  // Scenario 1 (Local init.lua)
-    watch_dir_tree("./plugins");                       // Scenario 1 (In-Tree shader sources)
-    
-    // (Optional) If CMake copies shaders directly into the build folder
+    // Watch core user workspace
+    watch_dir_tree(config_dir);
+
+    // Watch local development fallbacks (Portable execution)
+    watch_dir_tree("./src/defaults");                  
+    watch_dir_tree("./plugins");                       
     watch_dir_tree("./build-release/plugins");         
     watch_dir_tree("./build-tracy/plugins");
 
-    watch_dir_tree(config_dir + "/scenes");
-
-    // Add the system scenes folder (for FHS mode)
+    // Watch system installation FHS folders
     #ifdef SYSTEM_SCENES_DIR
     watch_dir_tree(SYSTEM_SCENES_DIR);
     #endif

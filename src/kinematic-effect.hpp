@@ -39,6 +39,7 @@ protected:
     float* p_cam_pos = nullptr;
     float* p_cam_tgt = nullptr;
     float* p_cam_fov = nullptr;
+    float* p_cam_up = nullptr;
 
     // --- Computed MVP Matrices (Ready to send to OpenGL) ---
     glm::mat4 model_matrix;
@@ -56,6 +57,7 @@ protected:
         p_cam_pos    = core->get_blackboard()->bind_float_array("scene.camera.pos", 3);
         p_cam_tgt    = core->get_blackboard()->bind_float_array("scene.camera.target", 3);
         p_cam_fov    = core->get_blackboard()->bind_float("scene.camera.fov");
+        p_cam_up     = core->get_blackboard()->bind_float_array("scene.camera.up", 3);
     }
 
     // ==========================================================================
@@ -90,7 +92,22 @@ protected:
         if (p_cam_active && *p_cam_active > 0.5f && p_cam_pos && p_cam_tgt && p_cam_fov) {
             current_view_pos = glm::vec3(p_cam_pos[0], p_cam_pos[1], p_cam_pos[2]);
             glm::vec3 tgt(p_cam_tgt[0], p_cam_tgt[1], p_cam_tgt[2]);
-            view_matrix = glm::lookAt(current_view_pos, tgt, glm::vec3(0.0f, 1.0f, 0.0f));
+
+            // Prefer the scene-provided up vector so a camera that rolls past
+            // vertical (a full loop/flip) keeps a coherent orientation. A fixed
+            // world-up (0,1,0) here is exactly what makes lookAt() degenerate
+            // -- and visually "flip" left/right -- once the view direction gets
+            // close to parallel with it. Falls back to world-up if the scene
+            // never set one, or it collapsed to a zero-length vector.
+            glm::vec3 up_vec(0.0f, 1.0f, 0.0f);
+            if (p_cam_up) {
+                glm::vec3 candidate(p_cam_up[0], p_cam_up[1], p_cam_up[2]);
+                if (glm::length(candidate) > 1e-4f) {
+                    up_vec = glm::normalize(candidate);
+                }
+            }
+
+            view_matrix = glm::lookAt(current_view_pos, tgt, up_vec);
             proj_matrix = glm::perspective(glm::radians(*p_cam_fov), aspect_ratio, 0.1f, 100.0f);
         } else {
             // Fallback backward compatibility local camera

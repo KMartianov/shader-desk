@@ -39,13 +39,21 @@ class LuaEngine {
 public:
     sol::state& get_state() { return lua; }
     LuaEngine() = default;
-    ~LuaEngine() { clear_timers(); }
+    
+    // Safely releases active epoll timer descriptors before destroying the state.
+    // Critical for preventing FD leaks during Shadow-Commit validation instances.
+    ~LuaEngine() { 
+        if (!active_timers.empty()) clear_timers(); 
+    }
 
     std::function<IWallpaperEffectABI*(const std::string&, const std::string&)> get_layer_by_tag;
     void set_config_dir(const std::string& dir) { config_dir = dir; }
 
+    // Public accessor to allow the core microkernel (inotify) to resolve the exact workspace path
+    std::string get_config_dir();
 
-    bool load();
+    // ARCHITECTURAL FIX: is_validation_run prevents VFS fallback during syntax checks
+    bool load(bool is_validation_run = false);
     bool reload();
 
     std::string get_active_effect() const;
@@ -75,6 +83,4 @@ private:
     ICoreContextABI* current_core = nullptr;  
     std::unordered_map<int, std::function<void(uint32_t)>> active_timers;
     sol::protected_function frame_callback;
-    
-    std::string get_config_dir();
 };

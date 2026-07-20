@@ -1,18 +1,20 @@
 # Справочник Lua API
 
-В архитектуре Shader Desk язык Lua выступает в роли **Control Plane** (Управляющей плоскости). В то время как нативный код на C++ и GLSL занимается тяжелыми вычислениями и рендерингом, Lua управляет маршрутизацией экранов, перехватом кадров, анимацией параметров и интеграцией с оконными менеджерами.
+В архитектуре Shader Desk язык Lua выступает в роли **Control Plane** (управляющей плоскости). В то время как нативный код на C++ и GLSL занимается тяжёлыми вычислениями и рендерингом, Lua управляет маршрутизацией экранов, покадровой анимацией параметров и интеграцией с оконными менеджерами.
 
-Этот документ описывает все доступные методы глобального объекта `core` и встроенного модуля `ctl`.
+Этот документ описывает все доступные методы глобального объекта `core`, вспомогательного модуля `ctl` и Layer Proxy API.
 
 ---
 
-## 1. Базовая маршрутизация и Жизненный цикл (`core`)
+## 1. Глобальный объект `core`
 
-Глобальный объект `core` автоматически предоставляется движком при старте. Он используется в конфигурационном файле `init.lua`.
+Объект `core` автоматически предоставляется движком при старте. Он используется в конфигурационном файле `init.lua` и в сценах.
 
-### `core.outputs` (Таблица)
-Определяет маршрутизацию визуальных сцен на физические мониторы Wayland (например, `eDP-1`, `DP-1`).
-Символ `*` используется как Fallback-правило для всех не назначенных явно экранов.
+### 1.1. Маршрутизация мониторов
+
+**`core.outputs`** (таблица)
+
+Определяет соответствие между физическими мониторами Wayland (например, `eDP-1`, `DP-1`) и загруженными сценами. Символ `*` используется как fallback‑правило для всех не назначенных явно экранов.
 
 ```lua
 core.outputs = {
@@ -21,8 +23,21 @@ core.outputs = {
 }
 ```
 
-### `core.providers` (Таблица)
-Таблица управления C++ демонами (Data Providers). Позволяет включать или выключать фоновый сбор данных и настраивать их специфичные параметры.
+**`core.load_scene(name: string) -> table`**
+
+Загружает файл сцены (`.lua`) по иерархии fallback‑путей:
+
+1. `~/.config/interactive-wallpaper/scenes/<name>.lua`
+2. Локальные и системные пути (например, `/usr/share/shader-desk/scenes/`).
+3. Встроенная виртуальная файловая система (VFS).
+
+Возвращает таблицу конфигурации слоёв, которая используется в `core.outputs`.
+
+### 1.2. Управление провайдерами данных
+
+**`core.providers`** (таблица)
+
+Таблица для конфигурации C++‑провайдеров (Data Providers). Позволяет включать/отключать фоновый сбор данных и настраивать их параметры.
 
 ```lua
 core.providers = {
@@ -34,121 +49,256 @@ core.providers = {
 }
 ```
 
-### `core.load_scene(name: string) -> table`
-Ищет файл сцены (`.lua`) по иерархии Fallback-путей (сначала в `~/.config/.../scenes/`, затем в локальных и системных `/usr/share/.../scenes/`). Выполняет код сцены и возвращает таблицу конфигурации слоев.
+Параметры, перечисленные в таблице, автоматически передаются в провайдер через ABI‑метод `set_parameter_abi()`.
 
-### `core.on_frame(callback: function(dt, output_name))`
-Регистрирует глобальный покадровый хук. Функция `callback` будет вызываться C++ ядром перед каждым кадром (например, 144 раза в секунду) для каждого активного монитора. 
-`dt` — реальная дельта времени в секундах. Идеально подходит для плавной математической анимации (синусоиды, интерполяции).
+### 1.3. Таймеры (асинхронные события)
 
----
+Таймеры используют системный вызов Linux `timerfd` и интегрированы в `epoll`. Они работают с нулевой нагрузкой на процессор в режиме ожидания.
 
-## 2. Аппаратные таймеры (Асинхронные события)
+**`core.set_interval(ms: number, callback: function) -> number`**
 
-Для разовых событий или редких проверок использовать `on_frame` неэффективно. Механизм таймеров Shader Desk использует системный вызов Linux `timerfd` и интегрирован в `epoll`. Таймеры работают с нулевой нагрузкой на процессор в режиме ожидания.
+Запускает функцию `callback` каждые `ms` миллисекунд. Если `callback` возвращает `nil` или ничего, таймер продолжает работу. Возвращает целочисленный ID таймера.
 
-### `core.set_interval(ms: number, callback: function) -> number`
-Запускает функцию `callback` каждые `ms` миллисекунд.
-* Если `callback` возвращает `nil` или ничего, таймер продолжает работу.
-* Функция возвращает целочисленный ID таймера.
-* **Внимание:** В целях защиты от утечек памяти существует жесткий лимит — не более 32 активных таймеров одновременно.
+**Ограничение:** не более 32 активных таймеров одновременно (защита от утечек файловых дескрипторов).
 
-### `core.clear_interval(id: number)`
-Останавливает и удаляет таймер по его ID, освобождая файловый дескриптор в ядре Linux.
+**`core.clear_interval(id: number)`**
+
+Останавливает и удаляет таймер по его ID, освобождая файловый дескриптор в ядре.
 
 ```lua
 local timer_id = core.set_interval(5000, function()
-    -- Выполнить действие каждые 5 секунд
-    return nil 
+    print("Tick")
 end)
--- Позже: core.clear_interval(timer_id)
+-- позже:
+core.clear_interval(timer_id)
 ```
 
----
+### 1.4. Прямой доступ к шине данных (BlackBoard API)
 
-## 3. Прямой доступ к шине данных (BlackBoard API)
+BlackBoard — разделяемая память микроядра. Обращение к ней происходит за $O(1)$ без накладных расходов. Это самый быстрый способ обмена данными между Lua, провайдерами и шейдерами.
 
-BlackBoard — это разделяемая память микроядра. Обращение к ней происходит за константное время $O(1)$ без накладных расходов. Это самый быстрый способ пробросить данные (например, массивы геометрии) из Lua напрямую в оперативную память для GLSL-шейдеров.
+**Запись:**
 
-### Чтение системных метрик
-* `core.get_float(key: string, default: float) -> float`
-* `core.get_string(key: string, default: string) -> string`
-* `core.get_float_array(key: string, size: number) -> table`
+- `core.set_string(key: string, value: string)`
+- `core.set_float_array(key: string, values: table)`
 
-### Запись в память GPU
-* `core.set_string(key: string, value: string)`
-* `core.set_float_array(key: string, values: table)`
+Максимальный размер массива — **256 элементов**. При попытке записать больше ядро выведет предупреждение и запишет данные в «мусорный» буфер (Trash Buffer), не вызывая краша.
 
-> **Критическое предупреждение об архитектуре:** Максимальный размер массива для `set_float_array` жестко ограничен **256 элементами** для одного ключа (защита C-ABI). При попытке записать таблицу большего размера, ядро не упадет (во избежание Segfault), но выведет Warning в терминал и запишет данные в безопасный "мусорный" буфер (Trash Buffer).
+**Чтение:**
+
+- `core.get_float(key: string, default: float) -> float`
+- `core.get_string(key: string, default: string) -> string`
+- `core.get_float_array(key: string, size: number) -> table`
 
 ```lua
--- Пример прямой отправки координат в шейдер:
-core.set_float_array("grad.positions", { 
-    0.5, 0.5,  -- Точка 1 (x, y)
-    0.1, 0.8   -- Точка 2 (x, y)
-})
+-- Запись массива координат
+core.set_float_array("grad.positions", { 0.5, 0.5, 0.1, 0.8 })
+
+-- Чтение уровня баса
+local bass = core.get_float("audio.bass", 0.0)
 ```
 
----
+### 1.5. Глобальная 3D‑камера
 
-## 4. Layer Proxy API (Управление слоями)
+**`core.set_camera(pos: table, target: table, up: table, fov: number?)`**
 
-Прямое хранение указателей на C++ классы внутри Lua может привести к Segfault, если произойдет горячая перезагрузка (Hot-Reload) плагина. Shader Desk решает эту проблему через безопасные **Proxy-объекты**, которые резолвят плагин по его семантическому тегу (`tag`) в каждом кадре.
+Устанавливает параметры камеры для всех плагинов, наследующих `KinematicEffect`. Параметры:
 
-### `core.get_layer(output_name: string, tag: string) -> LayerProxy`
-Возвращает безопасный Proxy-объект слоя. Если плагин с таким тегом отсутствует (или был удален из-за ошибки), методы объекта будут молча игнорироваться, не вызывая краша скрипта.
+- `pos` — позиция камеры (таблица из 3 чисел).
+- `target` — точка, на которую смотрит камера.
+- `up` — вектор «вверх» (по умолчанию `{0, 1, 0}`).
+- `fov` — поле зрения в градусах (по умолчанию 45).
 
-### `LayerProxy:set(param: string, value: any) -> LayerProxy`
-Устанавливает параметр плагина. Поддерживает Fluent Interface (цепочки вызовов). Принимает `boolean`, `number`, `string` и таблицы `table` (для векторов).
-
-### `LayerProxy:get(param: string) -> any`
-Читает текущее значение параметра непосредственно из памяти C++ плагина.
+Камера активна, пока хотя бы один плагин использует её. При вызове этой функции в BlackBoard устанавливается флаг `scene.camera.active = 1`.
 
 ```lua
--- Пример цепочки вызовов:
+core.set_camera(
+    {3.0, 2.0, 5.0},
+    {0.0, 0.0, 0.0},
+    {0.0, 1.0, 0.0},
+    60.0
+)
+```
+
+### 1.6. Покадровый хук
+
+**`core.on_frame(callback: function(dt, output_name))`**
+
+Регистрирует функцию, которая будет вызываться перед каждым кадром для каждого активного монитора. Параметры:
+
+- `dt` — дельта времени в секундах (реальное время между кадрами).
+- `output_name` — имя монитора (например, `eDP-1`).
+
+Идеально подходит для плавной математической анимации (синусоиды, интерполяции).
+
+```lua
+core.on_frame(function(dt, output)
+    local time = core.get_float("global_time", 0.0) + dt
+    core.set_float_array("global_time", {time})
+    local layer = core.get_layer(output, "my_object")
+    layer:set("rotation_speed", math.sin(time) * 0.5)
+end)
+```
+
+### 1.7. Управление слоями (Layer Proxy)
+
+**`core.get_layer(output_name: string, tag: string) -> LayerProxy`**
+
+Возвращает безопасный proxy‑объект для слоя с указанным тегом на указанном мониторе. Если слой не найден, методы proxy будут игнорироваться (без краша).
+
+**Методы LayerProxy:**
+
+- `:set(param: string, value: any) -> LayerProxy`  
+  Устанавливает параметр плагина. Поддерживает `boolean`, `number`, `string` и таблицы (для векторов). Возвращает `self` для цепочек вызовов.
+
+- `:set_vec2(param: string, x: number, y: number) -> LayerProxy`  
+  Специализированный метод для `vec2` (без аллокаций).
+
+- `:set_vec3(param: string, x: number, y: number, z: number) -> LayerProxy`
+
+- `:set_vec4(param: string, x: number, y: number, z: number, w: number) -> LayerProxy`
+
+- `:get(param: string) -> any`  
+  Читает текущее значение параметра из плагина.
+
+```lua
 core.get_layer("DP-1", "bg_layer")
     :set("color_top", {1.0, 0.0, 0.0})
     :set("pulse_speed", 2.5)
+
+local color = core.get_layer("DP-1", "bg_layer"):get("color_top")
+```
+
+### 1.8. Утилиты
+
+**`core.utils.apply_preset(target: table, plugin_name: string, preset_name: string)`**
+
+Загружает Lua‑пресет из папки `presets/` плагина и рекурсивно сливает его с таблицей `target`, не перезаписывая уже существующие ключи.
+
+Используется внутри сцен для применения предустановок.
+
+**`core.debug`** (таблица)
+
+Зарезервирована для отладочных целей (в настоящее время пуста).
+
+---
+
+## 2. Модуль `ctl` (внешнее управление)
+
+Модуль `ctl.lua` загружается автоматически в `init.lua` и предназначен для интеграции с внешними инструментами (Waybar, Dunst, скрипты bash). Все функции модуля можно вызывать через утилиту `shader-desk-ctl`.
+
+**Синтаксис вызова из терминала:**
+
+```bash
+shader-desk-ctl "ctl.method_name(...)"
+```
+
+### 2.1. Базовое управление параметрами
+
+**`ctl.set(param: string, value: any, output?: string, tag?: string)`**  
+Устанавливает параметр. Если `output = "*"`, применяется ко всем мониторам. `tag` необязателен — используется первый слой монитора.
+
+**`ctl.toggle(param: string, output?: string, tag?: string)`**  
+Переключает булев параметр.
+
+**`ctl.cycle(param: string, values_list: table, output?: string, tag?: string)`**  
+Циклически переключает параметр по списку значений (поддерживаются числа, строки, цветовые таблицы).
+
+**`ctl.preset(effect_name: string, preset_name: string, output?: string)`**  
+Применяет пресет к слою на указанном мониторе (или ко всем, если `output = "*"`).
+
+```bash
+shader-desk-ctl "ctl.set('wireframe_mode', false, '*')"
+shader-desk-ctl "ctl.toggle('enable_stripes', 'eDP-1')"
+shader-desk-ctl "ctl.cycle('bg_color', {{1,0,0}, {0,1,0}, {0,0,1}}, '*')"
+shader-desk-ctl "ctl.preset('Icosahedron Sphere', 'cyberpunk', 'DP-1')"
+```
+
+### 2.2. Темы и интеграция с Pywal
+
+**`ctl.pywal(output?: string)`**  
+Читает файл `~/.cache/wal/colors.json` (создаваемый утилитой `pywal`) и применяет извлечённую палитру к параметрам `background_color`, `wireframe_color`, `curve_color` на указанных мониторах (или на всех).
+
+**`ctl.theme(mode: "dark" | "light", output?: string)`**  
+Устанавливает предопределённые тёмные или светлые цвета фона.
+
+```bash
+shader-desk-ctl "ctl.pywal('*')"
+shader-desk-ctl "ctl.theme('dark', 'eDP-1')"
+```
+
+### 2.3. Управление провайдерами
+
+**`ctl.provider(name: string, enabled: boolean)`**  
+Включает или отключает провайдера данных на лету.
+
+```bash
+shader-desk-ctl "ctl.provider('Native FFTW Audio Provider', false)"
+```
+
+### 2.4. Анимация и режимы
+
+**`ctl.freeze(state: boolean, output?: string, tag?: string)`**  
+Замораживает анимацию вращения (устанавливает `rotation_speed = 0`) или восстанавливает её, сохраняя предыдущее значение. Полезно для игрового режима или экономии батареи.
+
+**`ctl.flash(color: table, duration_sec: number, output?: string, tag?: string)`**  
+Временно изменяет цвет (`wireframe_color` или `curve_color`) на указанный, а через заданное время плавно возвращает исходный. Использует аппаратный таймер.
+
+```bash
+shader-desk-ctl "ctl.freeze(true, '*')"
+shader-desk-ctl "ctl.flash({1.0, 0.0, 0.0}, 0.5, '*')"
+```
+
+### 2.5. Статус для Waybar / Eww
+
+**`ctl.status()`**  
+Выводит в stdout JSON‑строку с текущим состоянием мониторов и их основными слоями.
+
+```bash
+shader-desk-ctl "ctl.status()"
+# Вывод: {"DP-1":{"primary_layer":"cyberpunk_city"},"eDP-1":{"primary_layer":"liquid"}}
 ```
 
 ---
 
-## 5. Внешнее управление и Интеграция (Модуль `ctl`)
+## 3. Примеры интеграции
 
-Модуль `ctl.lua` предназначен для интеграции Shader Desk с внешними инструментами (Waybar, Dunst, скрипты bash, бинды клавиш в Hyprland / Sway). Взаимодействие происходит через консольную утилиту `shader-desk-ctl`, которая отправляет команды в неблокирующий UNIX-сокет ядра.
+### 3.1. Горячие клавиши в Hyprland
 
-*Синтаксис вызова из терминала:* `shader-desk-ctl "ctl.method_name(...)"`
+В `~/.config/hypr/hyprland.conf`:
 
-### Базовое управление
-* **`ctl.set(param, value, output, tag)`**
-  Устанавливает конкретное значение. Если `output` равно `*`, применяется ко всем мониторам.
-  *Пример:* `shader-desk-ctl "ctl.set('wireframe_mode', false, '*')"`
-* **`ctl.toggle(param, output, tag)`**
-  Переключает логическое (boolean) значение параметра.
-  *Пример:* `shader-desk-ctl "ctl.toggle('enable_stripes', 'eDP-1')"`
-* **`ctl.cycle(param, values_list, output, tag)`**
-  Циклически переключает параметр по списку значений. Идеально для кнопки смены цвета обоев.
-  *Пример:* `shader-desk-ctl "ctl.cycle('bg_color', {{1,0,0}, {0,1,0}, {0,0,1}}, '*')"`
-* **`ctl.provider(name, enabled)`**
-  Включает или выключает демона сбора данных (Data Provider) на лету.
-  *Пример:* `shader-desk-ctl "ctl.provider('Native FFTW Audio Provider', false)"`
+```text
+bind = $mainMod SHIFT, S, exec, shader-desk-ctl "ctl.toggle('wireframe_mode', '*')"
+bind = $mainMod, F, exec, shader-desk-ctl "ctl.flash({1.0,0.0,0.0}, 0.3, '*')"
+```
 
-### Темы и интеграция с Pywal
-* **`ctl.pywal(output)`**
-  Читает файл `~/.cache/wal/colors.json` (создаваемый популярной утилитой `pywal`) и автоматически применяет извлеченную палитру к текущим обоям (`background_color`, `wireframe_color`).
-  *Пример:* `shader-desk-ctl "ctl.pywal('*')"`
-* **`ctl.theme(mode, output)`**
-  Базовый переключатель для `light` или `dark` вариантов. Внутри `ctl.lua` можно настроить конкретные цвета для каждого режима.
+### 3.2. Модуль Waybar
 
-### Реакция на системные события
-* **`ctl.flash(color_rgb, duration_sec, output, tag)`**
-  Временно меняет цвет визуального эффекта (вспышка), а затем плавно возвращает его к исходному. Идеально подходит для привязки к скриптам уведомлений (Dunst / Mako / Swaync). Использует аппаратные таймеры `epoll`.
-  *Пример (вспыхнуть красным на полсекунды):* `shader-desk-ctl "ctl.flash({1.0, 0.0, 0.0}, 0.5, '*')"`
-* **`ctl.freeze(state, output, tag)`**
-  Замораживает или размораживает анимацию обоев (сохраняет текущую скорость вращения и устанавливает ее в ноль). Полезно для "Игрового режима" (Gaming Mode) или экономии батареи ноутбука.
+Добавьте в конфиг Waybar пользовательский модуль:
 
-### Телеметрия для статус-баров (Waybar / Eww)
-* **`ctl.status()`**
-  Выводит в терминал (stdout) строку в формате JSON с текущим состоянием всех мониторов и их активных слоев.
-  *Пример вывода:* `{"DP-1": {"primary_layer": "cyberpunk_city"}, "eDP-1": {"primary_layer": "liquid"}}`
+```json
+"custom/shader-desk": {
+    "exec": "shader-desk-ctl 'ctl.status()'",
+    "return-type": "json",
+    "interval": 5
+}
+```
 
+### 3.3. Инъекция произвольного Lua‑скрипта
+
+```bash
+cat <<'EOF' | shader-desk-ctl
+local layer = core.get_layer("eDP-1", "planet")
+layer:set_vec3("offset", 0.0, 2.0, 0.0)
+print("Planet moved up!")
+EOF
+```
+
+---
+
+## 4. Связанные разделы
+
+- **[Конфигурация и сцены](02-configuration-and-scenes.md)** — подробное описание структуры конфигурационных файлов.
+- **[Архитектура: BlackBoard](07-architecture-overview.md#4-blackboard-шина-памяти-и-trash-buffer)** — устройство разделяемой памяти.
+- **[SDK: провайдеры данных](05-sdk-data-providers.md)** — создание собственных источников данных.
+- **[Утилиты командной строки](08-utilities-reference.md)** — полное описание `shader-desk-ctl` и других утилит.

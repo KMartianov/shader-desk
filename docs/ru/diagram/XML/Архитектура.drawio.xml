@@ -7,7 +7,7 @@
         <mxCell id="R6djHtL2VaoH_zedCXCU-48" connectable="0" parent="1" style="group" value="" vertex="1">
           <mxGeometry height="1050" width="1053" x="325" y="520" as="geometry" />
         </mxCell>
-        <mxCell id="R6djHtL2VaoH_zedCXCU-47" connectable="0" parent="R6djHtL2VaoH_zedCXCU-48" style="group" value="" vertex="1">
+        <mxCell id="R6djHtL2VaoH_zedCXCU-47" connectable="0" parent="R6djHtL2VaoH_zedCXCU-48" style="group;fillColor=default;" value="" vertex="1">
           <mxGeometry height="740" width="1053" y="105" as="geometry" />
         </mxCell>
         <UserObject label="&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; Микроядро Shader Desk" mermaidId="n:KERNEL" mermaidBaseStyle="html=1;whiteSpace=wrap;strokeWidth=2;verticalAlign=top;fillColor=#f4f8ff;strokeColor=#0d47a1;fontColor=light-dark(#333333,#cccccc);fontFamily=Trebuchet MS,Verdana,Arial,sans-serif;fontSize=16;" mermaidBaseValue="Микроядро Shader Desk" id="KMXJTjp3AxhFRhnuXLE4-25">

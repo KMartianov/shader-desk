@@ -56,3 +56,5 @@ utilities/*
 !utilities/shader-desk-run.sh
 !utilities/embed_fs.py
 .log
+
+*.bkp

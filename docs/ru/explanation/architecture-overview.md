@@ -1,7 +1,3 @@
-Вот исправленная версия документа **`explanation/architecture-overview.md`**. Маркетинговые термины убраны, акцент смещен на инженерную расширяемость, а синтаксис графа Mermaid скорректирован для безопасного парсинга (добавлены кавычки для текстовых блоков со спецсимволами).
-
-***
-
 # Обзор архитектуры: Microkernel & Внешняя экосистема
 
 Shader Desk спроектирован не как монолитное приложение, а как расширяемая платформа на базе **Микроядра (Microkernel)**. Главная архитектурная цель проекта — предоставить сообществу надежный фундамент для создания сторонних компонентов: C++ плагинов, внешних демонов (на Rust, Go, Python), CLI-утилит, GLSL-шейдеров и комплексных Lua-сцен. 
@@ -11,68 +7,63 @@ Shader Desk спроектирован не как монолитное прил
 ## Высокоуровневая топология
 
 ```mermaid
-flowchart LR
-    %% 1. ГЛОБАЛЬНАЯ СЕТКА: Слева направо. Гарантирует, что левая колонка всегда слева.
-
-    subgraph LEFT_COL [" "]
-        direction TB
-        %% Направление сверху-вниз для левого столбца
+%%{init: {"flowchart": {"curve": "linear"}}}%%
+flowchart TD
+    subgraph TOP_ROW [" "]
+        direction LR
         
-        subgraph DATA_PAIRS ["Демон + Provider (N пар, поставляются вместе)"]
+        subgraph SCENES ["Сцены и конфиги (N репозиториев)"]
             direction TB
-            DA1["Audio Daemon<br/>FFTW / PulseAudio"]
-            DP_A[".so Provider<br/>Native FFTW Audio Provider"]
-            DA1 -. "UNIX DGRAM: AudioDatagram" .-> DP_A
-
-            DA2["Evdev Daemon<br/>Pointer Tracking"]
-            DP_P[".so Provider<br/>Evdev Pointer Provider"]
-            DA2 -. "UNIX DGRAM: PointerDatagram" .-> DP_P
-
-            DA3["Custom Daemon N<br/>Rust / Go / Python"]
-            DP_C[".so Provider N<br/>C++ / произвольный протокол"]
-            DA3 -. "UNIX DGRAM: custom payload" .-> DP_C
-        end
-
-        subgraph VPLUGINS ["Визуальные плагины (N штук)"]
-            direction TB
-            VP1[".so Plugin A<br/>GLSL / C++"]
-            VP2[".so Plugin B<br/>GLSL / C++"]
-            VP1 ~~~ VP2
+            SC1["init.lua + scenes/*.lua"]
+            SC2["providers.lua"]
+            SC1 ~~~ SC2
         end
         
-        %% Жестко ставим плагины под демонами
-        DATA_PAIRS ~~~ VPLUGINS
+        subgraph CLIENTS ["CLI / GUI утилиты (N клиентов)"]
+            direction TB
+            CL1["shader-desk-ctl<br/>(CLI)"]
+            CL2["GTK / Qt конфигуратор<br/>(сторонний GUI)"]
+            CL1 ~~~ CL2
+        end
+        
+        %% Распорка: Форсирует строго горизонтальное расположение в строке
+        SCENES ~~~ CLIENTS
     end
 
-    subgraph RIGHT_COL [" "]
-        direction TB
-        %% 2. ПРАВАЯ КОЛОНКА: Сверху вниз. Гарантирует, что TOP_ROW будет строго над KERNEL.
+    subgraph MIDROW [" "]
+        direction LR
 
-        subgraph TOP_ROW [" "]
-            direction LR
-            %% Горизонтальная строка для верхних блоков
+        subgraph LEFT_COL [" "]
+            direction TB
             
-            subgraph SCENES ["Сцены и конфиги (N репозиториев)"]
+            subgraph DATA_PAIRS ["Демон + Provider (N пар, поставляются вместе)"]
                 direction TB
-                SC1["init.lua + scenes/*.lua"]
-                SC2["providers.lua"]
-                SC1 ~~~ SC2
+                DA1["Audio Daemon<br/>FFTW / PulseAudio"]
+                DP_A[".so Provider<br/>Native FFTW Audio Provider"]
+                DA1 -. "UNIX DGRAM: AudioDatagram" .-> DP_A
+
+                DA2["Evdev Daemon<br/>Pointer Tracking"]
+                DP_P[".so Provider<br/>Evdev Pointer Provider"]
+                DA2 -. "UNIX DGRAM: PointerDatagram" .-> DP_P
+
+                DA3["Custom Daemon N<br/>Rust / Go / Python"]
+                DP_C[".so Provider N<br/>C++ / произвольный протокол"]
+                DA3 -. "UNIX DGRAM: custom payload" .-> DP_C
+            end
+
+            subgraph VPLUGINS ["Визуальные плагины (N штук)"]
+                direction TB
+                VP1[".so Plugin A<br/>GLSL / C++"]
+                VP2[".so Plugin B<br/>GLSL / C++"]
+                VP1 ~~~ VP2
             end
             
-            subgraph CLIENTS ["CLI / GUI утилиты (N клиентов)"]
-                direction TB
-                CL1["shader-desk-ctl<br/>(CLI)"]
-                CL2["GTK / Qt конфигуратор<br/>(сторонний GUI)"]
-                CL1 ~~~ CL2
-            end
-            
-            %% Жестко ставим их бок о бок
-            SCENES ~~~ CLIENTS
+            %% Распорка: Форсирует строго вертикальное расположение столбца
+            DATA_PAIRS ~~~ VPLUGINS
         end
 
         subgraph KERNEL ["Микроядро Shader Desk"]
             direction TB
-            
             IPC_CTL(("Control Socket<br/>SOCK_STREAM"))
             LUA["Control Plane<br/>Lua Engine (LuaJIT)"]
             BB[("BlackBoard<br/>Zero-Copy Data Bus")]
@@ -81,7 +72,6 @@ flowchart LR
             VP_SLOT["Активные визуальные плагины<br/>(инстансы в памяти)"]
             RM["Render Pipeline<br/>Ping-Pong FBO"]
 
-            %% Логика внутри ядра (естественное ветвление сделает его прямоугольным 4:3)
             IPC_CTL -->|"eval Lua string"| LUA
             LUA <-->|"bind_float: камера и т.д."| BB
             LUA -->|"core.providers: конфиг параметров"| DP_SLOT
@@ -92,29 +82,24 @@ flowchart LR
             BB -->|"uniforms, O(1) read"| RM
             RM -->|"render(dt)"| VP_SLOT
         end
-        
-        W["Wayland Compositor<br/>EGL / Layer Shell"]
-
-        %% Выстраиваем их по вертикали с помощью невидимых связей
-        TOP_ROW ~~~ KERNEL
-        KERNEL ~~~ W
     end
 
-    %% Жестко связываем левую и правую макро-колонки
-    LEFT_COL ~~~ RIGHT_COL
+    W["Wayland Compositor<br/>EGL / Layer Shell"]
 
-    %% =======================================================
-    %% КРОСС-БЛОЧНЫЕ СВЯЗИ (теперь они не ломают макет)
-    %% =======================================================
+    %% Каркас между строками
+    TOP_ROW ~~~ MIDROW
+    MIDROW ~~~ W
+
+    %% ========================================================
+    %% КРОСС-СВЯЗИ (Абсолютно оригинальные, без изменения)
+    %% ========================================================
     
-    %% Слева-направо:
     DP_A -. "dlopen" .-> PM
     DP_P -. "dlopen" .-> PM
     DP_C -. "dlopen" .-> PM
     VP1 -. "dlopen" .-> PM
     VP2 -. "dlopen" .-> PM
 
-    %% Сверху-вниз:
     CL1 -. "UNIX STREAM" .-> IPC_CTL
     CL2 -. "UNIX STREAM" .-> IPC_CTL
     SC1 -. "VFS + inotify" .-> LUA
@@ -122,9 +107,9 @@ flowchart LR
 
     RM ==>|"EGL swap buffers"| W
 
-    %% =======================================================
-    %% СТИЛИЗАЦИЯ И СКРЫТИЕ СЛУЖЕБНОЙ СЕТКИ
-    %% =======================================================
+    %% ========================================================
+    %% СТИЛИ
+    %% ========================================================
     
     classDef eco fill:#fff3e0,stroke:#e65100,stroke-width:1px,stroke-dasharray: 3 3,color:#5d4037;
     classDef kernelNode fill:#e3f2fd,stroke:#0d47a1,stroke-width:1px,color:#0d47a1;
@@ -134,11 +119,9 @@ flowchart LR
     class IPC_CTL,LUA,BB,PM,DP_SLOT,VP_SLOT,RM kernelNode
     class W sink
 
-    %% Делаем контейнеры сетки полностью невидимыми
-    style LEFT_COL fill:none,stroke:none
-    style RIGHT_COL fill:none,stroke:none
     style TOP_ROW fill:none,stroke:none
-    
+    style MIDROW fill:none,stroke:none
+    style LEFT_COL fill:none,stroke:none
     style DATA_PAIRS fill:#fffaf3,stroke:#e65100,stroke-width:1px
     style VPLUGINS fill:#fffaf3,stroke:#e65100,stroke-width:1px
     style SCENES fill:#fffaf3,stroke:#e65100,stroke-width:1px

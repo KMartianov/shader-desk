@@ -610,8 +610,15 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         lua["core"] = lua.create_table();
     }
     sol::table core_table = lua["core"];
-    
+
     // --- 1. WRITE TO BLACKBOARD ---
+    core_table["set_float"] = [core](const std::string& key, float val) {
+        float* ptr = core->get_blackboard()->bind_float(key.c_str());
+        if (ptr) {
+            *ptr = val; 
+        }
+    };
+
     core_table["set_string"] = [core](const std::string& key, const std::string& val) {
         core->get_blackboard()->set_string(key.c_str(), val.c_str());
     };

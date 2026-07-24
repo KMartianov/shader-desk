@@ -94,7 +94,7 @@ void {{CLASS_NAME}}::fetch_uniform_locations() {
 // RENDER HOOK (HOT PATH - Zero Allocation)
 // ------------------------------------------------------------------------------
 void {{CLASS_NAME}}::bind_custom_uniforms() {
-    // The base class has already called glUseProgram(), updated u_time, u_resolution, 
+    // The base class has already called glUseProgram(), updated time, resolution, 
     // and scaled the FBO if requested by Lua (fbo_scale).
     // We only need to inject our specific business-logic variables here.
     

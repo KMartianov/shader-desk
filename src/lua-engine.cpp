@@ -5,6 +5,7 @@
 #include <map>
 #include "data-provider.hpp" // Now includes the SDK wrapper (IProviderABI)
 #include "embedded_fs.hpp" 
+#include "interactive-wallpaper.hpp"
 
 #ifdef TRACY_ENABLE
 #include <tracy/Tracy.hpp>
@@ -610,6 +611,14 @@ void LuaEngine::bind_core_api(ICoreContextABI* core) {
         lua["core"] = lua.create_table();
     }
     sol::table core_table = lua["core"];
+
+    // --- HARDWARE FREEZE API ---
+    // Safely detect if this is the real Wayland core or the Shadow-Commit mock.
+    // Prevents Undefined Behavior (cross-casting) during background hot-reloads.
+    InteractiveWallpaper* app = (core->get_native_display() != nullptr) ? static_cast<InteractiveWallpaper*>(core) : nullptr;
+    core_table["pause_render"] = [app](bool pause) {
+        if (app) app->set_global_pause(pause);
+    };
 
     // --- 1. WRITE TO BLACKBOARD ---
     core_table["set_float"] = [core](const std::string& key, float val) {

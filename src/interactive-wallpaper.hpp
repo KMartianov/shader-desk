@@ -142,6 +142,7 @@ public:
     void run();   // Main event loop (zero-latency epoll based)
     void stop();
 
+    void set_global_pause(bool pause);
     const char* get_bundle_path(const char* plugin_name) override;
 
     static void frame_handle_done(void* data, wl_callback* callback, uint32_t time);
@@ -201,6 +202,7 @@ private:
     WallpaperConfig config;
     std::unordered_map<wl_output*, std::unique_ptr<Output>> outputs;
     bool running = true;
+    bool is_global_paused = false;
 
     // --- File descriptors for multiplexing (epoll/inotify) ---
     int epoll_fd = -1;

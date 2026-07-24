@@ -83,7 +83,7 @@ function ctl.cycle(param, values_list, output, tag)
             local next_idx = 1
             for i, val in ipairs(values_list) do
                 if is_equal(val, current) then
-                    next_idx = (i % #Values_list) + 1
+                    next_idx = (i % #values_list) + 1
                     break
                 end
             end
@@ -158,6 +158,9 @@ function ctl.theme(mode, output)
     end
 end
 
+
+
+
 -- ==============================================================================
 -- 3. POWER MANAGEMENT & DATA PROVIDERS
 -- ==============================================================================
@@ -171,25 +174,28 @@ function ctl.provider(name, enabled)
     end
 end
 
--- "Gaming Mode" or battery saver. Freezes animation parameters.
+-- "Gaming Mode" or battery saver. Completely stops the C++ render loop (0% GPU/CPU).
 -- Example: shader-desk-ctl "ctl.freeze(true)"
-function ctl.freeze(state, output, tag)
-    with_target(output, function(name, out)
-        local target_tag = tag or get_primary_tag(out)
-        if not target_tag then return end
+function ctl.freeze(state)
+    if core._is_frozen == state then return end
+    core._is_frozen = state 
+    
+    if core.pause_render then
+        core.pause_render(state)
         
-        local layer = core.get_layer(name, target_tag)
-        
-        if state then
-            -- Save current state to the Lua output table
-            out._saved_rot = layer:get("constant_rotation_speed") or 0.1
-            layer:set("constant_rotation_speed", 0.0)
-            layer:set("oscill_amp", 0.0)
-        else
-            -- Restore saved state
-            layer:set("constant_rotation_speed", out._saved_rot or 0.1)
+        -- Anti-Jump Mechanism:
+        -- The mouse daemon keeps accumulating coordinates even while the screen is frozen.
+        -- When we wake up, we must sync the Lua camera state with the new mouse position 
+        -- so the camera doesn't violently snap/spin on the very first frame.
+        if not state then
+            for name, out in pairs(core.outputs) do
+                if out.state then
+                    out.state.last_mx = core.get_float("mouse.accum_x", 0.0)
+                    out.state.last_my = core.get_float("mouse.accum_y", 0.0)
+                end
+            end
         end
-    end)
+    end
 end
 
 -- ==============================================================================
@@ -231,19 +237,32 @@ end
 -- ==============================================================================
 
 -- Outputs the current status of all monitors in JSON format.
--- Example: shader-desk-ctl "ctl.status()"
+-- Example: shader-desk-ctl "return ctl.status()"
 function ctl.status()
-    local result = "{"
+    -- Inject the global frozen state into the JSON response
+    local is_frozen = tostring(core._is_frozen == true)
+    local result = string.format('{"frozen": %s, "theme": "default", ', is_frozen)
+    
+    -- Append primary layers for each active Wayland output
     for name, out in pairs(core.outputs) do
         local primary_tag = get_primary_tag(out) or "none"
         result = result .. string.format('"%s": {"primary_layer": "%s"}, ', name, primary_tag)
     end
-    -- Remove the trailing comma and space
-    if #Result > 1 then
+    
+    -- Remove the trailing comma and space to ensure strict JSON validity
+    if #result > 1 then
         result = result:sub(1, -3)
     end
+    
     result = result .. "}\n"
-    io.write(result)
+    return result
 end
 
+-- Export the module table to the global Lua environment.
+-- Without this, require("ctl") returns 'true' (boolean) instead of the table,
+-- causing "attempt to index global 'ctl' (a boolean value)" IPC errors.
 return ctl
+
+
+
+

@@ -321,7 +321,15 @@ void InteractiveWallpaper::setup_ipc() {
                         
                         std::string resp;
                         if (result.valid()) {
-                            resp = "OK";
+                            // ARCHITECTURAL DESIGN: Dynamic IPC Response Routing.
+                            // If the executed Lua script explicitly returns a string (e.g., a JSON status object 
+                            // from ctl.status()), we extract and route it back to the CLI utility. 
+                            // Otherwise, we send a standard "OK" acknowledgment to confirm successful execution.
+                            if (result.get_type() == sol::type::string) {
+                                resp = result.get<std::string>();
+                            } else {
+                                resp = "OK";
+                            }
                         } else {
                             sol::error err = result;
                             resp = std::string("LUA_ERR: ") + err.what();
@@ -601,6 +609,7 @@ void InteractiveWallpaper::recover_egl_context() {
 void InteractiveWallpaper::run() {
     tracy::SetThreadName("Wayland Event Loop"); // Thread name in profiler
     if (!display) return;
+    
     std::cout << "Starting main loop (epoll based)..." << std::endl;
     wl_display_roundtrip(display);
 
@@ -609,22 +618,27 @@ void InteractiveWallpaper::run() {
     int wl_fd = wl_display_get_fd(display);
 
     while (global_running.load() && running) {
+        // ARCHITECTURAL DESIGN: Non-Blocking Wayland Dispatch.
+        // We must prepare the display for reading and dispatch all pending Wayland events
+        // before going to sleep. This prevents the compositor from deadlocking the client.
         while (wl_display_prepare_read(display) != 0) {
             wl_display_dispatch_pending(display);
         }
         wl_display_flush(display);
 
+        // Sleep at 0% CPU until the kernel wakes us up (Zero-Latency Wakeup).
         int n_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
 
         if (n_events < 0) {
             wl_display_cancel_read(display);
-            if (errno == EINTR) continue;
+            if (errno == EINTR) continue; // Safely ignore POSIX signal interruptions
             std::cerr << "epoll_wait error: " << strerror(errno) << std::endl;
             break;
         }
 
         bool wayland_event = false;
 
+        // Process multiplexed events (IPC Sockets, Timers, Hardware Daemons, Wayland)
         for (int i = 0; i < n_events; ++i) {
             int fd = events[i].data.fd;
             uint32_t revents = events[i].events;
@@ -632,17 +646,20 @@ void InteractiveWallpaper::run() {
             if (fd == wl_fd) {
                 wayland_event = true;
             } else if (epoll_callbacks.find(fd) != epoll_callbacks.end()) {
-                // SECURITY: Catch broken pipes or closed sockets before executing the callback.
-                // Prevents 100% CPU usage in an infinite epoll_wait loop.
-                if (revents & (EPOLLERR | EPOLLHUP)) {
-                    std::cerr << "[Core] Epoll detected broken FD: " << fd << ". Unregistering safely." << std::endl;
+                // SECURITY & ARCHITECTURE: Prioritize EPOLLIN over EPOLLHUP.
+                // When short-lived CLI utilities send an IPC payload and immediately close 
+                // their socket, the Linux kernel flags the FD with both EPOLLIN and EPOLLHUP 
+                // simultaneously. By evaluating the read buffer first (EPOLLIN), we guarantee 
+                // zero-data-loss, ensuring the command is executed before the broken socket is cleaned up.
+                // This prevents 100% CPU usage in an infinite epoll_wait loop on broken pipes.
+                if (revents & EPOLLIN) {
+                    epoll_callbacks[fd](revents);
+                } else if (revents & (EPOLLERR | EPOLLHUP)) {
+                    std::cerr << "[Core] Epoll detected closed/broken FD: " << fd << ". Unregistering safely." << std::endl;
                     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
                     epoll_callbacks.erase(fd);
                     close(fd);
-                    continue; // Skip the callback execution
                 }
-                
-                epoll_callbacks[fd](revents);
             }
         }
 
@@ -652,7 +669,8 @@ void InteractiveWallpaper::run() {
             wl_display_cancel_read(display);
         }
         wl_display_dispatch_pending(display);
-        FrameMark;
+        
+        FrameMark; // Tracy Profiler end-of-tick marker
     }
 }
 
@@ -866,6 +884,11 @@ void InteractiveWallpaper::render_output(Output* output) {
     // Ensure the physical monitor is fully initialized by the Wayland compositor,
     // has active visual layers assigned by Lua, and possesses a valid EGL surface.
     if (!output->configured || output->layers.empty() || output->egl_surface == EGL_NO_SURFACE) return;
+
+    // HARDWARE FREEZE: Abort the pipeline immediately.
+    // By returning here, we DO NOT request a new wl_surface_frame callback.
+    // The Wayland compositor will simply hold the last EGL buffer on screen forever.
+    if (is_global_paused) return; 
 
     ZoneScoped; 
     ZoneText(output->name.c_str(), output->name.length()); 
@@ -1288,6 +1311,43 @@ void InteractiveWallpaper::log_message(LogLevel level, const char* source, const
         case LogLevel::INFO:    std::cout << "[INFO][" << source << "] " << message << std::endl; break;
         case LogLevel::WARNING: std::cerr << "\033[33m[WARN][" << source << "] " << message << "\033[0m" << std::endl; break;
         case LogLevel::ERR:     std::cerr << "\033[31m[ERR ][" << source << "] " << message << "\033[0m" << std::endl; break;
+    }
+}
+
+// ==============================================================================
+// HARDWARE FREEZE (0% CPU/GPU MODE)
+// ==============================================================================
+void InteractiveWallpaper::set_global_pause(bool pause) {
+    if (is_global_paused == pause) return;
+    is_global_paused = pause;
+    
+    if (!pause) {
+        std::cout << "\033[32m[Core] Rendering pipeline resumed.\033[0m" << std::endl;
+        
+        // Waking up! We must manually re-ignite the render loop because 
+        // the outputs lost their Wayland frame callbacks while sleeping.
+        for (auto& pair : outputs) {
+            Output* out = pair.second.get();
+            
+            // ARCHITECTURAL DESIGN: Wayland Frame Chain Ignition & Anti-Starvation.
+            // When the engine is frozen, 'wl_surface_frame' callbacks are intentionally dropped,
+            // putting the GPU to sleep. To wake up, we must manually inject a render call.
+            // 
+            // We artificially offset the 'last_frame_time' into the past by exactly ~17ms (60Hz).
+            // Without this offset, the delta-time would be calculated as 0.0 seconds. 
+            // The hardware FPS limiter would interpret a 0.0s delta as "Frame arrived too early",
+            // arm a delayed timer, and abort the render call. Aborting the initial render call 
+            // prevents the new 'wl_surface_frame' from being requested, permanently stalling the display.
+            // This 17ms offset guarantees the FPS limiter passes the check and reignites the V-Sync loop,
+            // while simultaneously preventing a massive delta-time physics explosion.
+            out->last_frame_time = std::chrono::steady_clock::now() - std::chrono::milliseconds(17);
+            
+            if (!out->frame_callback) {
+                render_output(out);
+            }
+        }
+    } else {
+        std::cout << "\033[33m[Core] Rendering pipeline paused (0% CPU/GPU).\033[0m" << std::endl;
     }
 }
 
